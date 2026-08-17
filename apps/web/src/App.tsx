@@ -2,12 +2,13 @@ import { compileRecipe, swapOnArrival, twapOnArrival, type DropRecipeJson } from
 import { formatUnits, isAddress, type Address } from 'viem'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { CHAIN, EXPLORER, connect } from './lib/chain.js'
+import { BLOCK_EXPLORER, CHAIN, COW_EXPLORER, connect } from './lib/chain.js'
 import { activateDrop, postPlacedOrders, readDropStatus, type DropStatus } from './lib/drop.js'
 import { GNOSIS_TOKENS, WRAPPED_NATIVE, findToken } from './lib/tokens.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
 import { RescuePanel } from './components/RescuePanel.js'
+import { TerminalPanel } from './components/TerminalPanel.js'
 import { StepTable } from './components/StepTable.js'
 
 /**
@@ -323,13 +324,26 @@ export function App() {
               >
                 {busy ? 'Activating…' : 'Activate drop'}
               </button>
-              <a href={`${EXPLORER}/address/${compiled.value.address}`} target="_blank" rel="noreferrer">
-                View on CoW Explorer
+              <a
+                href={`${COW_EXPLORER}/address/${compiled.value.address}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Orders on CoW Explorer
+              </a>
+              <a
+                href={`${BLOCK_EXPLORER.url}/address/${compiled.value.address}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Balances on {BLOCK_EXPLORER.name}
               </a>
             </div>
 
             {message && <p className="ok">{message}</p>}
             {error && <p className="error">{error}</p>}
+
+            <TerminalPanel compiled={compiled.value} />
           </section>
 
           <section>

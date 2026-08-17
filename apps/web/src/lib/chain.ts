@@ -3,14 +3,26 @@ import { gnosis } from 'viem/chains'
 
 export const CHAIN = gnosis
 
-/** Public RPC is fine for a demo; override with VITE_RPC_URL for anything real. */
+/**
+ * Public RPC is fine for a demo; override with VITE_RPC_URL for anything real.
+ *
+ * Exported so the copy-pasteable commands quote the same endpoint the page is reading from —
+ * otherwise a user could get a different answer from the terminal than from the UI.
+ */
+export const RPC_URL = import.meta.env.VITE_RPC_URL ?? CHAIN.rpcUrls.default.http[0]
+
 export const publicClient = createPublicClient({
   chain: CHAIN,
-  transport: http(import.meta.env.VITE_RPC_URL ?? undefined),
+  transport: http(RPC_URL),
 })
 
 export const COW_API = `https://api.cow.fi/xdai/api/v1`
-export const EXPLORER = `https://explorer.cow.fi/gc`
+
+/** CoW's own explorer: order-centric, so it shows what a drop is trading. */
+export const COW_EXPLORER = `https://explorer.cow.fi/gc`
+
+/** The chain's general-purpose explorer: address-centric, so it shows balances and transactions. */
+export const BLOCK_EXPLORER = CHAIN.blockExplorers.default
 
 function injected(): EIP1193Provider {
   const provider = (window as unknown as { ethereum?: EIP1193Provider }).ethereum

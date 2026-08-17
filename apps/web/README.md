@@ -24,9 +24,17 @@ Six panels, top to bottom, in the order you'd actually use them:
 4. **What the address commits to** — the compiled calls and the exact `setupData` bytes. This is the
    only place you can see what you're being asked to fund, which is why it shows raw calldata rather
    than a friendly summary.
-5. **Status** — balance at the drop, whether it's deployed, and the activate button. It warns when
-   the contracts aren't deployed on the chain yet, in which case the address is a prediction (a
-   correct one — addresses are deterministic).
+5. **Status** — balance at the drop, whether it's deployed, and the activate button. Links to two
+   explorers, because they answer different questions: CoW Explorer for the *orders* a drop has placed,
+   the chain's own explorer for its *balances and transactions*. It warns when the contracts aren't
+   deployed on the chain yet, in which case the address is a prediction (a correct one — addresses are
+   deterministic).
+
+   Also holds **Activate from the terminal**, for a keeper or a pre-flight check. Note what curl can
+   and cannot do: activation is a signed transaction, so the send is a `cast` command, and curl gets
+   the two jobs it genuinely does — simulating the activation via `eth_call` (no key, no funds, and it
+   answers "would this work?" before anyone sends money to the address) and reading back the orders the
+   drop owns.
 6. **If something goes wrong** — the rescue panel, behind a toggle. It shows which path applies
    (deploy-without-setup if the drop doesn't exist yet, direct sweep if it does), lets you pick which
    balances to recover and where to send them, and offers "deploy shed only" for taking manual
