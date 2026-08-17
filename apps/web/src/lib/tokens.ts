@@ -15,8 +15,6 @@ export const GNOSIS_TOKENS: TokenInfo[] = [
   { symbol: 'WETH', address: '0x6A023CCd1ff6F2045C3309768eAd9E68F978f6e1', decimals: 18 },
 ]
 
-export const WRAPPED_NATIVE: Address = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d'
-
 export function findToken(address: string): TokenInfo | undefined {
   return GNOSIS_TOKENS.find((token) => token.address.toLowerCase() === address.toLowerCase())
 }

@@ -63,4 +63,18 @@ takes over.
 | `src/lib/tokens.ts` | A small curated Gnosis token list (symbols and decimals verified on-chain). |
 | `src/components/` | Address panel with QR, the committed-bytes table, the rescue panel, and the JSON import/export. |
 
-All the interesting logic lives in `@cowprotocol/cow-drop-sdk` — this app is a form around it.
+## Two SDKs, on purpose
+
+`@cowprotocol/cow-drop-sdk` works out *what the address is* — pure, offline, deterministic.
+[`@cowprotocol/cow-sdk`](https://www.npmjs.com/package/@cowprotocol/cow-sdk) does everything that
+involves talking to CoW: `OrderBookApi` for quotes and order submission, and the chain objects for the
+block explorer, the API path and the wrapped native token, none of which should be retyped here.
+
+The one thing cow-sdk does not cover is the CoW Explorer's own network slugs (`gc`, `arb1`, …) —
+`internalId` is `xdai`, which that explorer does not accept — so `lib/chain.ts` keeps a small local map
+for it.
+
+Quoting note: a drop cannot know its amount ahead of time, so the quote uses a visible **reference
+amount** and only its price. That amount is not decoration — quote too little and the fee dominates,
+making the market look far worse than it is — which is why it is an input rather than a hidden
+constant. It never enters the recipe.

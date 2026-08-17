@@ -2,9 +2,10 @@ import { compileRecipe, swapOnArrival, twapOnArrival, type DropRecipeJson } from
 import { formatUnits, isAddress, type Address } from 'viem'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { BLOCK_EXPLORER, CHAIN, COW_EXPLORER, connect } from './lib/chain.js'
+import { BLOCK_EXPLORER, CHAIN, COW_EXPLORER, WRAPPED_NATIVE, connect } from './lib/chain.js'
+import { applySlippage, quoteMarketPrice, type MarketQuote } from './lib/quote.js'
 import { activateDrop, postPlacedOrders, readDropStatus, type DropStatus } from './lib/drop.js'
-import { GNOSIS_TOKENS, WRAPPED_NATIVE, findToken } from './lib/tokens.js'
+import { GNOSIS_TOKENS, findToken } from './lib/tokens.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
 import { RescuePanel } from './components/RescuePanel.js'
@@ -53,7 +54,7 @@ function toRecipe(form: FormState): DropRecipeJson {
   const sellDecimals = findToken(form.sellToken)?.decimals ?? 18
   const buyDecimals = findToken(form.buyToken)?.decimals ?? 18
   const limitPrice = { price: form.limitPrice, sellDecimals, buyDecimals }
-  const wrapNative = form.wrapNative ? WRAPPED_NATIVE : undefined
+  const wrapNative = form.wrapNative ? (WRAPPED_NATIVE.address as Address) : undefined
 
   if (form.recipeKind === 'twap') {
     return twapOnArrival({
@@ -90,6 +91,13 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
   /** Set when the JSON panel supplies a recipe, which then takes precedence over the form. */
   const [imported, setImported] = useState<DropRecipeJson | null>(null)
+  /**
+   * Quote state. Deliberately *not* part of FormState: the reference amount exists only to get a
+   * price out of the API and must never leak into the recipe, since a drop cannot commit to an amount.
+   */
+  const [referenceAmount, setReferenceAmount] = useState('100')
+  const [quote, setQuote] = useState<MarketQuote | null>(null)
+  const [quoting, setQuoting] = useState(false)
 
   const recipe = useMemo(() => imported ?? toRecipe(form), [imported, form])
 
@@ -156,6 +164,35 @@ export function App() {
   }
 
   const sellToken = findToken(form.sellToken)
+  const buyToken = findToken(form.buyToken)
+
+  const onQuote = async () => {
+    setQuoting(true)
+    setError(null)
+    setQuote(null)
+    try {
+      const decimals = sellToken?.decimals ?? 18
+      const [whole, fraction = ''] = referenceAmount.trim().split('.')
+      const atomic = BigInt(`${whole || '0'}${fraction.padEnd(decimals, '0').slice(0, decimals)}`)
+      if (atomic <= 0n) throw new Error('Reference amount must be greater than zero')
+
+      setQuote(
+        await quoteMarketPrice({
+          sellToken: form.sellToken,
+          buyToken: form.buyToken,
+          sellAmount: atomic,
+          sellDecimals: decimals,
+          buyDecimals: buyToken?.decimals ?? 18,
+          // The drop is the order's owner, so quote it as the drop.
+          from: compiled.ok ? compiled.value.address : PLACEHOLDER_OWNER,
+        }),
+      )
+    } catch (cause) {
+      setError(`Quote failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setQuoting(false)
+    }
+  }
 
   return (
     <main>
@@ -272,6 +309,35 @@ export function App() {
             Wrap native xDAI first
           </label>
         </div>
+        <div className="quote">
+          <label>
+            Reference amount (for the quote only, never part of the recipe)
+            <input value={referenceAmount} onChange={(event) => setReferenceAmount(event.target.value)} />
+          </label>
+          <div className="actions">
+            <button onClick={() => void onQuote()} disabled={quoting}>
+              {quoting ? 'Quoting…' : 'Get market price'}
+            </button>
+            {quote && (
+              <>
+                <span className="quote-price">
+                  market <strong>{quote.price}</strong> {buyToken?.symbol ?? ''} per {sellToken?.symbol ?? ''}
+                </span>
+                {[0.5, 1, 5].map((slippage) => (
+                  <button key={slippage} onClick={() => set('limitPrice', applySlippage(quote.price, slippage))}>
+                    −{slippage}%
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+          <p className="hint">
+            A drop cannot know its amount in advance, so only the quote&apos;s <em>price</em> is used —
+            but the amount still matters, because quoting too little lets the fee dominate and makes the
+            market look worse than it is. The −% buttons set the limit price below market.
+          </p>
+        </div>
+
         <p className="hint">
           Bought tokens go to the <strong>receiver</strong>, defaulting to the owner. Set it to the
           zero address to leave them in the drop instead — it can&apos;t default to the drop&apos;s own

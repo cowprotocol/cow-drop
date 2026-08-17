@@ -5,6 +5,15 @@ Turn a recipe into a drop address, and build the transaction that runs it.
 Everything here is pure except the parts that obviously aren't — no RPC calls, no wallet, no
 network. You give it a recipe, it gives you an address and calldata.
 
+That purity is deliberate, and it is why this package does **not** depend on
+[`@cowprotocol/cow-sdk`](https://www.npmjs.com/package/@cowprotocol/cow-sdk). Address derivation and
+recipe compilation must be deterministic and offline — an address is a commitment, and anything that
+could vary with a network response has no business near it. Its only dependency is `viem`.
+
+Quoting, order submission and chain metadata are the official SDK's job, and `apps/web` uses both:
+this one to work out *what* the address is, cow-sdk to talk to CoW. If you are building on top, do the
+same.
+
 ```bash
 pnpm --filter @cowprotocol/cow-drop-sdk generate   # ABIs + addresses from the foundry build
 pnpm --filter @cowprotocol/cow-drop-sdk build

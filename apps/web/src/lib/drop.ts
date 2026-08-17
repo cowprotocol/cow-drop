@@ -6,9 +6,10 @@ import {
   type CompiledRecipe,
   type DropRecipeJson,
 } from '@cowprotocol/cow-drop-sdk'
+import type { OrderCreation } from '@cowprotocol/cow-sdk'
 import type { Address, Hex, TransactionReceipt } from 'viem'
 
-import { COW_API, publicClient, sendTransaction } from './chain.js'
+import { orderBookApi, publicClient, sendTransaction } from './chain.js'
 
 const ERC20_ABI = [
   { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'uint256' }] },
@@ -67,6 +68,9 @@ export async function activateDrop(params: {
  *
  * The pre-signature is already on-chain, so this is purely making the order visible to solvers —
  * exactly the job the keeper does unattended. Returns the order UIDs the API accepted.
+ *
+ * Submitted through `OrderBookApi` rather than a hand-rolled fetch, so the base URL, the payload type
+ * and the error shapes are the SDK's problem rather than ours.
  */
 export async function postPlacedOrders(receipt: TransactionReceipt, drop: Address): Promise<string[]> {
   const posted: string[] = []
@@ -81,22 +85,16 @@ export async function postPlacedOrders(receipt: TransactionReceipt, drop: Addres
       continue // not a DropOrderPlaced log
     }
 
-    const response = await fetch(`${COW_API}/orders`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(toOrderBookPayload(order, drop)),
-    })
-
-    const body = await response.text()
-    if (!response.ok) {
+    try {
+      posted.push(await orderBookApi.sendOrder(toOrderBookPayload(order, drop) as OrderCreation))
+    } catch (cause) {
       // A duplicate is a success: someone else already posted this order.
-      if (body.includes('DuplicatedOrder')) {
+      if (JSON.stringify(cause).includes('DuplicatedOrder')) {
         posted.push(order.orderUid)
         continue
       }
-      throw new Error(`order book rejected the order (${response.status}): ${body}`)
+      throw cause
     }
-    posted.push(JSON.parse(body) as string)
   }
 
   return posted

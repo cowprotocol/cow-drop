@@ -65,7 +65,7 @@ Each package has its own short README — start with whichever part you're touch
 |---|---|---|
 | [`contracts/`](contracts/README.md) | The three contracts, why `DropExecutor` re-derives the address on every entry point, and why the build settings are load-bearing | foundry |
 | [`packages/sdk/`](packages/sdk/README.md) | Compile a recipe, get an address, build the activation tx | TypeScript, viem |
-| [`apps/web/`](apps/web/README.md) | The demo page: a form that turns into an address | Vite, React |
+| [`apps/web/`](apps/web/README.md) | The demo page: a form that turns into an address | Vite, React, cow-sdk |
 | `recipes/` | Example `.drop.json` files | |
 
 ```
@@ -172,6 +172,14 @@ The functions you'll actually reach for:
 | `parseDropOrderPlaced` / `toOrderBookPayload` | Turn an activation receipt into an order-book submission (pre-sign path only). |
 
 Full reference in [`packages/sdk/README.md`](packages/sdk/README.md).
+
+The SDK deliberately does **not** depend on
+[`@cowprotocol/cow-sdk`](https://www.npmjs.com/package/@cowprotocol/cow-sdk): deriving an address is a
+pure, offline computation and must stay that way, so its only dependency is `viem`. Anything that
+talks to CoW — quotes, order submission, chain metadata, explorer URLs — is the official SDK's job,
+and the web app uses both. `OrderBookApi` posts the pre-signed orders and fetches quotes;
+`getWrappedTokenForChain` and the chain objects supply metadata that would otherwise rot in a
+hardcoded table here.
 
 ## Deployments
 
