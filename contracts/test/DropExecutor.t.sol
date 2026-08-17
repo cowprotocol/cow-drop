@@ -144,6 +144,69 @@ contract DropExecutorTest is Test {
         assertEq(recorder.pings(), 1, "once recipe ran twice");
     }
 
+    /// @dev The griefing question for one-shot drops: can someone burn the single allowed run by
+    ///      activating before the funds arrive? No — `consumed` is written in the same transaction
+    ///      as the calls, so a recipe that reverts rolls the flag back with it. A premature
+    ///      activation costs the caller gas and changes nothing.
+    function test_once_prematureActivationDoesNotBurnTheRun() external {
+        Call[] memory calls = new Call[](1);
+        calls[0] = Call({
+            target: address(token),
+            value: 0,
+            callData: abi.encodeCall(MockERC20.transfer, (owner, 100)),
+            allowFailure: false,
+            isDelegateCall: false
+        });
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "oneshot", once: true, calls: calls}));
+        address drop = executor.dropOf(owner, recipe);
+
+        // Nothing has arrived yet, so the transfer underflows and the whole activation reverts.
+        vm.prank(attacker);
+        vm.expectRevert();
+        executor.activate(owner, recipe);
+
+        assertFalse(executor.consumed(drop), "a failed activation burned the run");
+        assertEq(drop.code.length, 0, "a failed activation should not leave a deployed drop");
+
+        // The funds arrive later and the run is still available.
+        token.mint(drop, 100);
+        vm.prank(keeper);
+        executor.activate(owner, recipe);
+
+        assertEq(token.balanceOf(owner), 100, "recipe did not run after the funds arrived");
+        assertTrue(executor.consumed(drop), "run not marked consumed");
+    }
+
+    /// @dev The trap in the same area. `allowFailure: true` lets a step fail *without* reverting the
+    ///      recipe, so the activation succeeds having done nothing — and `once` is spent. The two
+    ///      flags are safe individually and dangerous together, which is why the SDK refuses the
+    ///      combination at compile time.
+    function test_once_withAllowFailureCanBeBurnedByAnyone() external {
+        Call[] memory calls = new Call[](1);
+        calls[0] = Call({
+            target: address(token),
+            value: 0,
+            callData: abi.encodeCall(MockERC20.transfer, (owner, 100)),
+            allowFailure: true, // <-- the footgun
+            isDelegateCall: false
+        });
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "burnable", once: true, calls: calls}));
+        address drop = executor.dropOf(owner, recipe);
+
+        // No funds yet, but the failure is swallowed, so the activation "succeeds".
+        vm.prank(attacker);
+        executor.activate(owner, recipe);
+        assertTrue(executor.consumed(drop), "expected the run to be spent");
+
+        // The funds arrive, and the recipe can never run again.
+        token.mint(drop, 100);
+        vm.prank(keeper);
+        vm.expectRevert(DropExecutor.AlreadyConsumed.selector);
+        executor.activate(owner, recipe);
+
+        assertEq(token.balanceOf(drop), 100, "funds are stuck at the drop, recoverable only by the owner");
+    }
+
     // --- the attacks -----------------------------------------------------------------------
 
     /// @dev The core attack. `DropExecutor` is the trusted executor of every drop, and

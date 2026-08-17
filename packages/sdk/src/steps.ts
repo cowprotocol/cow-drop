@@ -113,6 +113,64 @@ export const steps = {
     )
   },
 
+  /**
+   * Refuse to proceed unless the drop holds at least `minAmount`.
+   *
+   * The guarantee that nobody activates a drop before its funds have landed cannot come from the
+   * activator, since anyone may activate. It has to be committed into the address — which is what
+   * this does. Put it first in a recipe; it reverts, so a premature activation rolls back entirely
+   * and, critically, does not spend a `once` recipe's single run.
+   *
+   * Pass `token: zero address` to guard the native balance instead.
+   */
+  requireMinBalance(
+    deployment: Pick<DropDeployment, 'recipes'>,
+    params: { token: Address; minAmount: bigint },
+  ): DropCall {
+    if (params.minAmount <= 0n) {
+      throw new Error('requireMinBalance needs a positive minAmount to guard anything')
+    }
+    return recipeCall(
+      deployment,
+      encodeFunctionData({
+        abi: DROP_RECIPES_ABI,
+        functionName: 'requireMinBalance',
+        args: [params.token, params.minAmount],
+      }),
+      // Never swallow a guard's revert — that would defeat its entire purpose.
+      false,
+    )
+  },
+
+  /**
+   * Refuse to proceed outside an absolute time window. Either bound may be omitted.
+   *
+   * Timestamps are absolute because they are fixed when the address is computed; a relative delay
+   * would have to be measured from activation, which is the thing being constrained.
+   */
+  requireTimeWindow(
+    deployment: Pick<DropDeployment, 'recipes'>,
+    params: { notBefore?: bigint; notAfter?: bigint },
+  ): DropCall {
+    const notBefore = params.notBefore ?? 0n
+    const notAfter = params.notAfter ?? 0n
+    if (notBefore === 0n && notAfter === 0n) {
+      throw new Error('requireTimeWindow needs at least one of notBefore or notAfter')
+    }
+    if (notBefore !== 0n && notAfter !== 0n && notAfter <= notBefore) {
+      throw new Error('requireTimeWindow needs notAfter to be later than notBefore')
+    }
+    return recipeCall(
+      deployment,
+      encodeFunctionData({
+        abi: DROP_RECIPES_ABI,
+        functionName: 'requireTimeWindow',
+        args: [notBefore, notAfter],
+      }),
+      false,
+    )
+  },
+
   /** Wrap the drop's whole native balance, so natively-funded drops can trade. */
   wrapNative(deployment: Pick<DropDeployment, 'recipes'>, params: { wrappedNative: Address; allowFailure?: boolean }): DropCall {
     return recipeCall(

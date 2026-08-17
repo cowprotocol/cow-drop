@@ -77,6 +77,17 @@ export interface TwapOnArrivalParams {
   label?: string
   appData?: Hex
   wrapNative?: Address
+  /**
+   * Refuse to activate until this much has arrived, in atomic units.
+   *
+   * Strongly recommended here. This recipe is one-shot, so without a floor anyone may activate it
+   * the moment the first wei lands and the whole schedule gets sized from a part-delivered balance —
+   * which is exactly what happens if a bridge pays out in tranches. The guard reverts, so an early
+   * activation is a no-op rather than a spent run.
+   */
+  minAmount?: bigint
+  /** Refuse to activate before this absolute unix timestamp. */
+  notBefore?: bigint
 }
 
 /**
@@ -91,8 +102,18 @@ export interface TwapOnArrivalParams {
 export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
   const steps: DropRecipeJson['steps'] = []
 
+  // Guards go first, before anything has side effects.
+  if (params.notBefore !== undefined) {
+    steps.push({ type: 'requireTimeWindow', notBefore: params.notBefore.toString() })
+  }
+
   if (params.wrapNative) {
     steps.push({ type: 'wrapNative', wrappedNative: params.wrapNative })
+  }
+
+  // After wrapping, so a native-funded drop is measured in the token it will actually sell.
+  if (params.minAmount !== undefined) {
+    steps.push({ type: 'requireMinBalance', token: params.sellToken, minAmount: params.minAmount.toString() })
   }
 
   steps.push({

@@ -262,6 +262,80 @@ contract DropRecipesTest is Test {
         executor.activate(owner, recipe);
     }
 
+    // --- guards -----------------------------------------------------------------------------
+
+    /// @dev The point of the guard: a one-shot recipe cannot be spent on a part-delivered balance,
+    ///      even though anyone may activate it. The guard reverts, so the run survives intact.
+    function test_requireMinBalance_protectsAOneShotRecipeFromEarlyActivation() external {
+        Call[] memory calls = new Call[](2);
+        calls[0] = Call({
+            target: address(recipes),
+            value: 0,
+            callData: abi.encodeCall(DropRecipes.requireMinBalance, (address(sellToken), 1000e18)),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+        calls[1] = Call({
+            target: address(recipes),
+            value: 0,
+            callData: abi.encodeCall(
+                DropRecipes.twapFromBalance,
+                (address(sellToken), address(buyToken), address(0), uint256(12), uint256(1 hours), uint256(0), uint256(95), uint256(100), bytes32(0), bytes32(0))
+            ),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "guarded", once: true, calls: calls}));
+        address drop = executor.dropOf(owner, recipe);
+
+        // A bridge pays out a first tranche and an eager keeper tries to activate.
+        sellToken.mint(drop, 250e18);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(DropRecipes.BalanceTooLow.selector, 250e18, 1000e18));
+        executor.activate(owner, recipe);
+
+        assertFalse(executor.consumed(drop), "the early activation spent the run");
+        assertEq(composableCow.createCount(), 0, "a TWAP was registered on a partial balance");
+
+        // The rest arrives and the recipe runs once, on the full amount.
+        sellToken.mint(drop, 750e18);
+        vm.prank(keeper);
+        executor.activate(owner, recipe);
+
+        assertTrue(executor.consumed(drop), "run not spent after a valid activation");
+        assertEq(composableCow.createCount(), 1, "TWAP not registered");
+    }
+
+    function test_requireMinBalance_guardsTheNativeBalanceToo() external {
+        bytes memory recipe =
+            _recipe("native-guard", abi.encodeCall(DropRecipes.requireMinBalance, (address(0), 2 ether)));
+        address drop = executor.dropOf(owner, recipe);
+
+        vm.deal(drop, 1 ether);
+        vm.expectRevert(abi.encodeWithSelector(DropRecipes.BalanceTooLow.selector, 1 ether, 2 ether));
+        executor.activate(owner, recipe);
+
+        vm.deal(drop, 2 ether);
+        executor.activate(owner, recipe); // now passes
+    }
+
+    function test_requireTimeWindow_rejectsEarlyAndLateActivation() external {
+        uint256 opens = block.timestamp + 1 days;
+        uint256 closes = block.timestamp + 2 days;
+        bytes memory recipe =
+            _recipe("window", abi.encodeCall(DropRecipes.requireTimeWindow, (opens, closes)));
+
+        vm.expectRevert(abi.encodeWithSelector(DropRecipes.TooEarly.selector, opens));
+        executor.activate(owner, recipe);
+
+        vm.warp(opens + 1 hours);
+        executor.activate(owner, recipe); // inside the window
+
+        vm.warp(closes + 1);
+        vm.expectRevert(abi.encodeWithSelector(DropRecipes.TooLate.selector, closes));
+        executor.activate(owner, recipe);
+    }
+
     // --- generic steps ----------------------------------------------------------------------
 
     function test_wrapNative_wrapsWhateverNativeBalanceArrived() external {

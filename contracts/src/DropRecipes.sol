@@ -33,6 +33,15 @@ contract DropRecipes {
     /// @notice TWAP requires at least two parts; one part is a plain swap.
     error TooFewParts();
 
+    /// @notice The drop holds less than the recipe requires to proceed.
+    error BalanceTooLow(uint256 available, uint256 required);
+
+    /// @notice Activated before the recipe's window opened.
+    error TooEarly(uint256 notBefore);
+
+    /// @notice Activated after the recipe's window closed.
+    error TooLate(uint256 notAfter);
+
     /// @notice Emitted when a pre-signed order is placed, carrying everything an off-chain poster
     ///         needs to submit it to the order book. The emitter is the drop.
     event DropOrderPlaced(bytes orderUid, LibCowOrder.Data order);
@@ -183,6 +192,35 @@ contract DropRecipes {
         COMPOSABLE_COW.createWithContext(params, CURRENT_BLOCK_TIMESTAMP_FACTORY, "", true);
 
         paramsHash = keccak256(abi.encode(params));
+    }
+
+    // --- guards -------------------------------------------------------------------------------
+    //
+    // Activation is permissionless, so "nobody triggers this early" cannot be a promise made by
+    // whoever activates — it has to be a property of the recipe. These guards are ordinary steps:
+    // they are committed into the drop address like everything else, so no activator can skip them,
+    // and because they revert rather than return false, a premature activation rolls back whole.
+    // That matters most for a `once` recipe, where the alternative is spending the single run on a
+    // half-delivered balance.
+
+    /// @notice Revert unless the drop holds at least `minAmount`. Pass `token == address(0)` for the
+    ///         native balance.
+    /// @dev Must be delegatecalled, like every primitive here — reading the drop's balance is only
+    ///      possible when `address(this)` *is* the drop. The drop address cannot be passed in as an
+    ///      argument, because arguments are committed into that very address.
+    function requireMinBalance(address token, uint256 minAmount) external view {
+        uint256 available = token == address(0) ? address(this).balance : IERC20Like(token).balanceOf(address(this));
+        if (available < minAmount) revert BalanceTooLow(available, minAmount);
+    }
+
+    /// @notice Revert outside the window `[notBefore, notAfter]`. Either bound may be 0 for
+    ///         "unbounded".
+    /// @dev Absolute timestamps, so they are fixed when the address is computed. A relative delay
+    ///      would need a reference point, and the only honest one — activation time — is what this
+    ///      is trying to constrain.
+    function requireTimeWindow(uint256 notBefore, uint256 notAfter) external view {
+        if (notBefore != 0 && block.timestamp < notBefore) revert TooEarly(notBefore);
+        if (notAfter != 0 && block.timestamp > notAfter) revert TooLate(notAfter);
     }
 
     // --- generic steps ------------------------------------------------------------------------

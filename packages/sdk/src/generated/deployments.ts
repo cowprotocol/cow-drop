@@ -9,7 +9,7 @@ export const DEPLOYMENTS: Record<number, DropDeployment> = {
     chainId: 100,
     factory: '0xdaB53E4DA62fc84D0A96b130E647a61755028FDD',
     executor: '0xB5C464EC6a288a6aa8146415697d6c53DCFE9b2b',
-    recipes: '0xec2C544D83a25efc5368849D5F3AC817A9B84241',
+    recipes: '0xC5169644b3B3e9253FB0eaC0d4e98D2e4d6f0210',
     shedImplementation: '0xF0D400089d5b9fACA64E3422AD6614546587cfFB',
     proxyCreationCode: PROXY_CREATION_CODE,
   },

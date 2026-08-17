@@ -132,7 +132,7 @@ verified by deploying against a Gnosis fork.
 |---|---|---|
 | `COWShedForComposableCoW` (v2.1.0) | `0xF0D400089d5b9fACA64E3422AD6614546587cfFB` | already deployed |
 | `COWShedExecutorFactory` | `0xdaB53E4DA62fc84D0A96b130E647a61755028FDD` | **not yet broadcast** |
-| `DropRecipes` | `0xec2C544D83a25efc5368849D5F3AC817A9B84241` | **not yet broadcast** |
+| `DropRecipes` | `0xC5169644b3B3e9253FB0eaC0d4e98D2e4d6f0210` | **not yet broadcast** |
 | `DropExecutor` | `0xB5C464EC6a288a6aa8146415697d6c53DCFE9b2b` | **not yet broadcast** |
 
 The shed implementation is the *canonical* cow-shed v2.1.0 build, not a fork — and because a CREATE2
@@ -172,6 +172,28 @@ Two consequences of the design that are easy to miss:
 - **Drops are re-triggerable by design**, since `trustedExecuteHooks` consumes no nonce. That is
   what makes a reusable deposit address work. Set `"once": true` for one-shot recipes, which
   `DropExecutor` enforces with a per-drop flag.
+
+### One-shot recipes and premature activation
+
+Activation is permissionless, so "nobody triggers this early" can never be a promise made by
+whoever activates. For a `"once": true` recipe that matters, because the single run could be spent
+at the wrong moment. Three things bound the risk:
+
+- **A failing recipe cannot spend the run.** `consumed` is written in the same transaction as the
+  calls, so a revert rolls it back. Activating a drop that holds nothing costs the caller gas and
+  changes nothing (`test_once_prematureActivationDoesNotBurnTheRun`).
+- **A guard makes "not yet" an explicit revert.** `requireMinBalance` and `requireTimeWindow` are
+  ordinary steps, committed into the address like everything else, so no activator can skip them.
+  Put `minAmount` on any one-shot recipe funded by a bridge that might pay out in tranches — without
+  it, the first tranche to land sizes the whole schedule.
+- **`allowFailure` + `once` is refused at compile time.** Together they are burnable by anyone: the
+  step fails silently, the activation succeeds having done nothing, and the run is gone
+  (`test_once_withAllowFailureCanBeBurnedByAnyone`).
+
+What is *not* available is a guarantee that only a chosen party may ever activate. That would mean
+committing an authorised activator into the recipe and checking it in `DropExecutor` — cheap to add,
+but it gives up the property that makes drops interesting, so it is a per-recipe decision nobody has
+asked for yet. Note also that a spent run is never lost funds: the owner can still sweep.
 
 Never discover a user's drop from `ownerOf` or `COWShedBuilt`: `initializeProxyWithSetup` is
 permissionless, so anyone can create a shed that reports someone else as its owner. Always recompute

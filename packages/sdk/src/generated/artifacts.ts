@@ -172,6 +172,42 @@ export const DROP_RECIPES_ABI = [
   },
   {
     "type": "function",
+    "name": "requireMinBalance",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "minAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "requireTimeWindow",
+    "inputs": [
+      {
+        "name": "notBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "notAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "twapFromBalance",
     "inputs": [
       {
@@ -330,6 +366,22 @@ export const DROP_RECIPES_ABI = [
   },
   {
     "type": "error",
+    "name": "BalanceTooLow",
+    "inputs": [
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "LimitPriceTooLow",
     "inputs": []
   },
@@ -340,8 +392,30 @@ export const DROP_RECIPES_ABI = [
   },
   {
     "type": "error",
+    "name": "TooEarly",
+    "inputs": [
+      {
+        "name": "notBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TooFewParts",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooLate",
+    "inputs": [
+      {
+        "name": "notAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

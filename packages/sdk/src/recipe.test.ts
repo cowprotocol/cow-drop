@@ -93,6 +93,70 @@ describe('compileRecipe', () => {
     expect(new Set([base, differentLabel, differentOwner, differentOnce, differentPrice]).size).toBe(5)
   })
 
+  it('refuses allowFailure in a once recipe, which anyone could otherwise spend', () => {
+    expect(() =>
+      compileRecipe({
+        ...swapRecipe(),
+        once: true,
+        steps: [{ type: 'approveMax', token: WXDAI, spender: COW, allowFailure: true }],
+      }),
+    ).toThrow(/could be spent by anyone/)
+  })
+
+  it('allows allowFailure in a reusable recipe', () => {
+    expect(() =>
+      compileRecipe({
+        ...swapRecipe(),
+        once: false,
+        steps: [{ type: 'approveMax', token: WXDAI, spender: COW, allowFailure: true }],
+      }),
+    ).not.toThrow()
+  })
+
+  it('compiles guards and keeps them non-optional', () => {
+    const compiled = compileRecipe({
+      ...swapRecipe(),
+      steps: [
+        { type: 'requireMinBalance', token: WXDAI, minAmount: '1000000000000000000000' },
+        { type: 'requireTimeWindow', notBefore: '2000000000' },
+        ...swapRecipe().steps,
+      ],
+    })
+
+    expect(compiled.recipe.calls).toHaveLength(3)
+    // A guard that could be skipped is not a guard.
+    expect(compiled.recipe.calls.slice(0, 2).every((call) => !call.allowFailure)).toBe(true)
+    expect(compiled.recipe.calls.slice(0, 2).every((call) => call.isDelegateCall)).toBe(true)
+  })
+
+  it('rejects a degenerate guard rather than silently compiling a no-op', () => {
+    expect(() =>
+      compileRecipe({ ...swapRecipe(), steps: [{ type: 'requireTimeWindow' }, ...swapRecipe().steps] }),
+    ).toThrow(/at least one of notBefore or notAfter/)
+    expect(() =>
+      compileRecipe({
+        ...swapRecipe(),
+        steps: [{ type: 'requireMinBalance', token: WXDAI, minAmount: '0' }, ...swapRecipe().steps],
+      }),
+    ).toThrow(/positive minAmount/)
+  })
+
+  it('twapOnArrival puts a minAmount guard ahead of the schedule', () => {
+    const recipe = twapOnArrival({
+      chainId: GNOSIS,
+      owner: OWNER,
+      sellToken: WXDAI,
+      buyToken: COW,
+      parts: 12,
+      partDuration: 3600,
+      limitPrice: { price: '0.02', sellDecimals: 18, buyDecimals: 18 },
+      minAmount: 1000n * 10n ** 18n,
+    })
+
+    expect(recipe.steps.map((s) => s.type)).toEqual(['requireMinBalance', 'twapFromBalance'])
+    expect(recipe.once).toBe(true)
+  })
+
   it('rejects a recipe with no steps', () => {
     expect(() => compileRecipe({ ...swapRecipe(), steps: [] })).toThrow(/at least one step/)
   })

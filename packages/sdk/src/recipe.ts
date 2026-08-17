@@ -35,6 +35,8 @@ export type DropStepJson =
       salt?: Hex
       allowFailure?: boolean
     }
+  | { type: 'requireMinBalance'; token: Address; minAmount: number | string }
+  | { type: 'requireTimeWindow'; notBefore?: number | string; notAfter?: number | string }
   | { type: 'wrapNative'; wrappedNative: Address; allowFailure?: boolean }
   | { type: 'approveMax'; token: Address; spender: Address; allowFailure?: boolean }
   | {
@@ -104,6 +106,20 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
     calls: json.steps.map((step) => compileStep(step, deployment)),
   }
 
+  // `once` and `allowFailure` are each fine alone and dangerous together: a step that fails without
+  // reverting lets an activation succeed having done nothing, which spends the single run and leaves
+  // the drop permanently inert. Because activation is permissionless, anyone could do that to
+  // anyone, at no cost beyond gas. Refused rather than warned about.
+  if (recipe.once) {
+    const index = recipe.calls.findIndex((call) => call.allowFailure)
+    if (index !== -1) {
+      throw new Error(
+        `step ${index + 1} sets allowFailure in a "once" recipe: the run could be spent by anyone ` +
+          `without the step taking effect. Drop allowFailure, or make the recipe reusable.`,
+      )
+    }
+  }
+
   const setupData = encodeRecipe(recipe)
   return {
     recipe,
@@ -137,6 +153,16 @@ function compileStep(step: DropStepJson, deployment: DropDeployment) {
         appData: step.appData,
         salt: step.salt,
         allowFailure: step.allowFailure,
+      })
+    case 'requireMinBalance':
+      return steps.requireMinBalance(deployment, {
+        token: step.token,
+        minAmount: BigInt(step.minAmount),
+      })
+    case 'requireTimeWindow':
+      return steps.requireTimeWindow(deployment, {
+        notBefore: step.notBefore === undefined ? undefined : BigInt(step.notBefore),
+        notAfter: step.notAfter === undefined ? undefined : BigInt(step.notAfter),
       })
     case 'wrapNative':
       return steps.wrapNative(deployment, step)
