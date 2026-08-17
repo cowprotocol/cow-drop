@@ -195,6 +195,20 @@ describe('compileRecipe', () => {
     expect(() => compileRecipe({ ...swapRecipe(), version: 2 as 1 })).toThrow(/unsupported recipe version/)
   })
 
+  it('rejects an order that trades a token for itself', () => {
+    expect(() =>
+      compileRecipe(
+        swapOnArrival({
+          chainId: GNOSIS,
+          owner: OWNER,
+          sellToken: WXDAI,
+          buyToken: WXDAI,
+          limitPrice: { price: '1', sellDecimals: 18, buyDecimals: 18 },
+        }),
+      ),
+    ).toThrow(/cannot trade a token for itself/)
+  })
+
   it('rejects an unsupported chain', () => {
     expect(() => compileRecipe({ ...swapRecipe(), chainId: 999999 })).toThrow(/does not support chain/)
   })

@@ -1,7 +1,7 @@
 import type { Address } from 'viem'
 
 import { wrappedNativeToken } from './chain.js'
-import { GNOSIS_TOKENS, type TokenInfo } from './tokens.js'
+import { GNOSIS_TOKENS, SEPOLIA_TOKENS, type TokenInfo } from './tokens.js'
 
 export type { TokenInfo }
 
@@ -49,10 +49,17 @@ export async function fetchTokenList(chainId: number): Promise<TokenInfo[]> {
       }))
       .sort((a, b) => a.symbol.localeCompare(b.symbol))
 
-    return withWrappedNative(tokens, chainId)
+    return withWrappedNative(tokens.length > 0 ? tokens : builtIn(chainId), chainId)
   } catch {
-    return withWrappedNative(chainId === 100 ? GNOSIS_TOKENS : [], chainId)
+    return withWrappedNative(builtIn(chainId), chainId)
   }
+}
+
+/** Built-in lists for chains the CoW list does not cover, or as an offline fallback. */
+function builtIn(chainId: number): TokenInfo[] {
+  if (chainId === 100) return GNOSIS_TOKENS
+  if (chainId === 11155111) return SEPOLIA_TOKENS
+  return []
 }
 
 /**

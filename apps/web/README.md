@@ -18,7 +18,13 @@ Six panels, top to bottom, in the order you'd actually use them:
 2. **Parameters** — network, tokens, limit price, receiver, owner. The **network** selector lists the
    chains from `chains.ts` and defaults to whatever your wallet is on when that is one of them. Switching
    network does not move the drop address — the addresses are identical on every chain — it only changes
-   which chain you fund. Both recipes work on every listed chain. The **owner** matters: it's who can recover
+   which chain you fund. Both recipes work on every listed chain.
+
+   Picking a network also asks the wallet to switch, adding the chain first if the wallet does not know
+   it, and the page follows the wallet's own `chainChanged` events — so the two cannot drift apart. A
+   declined prompt is not treated as an error; the mismatch banner says the wallet is elsewhere. Token
+   selections reset on a chain change, because a token address from the previous chain would otherwise
+   compile into a valid-looking recipe for a token that does not exist there. The **owner** matters: it's who can recover
    the funds if the recipe turns out to be unrunnable, and it defaults to your connected wallet. The
    **receiver** defaults to the owner, so proceeds land in your wallet rather than piling up in the
    drop; the zero address leaves them in the drop for chaining.

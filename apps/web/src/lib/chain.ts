@@ -190,6 +190,81 @@ export async function walletChainId(): Promise<number | null> {
   }
 }
 
+/** Thrown when the user declines a wallet prompt. Not an error worth shouting about. */
+export const USER_REJECTED = 4001
+
+function errorCode(cause: unknown): number | undefined {
+  return typeof cause === 'object' && cause !== null && 'code' in cause
+    ? (cause as { code?: number }).code
+    : undefined
+}
+
+export function isUserRejection(cause: unknown): boolean {
+  return errorCode(cause) === USER_REJECTED
+}
+
+/**
+ * Ask the wallet to switch chains, adding the chain first if it does not know it.
+ *
+ * A wallet that has never seen the chain answers `wallet_switchEthereumChain` with 4902; the recovery
+ * is `wallet_addEthereumChain`, whose parameters we can fill entirely from cow-sdk's chain info plus
+ * the RPC this app would use anyway.
+ *
+ * Throws on rejection so the caller can tell "declined" from "failed" — see `isUserRejection`.
+ */
+export async function switchChain(chainId: number): Promise<void> {
+  const provider = injected()
+  const hexChainId: Hex = `0x${chainId.toString(16)}`
+
+  try {
+    await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hexChainId }] })
+    return
+  } catch (cause) {
+    // 4902: the wallet does not have this chain configured.
+    if (errorCode(cause) !== 4902) throw cause
+  }
+
+  const info = chainInfo(chainId)
+  await provider.request({
+    method: 'wallet_addEthereumChain',
+    params: [
+      {
+        chainId: hexChainId,
+        chainName: info.label,
+        nativeCurrency: {
+          name: info.nativeCurrency.name ?? 'Ether',
+          symbol: info.nativeCurrency.symbol ?? 'ETH',
+          decimals: info.nativeCurrency.decimals ?? 18,
+        },
+        rpcUrls: [rpcUrl(chainId)],
+        blockExplorerUrls: [info.blockExplorer.url],
+      },
+    ],
+  } as Parameters<EIP1193Provider['request']>[0])
+}
+
+/**
+ * Follow the wallet's own network changes, so the page and the wallet cannot silently disagree.
+ *
+ * Returns an unsubscribe function, or a no-op when there is no wallet.
+ */
+export function onChainChanged(listener: (chainId: number) => void): () => void {
+  if (!hasInjectedWallet()) return () => {}
+
+  const provider = injected() as EIP1193Provider & {
+    on?: (event: string, handler: (value: unknown) => void) => void
+    removeListener?: (event: string, handler: (value: unknown) => void) => void
+  }
+
+  const handler = (value: unknown) => {
+    const parsed = typeof value === 'string' ? Number.parseInt(value, 16) : Number(value)
+    if (Number.isFinite(parsed)) listener(parsed)
+  }
+
+  provider.on?.('chainChanged', handler)
+  return () => provider.removeListener?.('chainChanged', handler)
+}
+
 /**
  * Connect an injected wallet. Deliberately minimal: activating a drop is a single unprivileged
  * transaction that anyone can send, so there is nothing here worth a connector framework.
@@ -201,10 +276,7 @@ export async function connect(chainId: number): Promise<Address> {
 
   const current = (await provider.request({ method: 'eth_chainId' })) as Hex
   if (Number.parseInt(current, 16) !== chainId) {
-    await provider.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: `0x${chainId.toString(16)}` }],
-    })
+    await switchChain(chainId)
   }
 
   return account

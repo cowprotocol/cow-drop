@@ -13,6 +13,9 @@ import {
   blockExplorer,
   connect,
   cowExplorer,
+  isUserRejection,
+  onChainChanged,
+  switchChain,
   walletChainId,
   wrappedNative,
 } from './lib/chain.js'
@@ -135,6 +138,27 @@ export function App() {
     setForm((previous) => ({ ...previous, [key]: value }))
   }
 
+  /**
+   * Change network, and ask the wallet to come along.
+   *
+   * The selection changes either way: the page is useful without a wallet, since computing an address
+   * needs nothing on-chain. A declined prompt is not an error — the mismatch banner already says the
+   * wallet is elsewhere — so only real failures surface.
+   */
+  const onNetworkChange = async (chainId: number) => {
+    set('chainId', chainId)
+    setError(null)
+    if (!account) return
+
+    try {
+      await switchChain(chainId)
+      setWalletChain(chainId)
+    } catch (cause) {
+      if (isUserRejection(cause)) return
+      setError(`Could not switch the wallet's network: ${cause instanceof Error ? cause.message : String(cause)}`)
+    }
+  }
+
   const refresh = useCallback(async () => {
     if (!compiled.ok) return
     const sellStep = recipe.steps.find((step) => 'sellToken' in step)
@@ -152,18 +176,45 @@ export function App() {
   }, [refresh])
 
   useEffect(() => {
-    void fetchTokenList(form.chainId).then(setTokens)
+    void fetchTokenList(form.chainId).then((loaded) => {
+      setTokens(loaded)
+
+      // Token addresses are chain-specific, so the previous chain's selection is meaningless here.
+      // Left alone, the picker would read blank while the recipe silently compiled with an address
+      // that does not exist on this chain — a valid-looking order for a token that isn't there.
+      setForm((previous) => {
+        if (loaded.length === 0) return previous
+
+        const known = (address: string) => loaded.some((t) => t.address.toLowerCase() === address.toLowerCase())
+        if (known(previous.sellToken) && known(previous.buyToken)) return previous
+
+        const sell = findToken(loaded, wrappedNative(form.chainId)) ?? loaded[0]!
+        const buy = loaded.find((t) => t.address !== sell.address) ?? sell
+        return { ...previous, sellToken: sell.address, buyToken: buy.address }
+      })
+    })
   }, [form.chainId])
 
   // Default to whatever network the wallet is already on, when we support it.
   useEffect(() => {
-    void walletChainId().then((walletChain) => {
-      setWalletChain(walletChain)
-      if (walletChain !== null && getDropChain(walletChain)) {
-        setForm((previous) => (previous.chainId === DEFAULT_CHAIN_ID ? { ...previous, chainId: walletChain } : previous))
+    void walletChainId().then((chain) => {
+      setWalletChain(chain)
+      if (chain !== null && getDropChain(chain)) {
+        setForm((previous) => (previous.chainId === DEFAULT_CHAIN_ID ? { ...previous, chainId: chain } : previous))
       }
     })
   }, [])
+
+  // And keep following it, so switching in the wallet moves the page rather than leaving the two
+  // disagreeing. Switching here asks the wallet too, so this closes the loop from both directions.
+  useEffect(
+    () =>
+      onChainChanged((chain) => {
+        setWalletChain(chain)
+        if (getDropChain(chain)) setForm((previous) => ({ ...previous, chainId: chain }))
+      }),
+    [],
+  )
 
   const onConnect = async () => {
     setError(null)
@@ -281,7 +332,7 @@ export function App() {
         <NetworkPicker
           chainId={form.chainId}
           walletChainId={walletChain}
-          onChange={(chainId) => set('chainId', chainId)}
+          onChange={(chainId) => void onNetworkChange(chainId)}
         />
         <div className="grid">
           <label>

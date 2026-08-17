@@ -55,6 +55,17 @@ export interface TwapFromBalanceParams {
 const ZERO_BYTES32: Hex = `0x${'00'.repeat(32)}`
 
 /**
+ * An order selling a token for itself is invalid — TWAP's own `validate` rejects it and GPv4 would
+ * too. Caught here so it fails while authoring rather than at activation, which for a committed recipe
+ * means a drop address that can never run.
+ */
+function assertDistinctTokens(sellToken: Address, buyToken: Address): void {
+  if (sellToken.toLowerCase() === buyToken.toLowerCase()) {
+    throw new Error(`sellToken and buyToken are the same (${sellToken}); an order cannot trade a token for itself`)
+  }
+}
+
+/**
  * The step registry. Each entry compiles a recipe step into one `DropCall`.
  *
  * This is the extension point: a new capability is a new function here plus a matching primitive in
@@ -63,6 +74,7 @@ const ZERO_BYTES32: Hex = `0x${'00'.repeat(32)}`
 export const steps = {
   /** Sell the drop's whole balance as one pre-signed order (path P). */
   presignSellAll(deployment: Pick<DropDeployment, 'recipes'>, params: PresignSellAllParams): DropCall {
+    assertDistinctTokens(params.sellToken, params.buyToken)
     return recipeCall(
       deployment,
       encodeFunctionData({
@@ -84,6 +96,7 @@ export const steps = {
 
   /** Split the drop's whole balance into parts and register a TWAP (path C). */
   twapFromBalance(deployment: Pick<DropDeployment, 'recipes'>, params: TwapFromBalanceParams): DropCall {
+    assertDistinctTokens(params.sellToken, params.buyToken)
     if (params.parts < 2n) {
       throw new Error('a TWAP needs at least 2 parts; use presignSellAll for a single swap')
     }
