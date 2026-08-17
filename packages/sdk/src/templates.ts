@@ -16,7 +16,17 @@ export interface SwapOnArrivalParams {
   salt?: Hex
   sellToken: Address
   buyToken: Address
-  /** Where the bought tokens go. Omit to leave them in the drop. */
+  /**
+   * Where the bought tokens go. **Defaults to the owner**, which is almost always what you want:
+   * otherwise the proceeds sit in the drop and need a second transaction to get out.
+   *
+   * Pass the zero address to deliberately leave them in the drop — CoW's "pay the order's owner"
+   * sentinel, and the drop *is* the order's owner. That is the right choice only when something else
+   * will act on them there.
+   *
+   * Note this cannot default to the drop's own address: that address is derived from these very
+   * parameters, so naming it here would be circular. The sentinel exists for exactly that reason.
+   */
   receiver?: Address
   limitPrice: LimitPriceJson
   /** Order lifetime once activated. Defaults to 30 minutes. */
@@ -48,7 +58,7 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
     type: 'presignSellAll',
     sellToken: params.sellToken,
     buyToken: params.buyToken,
-    receiver: params.receiver,
+    receiver: params.receiver ?? params.owner,
     limitPrice: params.limitPrice,
     validitySeconds: params.validitySeconds ?? 30 * 60,
     appData: params.appData,
@@ -70,6 +80,7 @@ export interface TwapOnArrivalParams {
   owner: Address
   sellToken: Address
   buyToken: Address
+  /** Where the bought tokens go. Defaults to the owner — see `SwapOnArrivalParams.receiver`. */
   receiver?: Address
   /** Number of parts to split the arrived balance into. */
   parts: number
@@ -125,7 +136,7 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
     type: 'twapFromBalance',
     sellToken: params.sellToken,
     buyToken: params.buyToken,
-    receiver: params.receiver,
+    receiver: params.receiver ?? params.owner,
     parts: params.parts,
     partDuration: params.partDuration,
     span: params.span,

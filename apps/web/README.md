@@ -13,10 +13,12 @@ Optional: `VITE_RPC_URL` to use your own Gnosis RPC instead of the public one.
 
 Six panels, top to bottom, in the order you'd actually use them:
 
-1. **Template** — swap on arrival, or TWAP on arrival. The hint text under the tabs explains what
+1. **Recipe** — swap on arrival, or TWAP on arrival. The hint text under the tabs explains what
    each one needs afterwards (a posted order vs. nothing at all).
 2. **Parameters** — tokens, limit price, receiver, owner. The **owner** matters: it's who can recover
-   the funds if the recipe turns out to be unrunnable, and it defaults to your connected wallet.
+   the funds if the recipe turns out to be unrunnable, and it defaults to your connected wallet. The
+   **receiver** defaults to the owner, so proceeds land in your wallet rather than piling up in the
+   drop; the zero address leaves them in the drop for chaining.
 3. **Your drop address** — updates live as you type, with a QR code. Nothing is deployed at it yet,
    and funds sent before deployment are safe; the recipe spends them on activation.
 4. **What the address commits to** — the compiled calls and the exact `setupData` bytes. This is the

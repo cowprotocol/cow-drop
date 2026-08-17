@@ -9,6 +9,7 @@
       "type": "presignSellAll",
       "sellToken": "0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0",
       "buyToken": "0x177127622c4A00F3d409B75571e12cB3c8973d3c",
+      "receiver": "0x1111111111111111111111111111111111111111",
       "limitPrice": {
         "price": "2.5",
         "sellDecimals": 6,

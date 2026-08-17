@@ -46,6 +46,11 @@ await walletClient.sendTransaction(tx)
 | `compileRecipe(json, deployment?)` | The one you'll use. Recipe file → `{ address, setupData, recipe, deployment }`. Validates as it goes and throws on anything ambiguous. |
 | `swapOnArrival(params)` | Template: sell whatever lands here, once, at a limit price. Reusable — later arrivals get sold too. |
 | `twapOnArrival(params)` | Template: split whatever lands here into parts and sell over time. One-shot. |
+
+A *template* is a function; a *recipe* is what it returns and what the address commits to. The
+distinction is useful in code and not worth making a user learn, so the UI says "recipe" throughout.
+Both templates default `receiver` to the `owner` — proceeds in your wallet rather than piling up in
+the drop. Pass the zero address to leave them in the drop instead.
 | `steps.*` | Build individual steps by hand: `presignSellAll`, `twapFromBalance`, `requireMinBalance`, `requireTimeWindow`, `wrapNative`, `approveMax`, and `raw` for anything else. |
 
 ### Addresses and encoding

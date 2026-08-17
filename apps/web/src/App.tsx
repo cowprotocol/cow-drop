@@ -10,12 +10,17 @@ import { RecipeJson } from './components/RecipeJson.js'
 import { RescuePanel } from './components/RescuePanel.js'
 import { StepTable } from './components/StepTable.js'
 
-type Template = 'swap' | 'twap'
+/**
+ * Which recipe to build. Named for what the user sees: the SDK calls these templates, because
+ * there a template is a function that produces a recipe — a distinction worth keeping in code and
+ * not worth making a user learn.
+ */
+type RecipeKind = 'swap' | 'twap'
 
 const PLACEHOLDER_OWNER: Address = '0x0000000000000000000000000000000000000001'
 
 interface FormState {
-  template: Template
+  recipeKind: RecipeKind
   owner: string
   sellToken: Address
   buyToken: Address
@@ -28,7 +33,7 @@ interface FormState {
 }
 
 const INITIAL: FormState = {
-  template: 'swap',
+  recipeKind: 'swap',
   owner: '',
   sellToken: GNOSIS_TOKENS[0]!.address,
   buyToken: GNOSIS_TOKENS[2]!.address,
@@ -49,7 +54,7 @@ function toRecipe(form: FormState): DropRecipeJson {
   const limitPrice = { price: form.limitPrice, sellDecimals, buyDecimals }
   const wrapNative = form.wrapNative ? WRAPPED_NATIVE : undefined
 
-  if (form.template === 'twap') {
+  if (form.recipeKind === 'twap') {
     return twapOnArrival({
       chainId: CHAIN.id,
       owner,
@@ -175,23 +180,23 @@ export function App() {
       </header>
 
       <section>
-        <h2>1 &middot; Pick a template</h2>
+        <h2>1 &middot; Pick a recipe</h2>
         <div className="tabs">
           <button
-            className={form.template === 'swap' ? 'active' : ''}
-            onClick={() => set('template', 'swap')}
+            className={form.recipeKind === 'swap' ? 'active' : ''}
+            onClick={() => set('recipeKind', 'swap')}
           >
             Swap on arrival
           </button>
           <button
-            className={form.template === 'twap' ? 'active' : ''}
-            onClick={() => set('template', 'twap')}
+            className={form.recipeKind === 'twap' ? 'active' : ''}
+            onClick={() => set('recipeKind', 'twap')}
           >
             TWAP on arrival
           </button>
         </div>
         <p className="hint">
-          {form.template === 'swap'
+          {form.recipeKind === 'swap'
             ? 'Sells whatever lands at the address once, at your limit price. Uses the pre-sign path: no watch tower needed, but the order is posted to the API after activation.'
             : 'Splits whatever lands at the address into parts and sells them over time. Uses ComposableCoW: after one activation the watch tower posts each part unattended.'}
         </p>
@@ -233,14 +238,14 @@ export function App() {
             <input value={form.limitPrice} onChange={(event) => set('limitPrice', event.target.value)} />
           </label>
           <label>
-            Receiver (blank = keep in the drop)
+            Receiver (blank = the owner)
             <input
               placeholder="0x…"
               value={form.receiver}
               onChange={(event) => set('receiver', event.target.value)}
             />
           </label>
-          {form.template === 'swap' ? (
+          {form.recipeKind === 'swap' ? (
             <label>
               Order validity (minutes)
               <input value={form.validityMinutes} onChange={(event) => set('validityMinutes', event.target.value)} />
@@ -266,6 +271,12 @@ export function App() {
             Wrap native xDAI first
           </label>
         </div>
+        <p className="hint">
+          Bought tokens go to the <strong>receiver</strong>, defaulting to the owner. Set it to the
+          zero address to leave them in the drop instead — it can&apos;t default to the drop&apos;s own
+          address, because that address is derived from these parameters and naming it here would be
+          circular.
+        </p>
       </section>
 
       {compiled.ok ? (

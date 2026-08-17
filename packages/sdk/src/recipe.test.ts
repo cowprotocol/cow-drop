@@ -35,12 +35,13 @@ describe('compileRecipe', () => {
   it('is deterministic regardless of JSON key order or formatting', () => {
     const a = compileRecipe(swapRecipe())
 
-    // Same recipe, keys written in a different order — as a hand-edited or re-serialised file
-    // would be. The address must not move.
-    const reordered = JSON.parse(
-      JSON.stringify(swapRecipe(), ['steps', 'type', 'sellToken', 'buyToken', 'limitPrice', 'price', 'sellDecimals', 'buyDecimals', 'validitySeconds', 'owner', 'chainId', 'label', 'once', 'version']),
-    ) as DropRecipeJson
-    const b = compileRecipe(reordered)
+    // Same recipe with every object's keys in reverse order, as a hand-edited or re-serialised file
+    // might be. The address must not move.
+    //
+    // Deliberately not done with a `JSON.stringify` key allowlist: that silently *drops* any key not
+    // listed, so it would quietly stop covering fields added later — which is exactly what happened
+    // when `receiver` gained a default.
+    const b = compileRecipe(reverseKeys(swapRecipe()) as DropRecipeJson)
 
     expect(b.setupData).toBe(a.setupData)
     expect(b.address).toBe(a.address)
@@ -62,6 +63,8 @@ describe('compileRecipe', () => {
           type: 'presignSellAll',
           sellToken: WXDAI,
           buyToken: COW,
+          // The template defaults this to the owner; spell it out to isolate the price.
+          receiver: OWNER,
           // 0.02 with equal decimals reduces to 1/50.
           limitPrice: { numerator: '1', denominator: '50' },
           validitySeconds: 30 * 60,
@@ -236,6 +239,59 @@ describe('templates', () => {
     expect(twap.once).toBe(true)
   })
 
+  it('defaults the receiver to the owner, not the drop', () => {
+    // Proceeds should land in the owner's wallet; leaving them in the drop would need a second
+    // transaction to get out, which is the wrong default for "drop it in and the cow does the rest".
+    for (const recipe of [
+      swapOnArrival({
+        chainId: GNOSIS,
+        owner: OWNER,
+        sellToken: WXDAI,
+        buyToken: COW,
+        limitPrice: { price: '0.02', sellDecimals: 18, buyDecimals: 18 },
+      }),
+      twapOnArrival({
+        chainId: GNOSIS,
+        owner: OWNER,
+        sellToken: WXDAI,
+        buyToken: COW,
+        parts: 4,
+        partDuration: 3600,
+        limitPrice: { price: '0.02', sellDecimals: 18, buyDecimals: 18 },
+      }),
+    ]) {
+      const step = recipe.steps.find((s) => 'receiver' in s)
+      expect(step && 'receiver' in step ? step.receiver : undefined).toBe(OWNER)
+    }
+  })
+
+  it('honours an explicit receiver, including the keep-in-the-drop sentinel', () => {
+    const elsewhere = '0x3333333333333333333333333333333333333333' as Address
+    const zero = '0x0000000000000000000000000000000000000000' as Address
+
+    const named = swapOnArrival({
+      chainId: GNOSIS,
+      owner: OWNER,
+      sellToken: WXDAI,
+      buyToken: COW,
+      receiver: elsewhere,
+      limitPrice: { price: '0.02', sellDecimals: 18, buyDecimals: 18 },
+    })
+    const kept = swapOnArrival({
+      chainId: GNOSIS,
+      owner: OWNER,
+      sellToken: WXDAI,
+      buyToken: COW,
+      receiver: zero,
+      limitPrice: { price: '0.02', sellDecimals: 18, buyDecimals: 18 },
+    })
+
+    expect(named.steps.find((s) => 'receiver' in s && s.receiver === elsewhere)).toBeTruthy()
+    expect(kept.steps.find((s) => 'receiver' in s && s.receiver === zero)).toBeTruthy()
+    // And each is a different drop, since the receiver is part of the commitment.
+    expect(compileRecipe(named).address).not.toBe(compileRecipe(kept).address)
+  })
+
   it('rejects a TWAP with fewer than two parts', () => {
     expect(() =>
       compileRecipe(
@@ -269,3 +325,16 @@ describe('templates', () => {
     ).toThrow(/span cannot exceed/)
   })
 })
+
+/** Deep-copy a value with every object's keys in reverse order, preserving all of them. */
+function reverseKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reverseKeys)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .reverse()
+        .map(([key, inner]) => [key, reverseKeys(inner)]),
+    )
+  }
+  return value
+}
