@@ -1,0 +1,16 @@
+{
+  "name": "defi-drop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Funding addresses with baked-in trading logic, built on cow-shed",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "test:contracts": "forge test --root contracts",
+    "fmt:contracts": "forge fmt --root contracts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.28.0"
+}

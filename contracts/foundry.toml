@@ -1,0 +1,31 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+# These MUST stay byte-identical to cow-shed's own foundry.toml.
+#
+# We compile COWShedForComposableCoW and COWShedExecutorFactory from the pinned
+# cow-shed submodule and deploy them ourselves. The implementation address ends up
+# inside every drop's CREATE2 init code, and the factory address is the CREATE2
+# deployer, so a change to any of these settings silently moves EVERY drop address.
+# See lib/cow-shed/foundry.toml.
+solc = "0.8.30"
+evm_version = "prague"
+bytecode_hash = "none"
+cbor_metadata = false
+via_ir = true
+optimizer_runs = 1_000_000
+
+remappings = [
+    "cow-shed/=lib/cow-shed/src/",
+    "forge-std/=lib/cow-shed/lib/forge-std/src/",
+    "solady/=lib/cow-shed/lib/solady/src/",
+    "openzeppelin-contracts/=lib/cow-shed/lib/openzeppelin-contracts/",
+]
+
+[fmt]
+sort_imports = true
+line_length = 120

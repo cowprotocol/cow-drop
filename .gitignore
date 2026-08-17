@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/dry-run/
+
+# env
+.env
+.env.local
+*.local
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.history/
