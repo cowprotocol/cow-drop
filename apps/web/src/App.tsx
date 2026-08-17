@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BLOCK_EXPLORER, CHAIN, COW_EXPLORER, WRAPPED_NATIVE, connect } from './lib/chain.js'
 import { applySlippage, quoteMarketPrice, type MarketQuote } from './lib/quote.js'
 import { activateDrop, postPlacedOrders, readDropStatus, type DropStatus } from './lib/drop.js'
-import { GNOSIS_TOKENS, findToken } from './lib/tokens.js'
+import { GNOSIS_TOKENS } from './lib/tokens.js'
+import { fetchTokenList, findToken, type TokenInfo } from './lib/tokenList.js'
+import { TokenPicker } from './components/TokenPicker.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
 import { RescuePanel } from './components/RescuePanel.js'
@@ -48,11 +50,11 @@ const INITIAL: FormState = {
 }
 
 /** Build the recipe JSON from the form. Pure, so the address updates as the user types. */
-function toRecipe(form: FormState): DropRecipeJson {
+function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
   const owner = (isAddress(form.owner) ? form.owner : PLACEHOLDER_OWNER) as Address
   const receiver = isAddress(form.receiver) ? (form.receiver as Address) : undefined
-  const sellDecimals = findToken(form.sellToken)?.decimals ?? 18
-  const buyDecimals = findToken(form.buyToken)?.decimals ?? 18
+  const sellDecimals = findToken(tokens, form.sellToken)?.decimals ?? 18
+  const buyDecimals = findToken(tokens, form.buyToken)?.decimals ?? 18
   const limitPrice = { price: form.limitPrice, sellDecimals, buyDecimals }
   const wrapNative = form.wrapNative ? (WRAPPED_NATIVE.address as Address) : undefined
 
@@ -98,8 +100,10 @@ export function App() {
   const [referenceAmount, setReferenceAmount] = useState('100')
   const [quote, setQuote] = useState<MarketQuote | null>(null)
   const [quoting, setQuoting] = useState(false)
+  /** Loaded from CoW's token list; the built-in list is the offline fallback. */
+  const [tokens, setTokens] = useState<TokenInfo[]>(GNOSIS_TOKENS)
 
-  const recipe = useMemo(() => imported ?? toRecipe(form), [imported, form])
+  const recipe = useMemo(() => imported ?? toRecipe(form, tokens), [imported, form, tokens])
 
   const compiled = useMemo(() => {
     try {
@@ -129,6 +133,10 @@ export function App() {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    void fetchTokenList().then(setTokens)
+  }, [])
 
   const onConnect = async () => {
     setError(null)
@@ -163,8 +171,8 @@ export function App() {
     }
   }
 
-  const sellToken = findToken(form.sellToken)
-  const buyToken = findToken(form.buyToken)
+  const sellToken = findToken(tokens, form.sellToken)
+  const buyToken = findToken(tokens, form.buyToken)
 
   const onQuote = async () => {
     setQuoting(true)
@@ -251,26 +259,18 @@ export function App() {
               onChange={(event) => set('owner', event.target.value)}
             />
           </label>
-          <label>
-            Sell token
-            <select value={form.sellToken} onChange={(event) => set('sellToken', event.target.value as Address)}>
-              {GNOSIS_TOKENS.map((token) => (
-                <option key={token.address} value={token.address}>
-                  {token.symbol}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Buy token
-            <select value={form.buyToken} onChange={(event) => set('buyToken', event.target.value as Address)}>
-              {GNOSIS_TOKENS.map((token) => (
-                <option key={token.address} value={token.address}>
-                  {token.symbol}
-                </option>
-              ))}
-            </select>
-          </label>
+          <TokenPicker
+            label="Sell token"
+            tokens={tokens}
+            value={form.sellToken}
+            onChange={(address) => set('sellToken', address)}
+          />
+          <TokenPicker
+            label="Buy token"
+            tokens={tokens}
+            value={form.buyToken}
+            onChange={(address) => set('buyToken', address)}
+          />
           <label>
             Limit price (buy per sell)
             <input value={form.limitPrice} onChange={(event) => set('limitPrice', event.target.value)} />

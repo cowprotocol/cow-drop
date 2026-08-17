@@ -60,8 +60,31 @@ takes over.
 | `src/App.tsx` | The form, and the recipe it builds. `toRecipe` is pure, which is what makes the address update as you type. |
 | `src/lib/drop.ts` | Reading drop status, activating, and posting placed orders. |
 | `src/lib/chain.ts` | Public client, injected wallet, chain switching. |
-| `src/lib/tokens.ts` | A small curated Gnosis token list (symbols and decimals verified on-chain). |
+| `src/lib/tokenList.ts` | Loads CoW's token list — the same source cowswap gives priority 1. |
+| `src/lib/tokenLogo.ts` | The logo fallback cascade, mirroring cowswap's `getTokenLogoUrls`. |
+| `src/lib/tokens.ts` | Offline fallback list (symbols and decimals verified on-chain). |
 | `src/components/` | Address panel with QR, the committed-bytes table, the rescue panel, and the JSON import/export. |
+
+## Tokens and logos
+
+Tokens come from `https://files.cow.fi/tokens/CowSwap.json` — the list cowswap gives priority 1 on
+every chain (`libs/tokens/src/const/tokensList.json`). It carries 34 Gnosis tokens, all with logos,
+which is small enough for a picker rather than a search problem. cowswap additionally loads Honeyswap,
+Uniswap, CoinGecko and Curve lists on Gnosis; adding them here would mean handling merge priority and
+duplicate addresses, which a demo does not need. If the fetch fails the built-in list stands in, since
+an unreachable token list should never stop you computing an address.
+
+Logos follow cowswap's cascade from `getTokenLogoUrls`, and the fact that it *is* a cascade is the
+point — CoW's CDN answers **403** for addresses it does not carry, so any single URL fails regularly:
+
+1. the list's own `logoURI`, resolved through a `uriToHttp` subset (`ipfs://`, `ipns://`, `http→https`)
+2. `files.cow.fi/token-lists/images/<chainId>/<address>/logo.png`
+3. the same under mainnet, since many bridged tokens are only there
+4. Trust Wallet's assets repo
+
+`TokenLogo` walks that list on each `error` and ends at a lettered circle rather than a broken image.
+A native `<select>` cannot show images, so the picker is a button plus a filterable popover; Escape and
+outside-click close it.
 
 ## Two SDKs, on purpose
 
