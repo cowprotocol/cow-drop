@@ -1,12 +1,26 @@
-import { compileRecipe, swapOnArrival, twapOnArrival, type DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
+import {
+  compileRecipe,
+  getDropChain,
+  swapOnArrival,
+  twapOnArrival,
+  type DropRecipeJson,
+} from '@cowprotocol/cow-drop-sdk'
 import { formatUnits, isAddress, type Address } from 'viem'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { BLOCK_EXPLORER, CHAIN, COW_EXPLORER, WRAPPED_NATIVE, connect } from './lib/chain.js'
+import {
+  DEFAULT_CHAIN_ID,
+  blockExplorer,
+  connect,
+  cowExplorer,
+  walletChainId,
+  wrappedNative,
+} from './lib/chain.js'
 import { applySlippage, quoteMarketPrice, type MarketQuote } from './lib/quote.js'
 import { activateDrop, postPlacedOrders, readDropStatus, type DropStatus } from './lib/drop.js'
 import { GNOSIS_TOKENS } from './lib/tokens.js'
 import { fetchTokenList, findToken, type TokenInfo } from './lib/tokenList.js'
+import { NetworkPicker } from './components/NetworkPicker.js'
 import { TokenPicker } from './components/TokenPicker.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
@@ -24,6 +38,7 @@ type RecipeKind = 'swap' | 'twap'
 const PLACEHOLDER_OWNER: Address = '0x0000000000000000000000000000000000000001'
 
 interface FormState {
+  chainId: number
   recipeKind: RecipeKind
   owner: string
   sellToken: Address
@@ -37,6 +52,7 @@ interface FormState {
 }
 
 const INITIAL: FormState = {
+  chainId: DEFAULT_CHAIN_ID,
   recipeKind: 'swap',
   owner: '',
   sellToken: GNOSIS_TOKENS[0]!.address,
@@ -56,11 +72,11 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
   const sellDecimals = findToken(tokens, form.sellToken)?.decimals ?? 18
   const buyDecimals = findToken(tokens, form.buyToken)?.decimals ?? 18
   const limitPrice = { price: form.limitPrice, sellDecimals, buyDecimals }
-  const wrapNative = form.wrapNative ? (WRAPPED_NATIVE.address as Address) : undefined
+  const wrapNative = form.wrapNative ? wrappedNative(form.chainId) : undefined
 
   if (form.recipeKind === 'twap') {
     return twapOnArrival({
-      chainId: CHAIN.id,
+      chainId: form.chainId,
       owner,
       sellToken: form.sellToken,
       buyToken: form.buyToken,
@@ -73,7 +89,7 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
   }
 
   return swapOnArrival({
-    chainId: CHAIN.id,
+    chainId: form.chainId,
     owner,
     sellToken: form.sellToken,
     buyToken: form.buyToken,
@@ -102,6 +118,7 @@ export function App() {
   const [quoting, setQuoting] = useState(false)
   /** Loaded from CoW's token list; the built-in list is the offline fallback. */
   const [tokens, setTokens] = useState<TokenInfo[]>(GNOSIS_TOKENS)
+  const [walletChain, setWalletChain] = useState<number | null>(null)
 
   const recipe = useMemo(() => imported ?? toRecipe(form, tokens), [imported, form, tokens])
 
@@ -135,13 +152,23 @@ export function App() {
   }, [refresh])
 
   useEffect(() => {
-    void fetchTokenList().then(setTokens)
+    void fetchTokenList(form.chainId).then(setTokens)
+  }, [form.chainId])
+
+  // Default to whatever network the wallet is already on, when we support it.
+  useEffect(() => {
+    void walletChainId().then((walletChain) => {
+      setWalletChain(walletChain)
+      if (walletChain !== null && getDropChain(walletChain)) {
+        setForm((previous) => (previous.chainId === DEFAULT_CHAIN_ID ? { ...previous, chainId: walletChain } : previous))
+      }
+    })
   }, [])
 
   const onConnect = async () => {
     setError(null)
     try {
-      const connected = await connect()
+      const connected = await connect(form.chainId)
       setAccount(connected)
       // Default the owner to the connected account, so the user keeps the recovery escape hatch.
       if (!isAddress(form.owner)) set('owner', connected)
@@ -159,7 +186,7 @@ export function App() {
       const { hash, receipt } = await activateDrop({ account, recipe })
       setMessage(`Activated in ${hash}`)
 
-      const posted = await postPlacedOrders(receipt, compiled.value.address)
+      const posted = await postPlacedOrders(receipt, compiled.value.address, form.chainId)
       if (posted.length > 0) {
         setMessage(`Activated, and posted ${posted.length} order(s): ${posted.join(', ')}`)
       }
@@ -193,6 +220,7 @@ export function App() {
           buyDecimals: buyToken?.decimals ?? 18,
           // The drop is the order's owner, so quote it as the drop.
           from: compiled.ok ? compiled.value.address : PLACEHOLDER_OWNER,
+          chainId: form.chainId,
         }),
       )
     } catch (cause) {
@@ -250,6 +278,11 @@ export function App() {
 
       <section>
         <h2>2 &middot; Parameters</h2>
+        <NetworkPicker
+          chainId={form.chainId}
+          walletChainId={walletChain}
+          onChange={(chainId) => set('chainId', chainId)}
+        />
         <div className="grid">
           <label>
             Owner (can always recover the funds)
@@ -263,12 +296,14 @@ export function App() {
             label="Sell token"
             tokens={tokens}
             value={form.sellToken}
+            chainId={form.chainId}
             onChange={(address) => set('sellToken', address)}
           />
           <TokenPicker
             label="Buy token"
             tokens={tokens}
             value={form.buyToken}
+            chainId={form.chainId}
             onChange={(address) => set('buyToken', address)}
           />
           <label>
@@ -306,7 +341,7 @@ export function App() {
               checked={form.wrapNative}
               onChange={(event) => set('wrapNative', event.target.checked)}
             />
-            Wrap native xDAI first
+            Wrap the native token first
           </label>
         </div>
         <div className="quote">
@@ -372,7 +407,8 @@ export function App() {
                 <li>Drop deployed: <strong>{status.deployed ? 'yes' : 'not yet'}</strong></li>
                 {!status.executorDeployed && (
                   <li className="warn">
-                    The cow-drop contracts are not deployed on {CHAIN.name} yet, so the address is a
+                    The cow-drop contracts are not deployed on{' '}
+                    {getDropChain(form.chainId)?.name ?? form.chainId} yet, so the address is a
                     prediction and activation will fail. Addresses are deterministic, so this one will
                     not change once they are.
                   </li>
@@ -391,18 +427,18 @@ export function App() {
                 {busy ? 'Activating…' : 'Activate drop'}
               </button>
               <a
-                href={`${COW_EXPLORER}/address/${compiled.value.address}`}
+                href={`${cowExplorer(form.chainId)}/address/${compiled.value.address}`}
                 target="_blank"
                 rel="noreferrer"
               >
                 Orders on CoW Explorer
               </a>
               <a
-                href={`${BLOCK_EXPLORER.url}/address/${compiled.value.address}`}
+                href={`${blockExplorer(form.chainId).url}/address/${compiled.value.address}`}
                 target="_blank"
                 rel="noreferrer"
               >
-                Balances on {BLOCK_EXPLORER.name}
+                Balances on {blockExplorer(form.chainId).name}
               </a>
             </div>
 
@@ -419,6 +455,7 @@ export function App() {
               account={account}
               deployed={status?.deployed ?? false}
               sellToken={form.sellToken}
+              tokens={tokens}
             />
           </section>
 

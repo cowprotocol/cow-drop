@@ -3,8 +3,11 @@ pragma solidity ^0.8.25;
 
 import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
+import {IComposableCow} from "cow-shed/IComposableCow.sol";
+import {IERC1271} from "cow-shed/IERC1271.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
 import {ICOWShedSetup} from "cow-shed/ICOWShedSetup.sol";
+import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 
 /// @title DropExecutor
 /// @notice Turns a cow-shed address into a commitment to a recipe: send funds to the address and
@@ -35,7 +38,7 @@ import {ICOWShedSetup} from "cow-shed/ICOWShedSetup.sol";
 /// never a loss of funds: the owner can always sweep it with an ordinary signed
 /// `COWShed.executeHooks`. Passing `owner == address(0)` gives up that escape hatch in exchange
 /// for a drop nobody can interfere with; that is a deliberate choice, not a default.
-contract DropExecutor is ICOWShedSetup {
+contract DropExecutor is ICOWShedSetup, IERC1271 {
     /// @notice A recipe: the calls a drop runs, plus how it is allowed to run them.
     /// @dev The abi encoding of this struct is `setupData`, i.e. exactly what the drop address
     ///      commits to. Adding a field changes every address, so this struct is versioned by
@@ -64,17 +67,53 @@ contract DropExecutor is ICOWShedSetup {
     /// @notice `setupData` is too short to be an encoded `Recipe`.
     error MalformedRecipe();
 
+    /// @notice The order in an EIP-1271 signature does not hash to the digest being validated.
+    error InvalidHash();
+
     event DropTriggered(address indexed drop, address indexed owner, bytes32 indexed recipeHash);
 
     /// @notice The executor factory every drop is derived from. Pinned at deployment: a
     ///         different factory means different addresses, so it must never be mutable.
     COWShedExecutorFactory public immutable FACTORY;
 
+    /// @notice ComposableCoW, for the EIP-1271 forwarding below.
+    IComposableCow public immutable COMPOSABLE_COW;
+
     /// @notice Drops whose `once` recipe has already run.
     mapping(address => bool) public consumed;
 
-    constructor(COWShedExecutorFactory factory) {
+    constructor(COWShedExecutorFactory factory, IComposableCow composableCow) {
         FACTORY = factory;
+        COMPOSABLE_COW = composableCow;
+    }
+
+    /// @inheritdoc IERC1271
+    ///
+    /// @notice Validates a drop's conditional orders, on the drop's behalf.
+    ///
+    /// @dev Drops are built over `COWShedWithExecutorSigner`, whose `isValidSignature` delegates to
+    ///      its trusted executor — this contract. So this is what makes a drop able to own a
+    ///      ComposableCoW order (a TWAP, say) at all.
+    ///
+    ///      `msg.sender` is the drop asking, which is exactly the owner ComposableCoW should be
+    ///      queried about: it keys its authorisations by owner, so a drop can only ever vouch for
+    ///      orders it registered itself. Nothing here grants this contract or anyone else authority.
+    ///
+    ///      The logic mirrors cow-shed's `ERC1271Forwarder`, with one unavoidable difference: that
+    ///      contract passes the original caller (the settlement contract) as `sender`, while by the
+    ///      time the call reaches us the drop has become `msg.sender` and the original caller is
+    ///      lost. TWAP ignores `sender`, so this is fine today — but a handler or swap guard that
+    ///      inspects `sender` would see the drop rather than the settlement.
+    function isValidSignature(bytes32 hash, bytes calldata signature) external view override returns (bytes4) {
+        (LibCowOrder.Data memory order, IComposableCow.PayloadStruct memory payload) =
+            abi.decode(signature, (LibCowOrder.Data, IComposableCow.PayloadStruct));
+
+        bytes32 domainSeparator = COMPOSABLE_COW.domainSeparator();
+        if (LibCowOrder.hash(order, domainSeparator) != hash) revert InvalidHash();
+
+        return COMPOSABLE_COW.isValidSafeSignature(
+            msg.sender, msg.sender, hash, domainSeparator, bytes32(0), abi.encode(order), abi.encode(payload)
+        );
     }
 
     /// @notice The drop address for a given owner and recipe.

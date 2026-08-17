@@ -87,9 +87,17 @@ already has the canonical assembly version, and two would be one too many.
 ## The two order paths
 
 `presignSellAll` needs nothing from the shed implementation: the drop signs its own order on-chain
-and an off-chain poster makes it visible. `twapFromBalance` needs the drop to answer ERC-1271, which
-`COWShedForComposableCoW` does by forwarding to ComposableCoW — after which the watch tower posts
-each part unattended. One factory serves both, because the composable implementation is a superset.
+and an off-chain poster makes it visible. `twapFromBalance` needs the drop to answer ERC-1271.
+
+Drops use `COWShedWithExecutorSigner`, whose `isValidSignature` delegates to the shed's trusted
+executor — which for a drop is `DropExecutor`. So `DropExecutor.isValidSignature` is what forwards to
+ComposableCoW, keyed on `msg.sender` (the drop asking), which is exactly the owner ComposableCoW should
+be queried about. One consequence worth knowing: cow-shed's own `ERC1271Forwarder` passes the original
+caller as `sender`, but by the time the call reaches us the drop has become `msg.sender`. TWAP ignores
+`sender`, so this is fine today; a handler or swap guard that inspects it would see the drop.
+
+The payoff is that both cow-shed contracts are the canonical ones already deployed (cow-shed#79), so
+the only contracts this project deploys are its own two.
 
 For the TWAP params to be committable into the address they must not mention the owner, so
 `receiver = address(0)` (ComposableCoW's "pay the owner" sentinel) and `t0 = 0` with
@@ -101,11 +109,11 @@ For the TWAP params to be committable into the address they must not mention the
 `optimizer_runs = 1_000_000`, `bytecode_hash = "none"`, `cbor_metadata = false`,
 `evm_version = "prague"`).
 
-We compile `COWShedForComposableCoW` and `COWShedExecutorFactory` from the pinned submodule and
-deploy them ourselves. The implementation address ends up inside every drop's CREATE2 init code and
-the factory is the CREATE2 deployer, so a change to any compiler setting silently moves **every drop
-address**. It also means our build reproduces the canonical cow-shed bytecode — verified, since
-deploying the implementation collides with the one already live on Gnosis.
+We compile `COWShedWithExecutorSigner` and `COWShedExecutorFactory` from the pinned submodule. The
+implementation address ends up inside every drop's CREATE2 init code and the factory is the CREATE2
+deployer, so a change to any compiler setting silently moves **every drop address**. It also means our
+build must reproduce the canonical cow-shed bytecode — verified, because both compute exactly the
+addresses cow-shed#79 records as live on Gnosis, and a CREATE2 address is derived from init code.
 
 ## Tests
 

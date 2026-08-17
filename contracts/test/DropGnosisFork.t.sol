@@ -8,7 +8,6 @@ import {DropOrders} from "src/DropOrders.sol";
 import {DropRecipes} from "src/DropRecipes.sol";
 import {IComposableCowLike, IERC20Like, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 
-import {COWShedForComposableCoW} from "cow-shed/COWShedForComposableCoW.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
 import {IComposableCow} from "cow-shed/IComposableCow.sol";
 import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
@@ -46,6 +45,9 @@ contract DropGnosisForkTest is Test {
     address internal constant SETTLEMENT = 0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
     address internal constant VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
 
+    /// @dev cow-shed#79: the live executor factory on Gnosis, over `COWShedWithExecutorSigner`.
+    address internal constant EXECUTOR_FACTORY = 0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99;
+
     address internal constant WXDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
     address internal constant COW = 0x177127622c4A00F3d409B75571e12cB3c8973d3c;
 
@@ -67,10 +69,10 @@ contract DropGnosisForkTest is Test {
         }
         vm.createSelectFork(rpc);
 
-        // The implementation must be the ComposableCoW-aware shed: that is what gives a drop an
-        // `isValidSignature` at all, and therefore what lets it own a conditional order.
-        factory = new COWShedExecutorFactory(address(new COWShedForComposableCoW(IComposableCow(COMPOSABLE_COW))));
-        executor = new DropExecutor(factory);
+        // The canonical contracts recorded live on Gnosis by cow-shed#79. Addressed rather than
+        // deployed, so this test exercises the same bytecode production drops will use.
+        factory = COWShedExecutorFactory(EXECUTOR_FACTORY);
+        executor = new DropExecutor(factory, IComposableCow(COMPOSABLE_COW));
         recipes = new DropRecipes(
             ISettlementLike(SETTLEMENT),
             VAULT_RELAYER,

@@ -11,6 +11,7 @@ import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.
 import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
+import {IComposableCow} from "cow-shed/IComposableCow.sol";
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
@@ -39,10 +40,10 @@ contract DropRecipesTest is Test {
 
     function setUp() public {
         factory = new COWShedExecutorFactory(address(new COWShed()));
-        executor = new DropExecutor(factory);
 
         settlement = new MockSettlement(keccak256("domain"));
         composableCow = new MockComposableCow(keccak256("ccow-domain"));
+        executor = new DropExecutor(factory, IComposableCow(address(composableCow)));
         sellToken = new MockERC20();
         buyToken = new MockERC20();
         wrappedNative = new MockWrappedNative();

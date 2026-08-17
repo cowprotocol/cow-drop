@@ -1,7 +1,7 @@
 import { OrderQuoteSideKindSell, SigningScheme, type OrderQuoteRequest } from '@cowprotocol/cow-sdk'
 import type { Address } from 'viem'
 
-import { orderBookApi } from './chain.js'
+import { getOrderBookApi } from './chain.js'
 
 export interface MarketQuote {
   /** Human price, buy units per sell unit, as a decimal string ready for `limitPriceToFraction`. */
@@ -28,6 +28,7 @@ export async function quoteMarketPrice(params: {
   buyDecimals: number
   /** The address the quote is attributed to. */
   from: Address
+  chainId: number
 }): Promise<MarketQuote> {
   const request: OrderQuoteRequest = {
     sellToken: params.sellToken,
@@ -40,7 +41,7 @@ export async function quoteMarketPrice(params: {
     signingScheme: SigningScheme.PRESIGN,
   }
 
-  const { quote } = await orderBookApi.getQuote(request)
+  const { quote } = await getOrderBookApi(params.chainId).getQuote(request)
 
   const sellAmount = BigInt(quote.sellAmount)
   const buyAmount = BigInt(quote.buyAmount)

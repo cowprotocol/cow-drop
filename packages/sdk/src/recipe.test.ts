@@ -195,8 +195,18 @@ describe('compileRecipe', () => {
     expect(() => compileRecipe({ ...swapRecipe(), version: 2 as 1 })).toThrow(/unsupported recipe version/)
   })
 
-  it('rejects a chain with no deployment', () => {
-    expect(() => compileRecipe({ ...swapRecipe(), chainId: 999999 })).toThrow(/not deployed on chain/)
+  it('rejects an unsupported chain', () => {
+    expect(() => compileRecipe({ ...swapRecipe(), chainId: 999999 })).toThrow(/does not support chain/)
+  })
+
+  it('resolves the same address on every supported chain', () => {
+    // Drop addresses are chain-independent, so the only thing the chain changes is which network you
+    // send funds on — not where. Worth pinning, since it is what lets the UI switch networks freely.
+    const onGnosis = compileRecipe(swapRecipe())
+    const onMainnet = compileRecipe({ ...swapRecipe(), chainId: 1 })
+
+    expect(onMainnet.setupData).toBe(onGnosis.setupData)
+    expect(onMainnet.address).toBe(onGnosis.address)
   })
 })
 

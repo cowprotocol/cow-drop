@@ -541,3 +541,14 @@ details.terminal > summary {
 .muted {
   color: var(--muted);
 }
+
+/* Network selector: sits above the parameters it scopes. */
+.network {
+  margin-bottom: 1rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.network label {
+  max-width: 320px;
+}

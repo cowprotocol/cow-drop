@@ -7,6 +7,7 @@ import {DropExecutor} from "src/DropExecutor.sol";
 import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
+import {IComposableCow} from "cow-shed/IComposableCow.sol";
 import {DropRecipes} from "src/DropRecipes.sol";
 import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 import {MockComposableCow, MockERC20, MockSettlement, Recorder} from "./mocks/Mocks.sol";
@@ -26,13 +27,14 @@ contract DropExecutorTest is Test {
     function setUp() public {
         impl = new COWShed();
         factory = new COWShedExecutorFactory(address(impl));
-        executor = new DropExecutor(factory);
+        MockComposableCow composableCow = new MockComposableCow(keccak256("c"));
+        executor = new DropExecutor(factory, IComposableCow(address(composableCow)));
         recorder = new Recorder();
         token = new MockERC20();
         recipes = new DropRecipes(
             ISettlementLike(address(new MockSettlement(keccak256("d")))),
             address(0xC92E),
-            IComposableCowLike(address(new MockComposableCow(keccak256("c")))),
+            IComposableCowLike(address(composableCow)),
             address(0x7A9F),
             address(0x715)
         );

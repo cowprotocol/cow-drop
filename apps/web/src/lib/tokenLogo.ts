@@ -9,7 +9,7 @@ import type { TokenInfo } from './tokenList.js'
  * part is that it is a *cascade*, not a single URL: CoW's CDN answers 403 for addresses it does not
  * have, so any one source will fail regularly and the consumer has to fall through to the next.
  */
-export function tokenLogoUrls(token: TokenInfo, chainId: SupportedChainId): string[] {
+export function tokenLogoUrls(token: TokenInfo, chainId: number): string[] {
   const key = token.address.toLowerCase()
 
   const fallbacks = [
@@ -29,12 +29,12 @@ export function tokenLogoUrls(token: TokenInfo, chainId: SupportedChainId): stri
 
 const COW_CDN = 'https://files.cow.fi'
 
-function cowProtocolLogoUrl(address: string, chainId: SupportedChainId): string {
+function cowProtocolLogoUrl(address: string, chainId: number): string {
   return `${COW_CDN}/token-lists/images/${chainId}/${address}/logo.png`
 }
 
 /** Trust Wallet's per-chain directory names, from cowswap's `trustTokenLogoUrl`. */
-const TRUST_CHAIN_NAMES: Partial<Record<SupportedChainId, string>> = {
+const TRUST_CHAIN_NAMES: Record<number, string> = {
   [SupportedChainId.MAINNET]: 'ethereum',
   [SupportedChainId.GNOSIS_CHAIN]: 'xdai',
   [SupportedChainId.ARBITRUM_ONE]: 'arbitrum',
@@ -42,7 +42,7 @@ const TRUST_CHAIN_NAMES: Partial<Record<SupportedChainId, string>> = {
   [SupportedChainId.SEPOLIA]: 'ethereum',
 }
 
-function trustWalletLogoUrl(address: string, chainId: SupportedChainId): string | null {
+function trustWalletLogoUrl(address: string, chainId: number): string | null {
   const name = TRUST_CHAIN_NAMES[chainId]
   if (!name) return null
   return `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${name}/assets/${address}/logo.png`

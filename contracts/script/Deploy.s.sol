@@ -9,7 +9,7 @@ import {DropRecipes} from "src/DropRecipes.sol";
 import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
-import {COWShedForComposableCoW} from "cow-shed/COWShedForComposableCoW.sol";
+import {COWShedWithExecutorSigner} from "cow-shed/COWShedWithExecutorSigner.sol";
 import {IComposableCow} from "cow-shed/IComposableCow.sol";
 
 import {DropConfig} from "./DropConfig.sol";
@@ -21,9 +21,9 @@ import {DropConfig} from "./DropConfig.sol";
 ///      part of every drop's init code and the factory is the CREATE2 deployer, so these four
 ///      addresses collectively define what every drop address is.
 ///
-///      cow-shed's own deploy script builds a `COWShedExecutorFactory` over
-///      `COWShedWithExecutorSigner`, but not one over `COWShedForComposableCoW` — and the
-///      composable variant is the one that can own a conditional order. So we deploy our own.
+///      Both cow-shed contracts are the canonical ones cow-shed#79 records as live on Gnosis, reused
+///      rather than redeployed — so the only contracts this deploys are `DropRecipes` and
+///      `DropExecutor`. On a chain where they do not exist yet they land at the same addresses.
 ///
 ///      Usage:
 ///        forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --verify
@@ -50,21 +50,22 @@ contract DeployScript is Script {
     function deploy() public returns (Deployment memory) {
         address composableCow = vm.envOr("COMPOSABLE_COW", DropConfig.COMPOSABLE_COW);
 
-        // The ComposableCoW-aware shed: forwards EIP-1271 to ComposableCoW, which is what lets a
-        // drop own a TWAP. Pre-signed orders need nothing from the implementation, so this one
-        // implementation serves both order paths.
+        // `COWShedWithExecutorSigner`: its EIP-1271 delegates to the shed's trusted executor, which
+        // for a drop is `DropExecutor` — so that is where ComposableCoW forwarding lives, and one
+        // implementation serves both order paths (pre-signing needs nothing from it).
         //
-        // Note this is the *canonical* cow-shed v2.1.0 implementation, not a fork: it is already
-        // deployed on some chains at the address below, and because the CREATE2 address is derived
-        // from the init code, reusing it is proof our build reproduces the official bytecode.
-        bytes memory implInit =
-            abi.encodePacked(type(COWShedForComposableCoW).creationCode, abi.encode(composableCow));
+        // This is the exact implementation cow-shed#79 records as live on Gnosis, together with the
+        // factory below. Reusing them rather than deploying our own variants means a drop address is
+        // derived entirely from canonical cow-shed contracts; the only things we deploy are
+        // `DropRecipes` and `DropExecutor`. Because a CREATE2 address is derived from the init code,
+        // landing on #79's addresses is also proof this build reproduces the deployed bytecode.
+        bytes memory implInit = type(COWShedWithExecutorSigner).creationCode;
         address implementation = _create2(implInit);
         if (implementation.code.length == 0) {
             vm.broadcast();
-            new COWShedForComposableCoW{salt: SALT}(IComposableCow(composableCow));
+            new COWShedWithExecutorSigner{salt: SALT}();
         } else {
-            console.log("reusing existing shed implementation");
+            console.log("reusing canonical cow-shed implementation (cow-shed#79)");
         }
 
         bytes memory factoryInit =
@@ -74,7 +75,7 @@ contract DeployScript is Script {
             vm.broadcast();
             new COWShedExecutorFactory{salt: SALT}(implementation);
         } else {
-            console.log("reusing existing executor factory");
+            console.log("reusing canonical executor factory (cow-shed#79)");
         }
 
         address twapHandler = vm.envOr("TWAP_HANDLER", DropConfig.TWAP_HANDLER);
@@ -96,11 +97,12 @@ contract DeployScript is Script {
             );
         }
 
-        bytes memory executorInit = abi.encodePacked(type(DropExecutor).creationCode, abi.encode(factory));
+        bytes memory executorInit =
+            abi.encodePacked(type(DropExecutor).creationCode, abi.encode(factory, composableCow));
         address executor = _create2(executorInit);
         if (executor.code.length == 0) {
             vm.broadcast();
-            new DropExecutor{salt: SALT}(COWShedExecutorFactory(factory));
+            new DropExecutor{salt: SALT}(COWShedExecutorFactory(factory), IComposableCow(composableCow));
         }
 
         return Deployment({

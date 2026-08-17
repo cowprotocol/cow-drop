@@ -498,9 +498,27 @@ export const DROP_EXECUTOR_ABI = [
         "name": "factory",
         "type": "address",
         "internalType": "contract COWShedExecutorFactory"
+      },
+      {
+        "name": "composableCow",
+        "type": "address",
+        "internalType": "contract IComposableCow"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "COMPOSABLE_COW",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IComposableCow"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -584,6 +602,30 @@ export const DROP_EXECUTOR_ABI = [
   },
   {
     "type": "function",
+    "name": "isValidSignature",
+    "inputs": [
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setup",
     "inputs": [
       {
@@ -633,6 +675,11 @@ export const DROP_EXECUTOR_ABI = [
   {
     "type": "error",
     "name": "AlreadyConsumed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidHash",
     "inputs": []
   },
   {

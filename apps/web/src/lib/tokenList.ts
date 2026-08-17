@@ -1,6 +1,6 @@
 import type { Address } from 'viem'
 
-import { CHAIN_ID } from './chain.js'
+import { wrappedNativeToken } from './chain.js'
 import { GNOSIS_TOKENS, type TokenInfo } from './tokens.js'
 
 export type { TokenInfo }
@@ -32,7 +32,7 @@ interface TokenListResponse {
  * Falls back to the small built-in list rather than throwing: a token list being unreachable should
  * not stop you computing a drop address, which is pure local arithmetic.
  */
-export async function fetchTokenList(chainId: number = CHAIN_ID): Promise<TokenInfo[]> {
+export async function fetchTokenList(chainId: number): Promise<TokenInfo[]> {
   try {
     const response = await fetch(COW_TOKEN_LIST)
     if (!response.ok) throw new Error(`token list responded ${response.status}`)
@@ -49,10 +49,29 @@ export async function fetchTokenList(chainId: number = CHAIN_ID): Promise<TokenI
       }))
       .sort((a, b) => a.symbol.localeCompare(b.symbol))
 
-    return tokens.length > 0 ? tokens : GNOSIS_TOKENS
+    return withWrappedNative(tokens, chainId)
   } catch {
-    return GNOSIS_TOKENS
+    return withWrappedNative(chainId === 100 ? GNOSIS_TOKENS : [], chainId)
   }
+}
+
+/**
+ * Guarantee the wrapped native token is present.
+ *
+ * The CoW list covers no tokens at all on some chains it otherwise supports — Lens and Sepolia today —
+ * which would leave the picker empty and the page unusable there. cow-sdk knows the wrapped native for
+ * every chain, and it is the most likely thing to be dropping anyway, so it always goes in.
+ */
+function withWrappedNative(tokens: TokenInfo[], chainId: number): TokenInfo[] {
+  let native: TokenInfo
+  try {
+    native = wrappedNativeToken(chainId)
+  } catch {
+    return tokens
+  }
+
+  if (tokens.some((token) => token.address.toLowerCase() === native.address.toLowerCase())) return tokens
+  return [native, ...tokens]
 }
 
 /** Case-insensitive lookup, since list addresses are a mix of checksummed and lowercase. */

@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 
-import { CHAIN_ID } from '../lib/chain.js'
 import type { TokenInfo } from '../lib/tokenList.js'
 import { tokenLogoUrls } from '../lib/tokenLogo.js'
 
@@ -11,8 +10,16 @@ import { tokenLogoUrls } from '../lib/tokenLogo.js'
  * would leave broken images all over the picker. When every source fails, falls back to the token's
  * initial rather than a broken-image icon.
  */
-export function TokenLogo({ token, size = 22 }: { token: TokenInfo; size?: number }) {
-  const urls = useMemo(() => tokenLogoUrls(token, CHAIN_ID), [token])
+export function TokenLogo({
+  token,
+  chainId,
+  size = 22,
+}: {
+  token: TokenInfo
+  chainId: number
+  size?: number
+}) {
+  const urls = useMemo(() => tokenLogoUrls(token, chainId), [token, chainId])
   const [index, setIndex] = useState(0)
 
   const exhausted = index >= urls.length

@@ -16,11 +16,13 @@ export function TokenPicker({
   label,
   tokens,
   value,
+  chainId,
   onChange,
 }: {
   label: string
   tokens: TokenInfo[]
   value: Address
+  chainId: number
   onChange: (address: Address) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -81,7 +83,7 @@ export function TokenPicker({
       >
         {selected ? (
           <>
-            <TokenLogo token={selected} />
+            <TokenLogo token={selected} chainId={chainId} />
             <span>{selected.symbol}</span>
           </>
         ) : (
@@ -110,7 +112,7 @@ export function TokenPicker({
                   className={token.address.toLowerCase() === value.toLowerCase() ? 'selected' : ''}
                   onClick={() => choose(token.address)}
                 >
-                  <TokenLogo token={token} />
+                  <TokenLogo token={token} chainId={chainId} />
                   <span className="token-picker-symbol">{token.symbol}</span>
                   {token.name && <span className="token-picker-name">{token.name}</span>}
                 </button>

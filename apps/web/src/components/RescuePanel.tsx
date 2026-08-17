@@ -6,8 +6,8 @@ import {
 import { useState } from 'react'
 import { isAddress, type Address } from 'viem'
 
-import { sendTransaction, publicClient } from '../lib/chain.js'
-import { GNOSIS_TOKENS } from '../lib/tokens.js'
+import { getPublicClient, sendTransaction } from '../lib/chain.js'
+import type { TokenInfo } from '../lib/tokenList.js'
 
 const NATIVE: Address = '0x0000000000000000000000000000000000000000'
 
@@ -23,14 +23,16 @@ export function RescuePanel({
   account,
   deployed,
   sellToken,
+  tokens,
 }: {
   compiled: CompiledRecipe
   account: Address | null
   deployed: boolean
   sellToken: Address
+  tokens: TokenInfo[]
 }) {
   const [to, setTo] = useState('')
-  const [tokens, setTokens] = useState<Address[]>([sellToken, NATIVE])
+  const [selected, setSelected] = useState<Address[]>([sellToken, NATIVE])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -39,7 +41,7 @@ export function RescuePanel({
   const recipient = isAddress(to) ? (to as Address) : account
 
   const toggle = (token: Address) =>
-    setTokens((current) =>
+    setSelected((current) =>
       current.includes(token) ? current.filter((t) => t !== token) : [...current, token],
     )
 
@@ -62,12 +64,13 @@ export function RescuePanel({
               setupData: compiled.setupData,
               drop: compiled.address,
               to: recipient,
-              tokens,
+              tokens: selected,
               deployed,
             }).tx
 
-      const hash = await sendTransaction({ account, ...tx })
-      await publicClient.waitForTransactionReceipt({ hash })
+      const chainId = compiled.deployment.chainId
+      const hash = await sendTransaction({ chainId, account, ...tx })
+      await getPublicClient(chainId).waitForTransactionReceipt({ hash })
       setMessage(mode === 'deploy-only' ? `Shed deployed in ${hash}` : `Recovered in ${hash}`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -111,12 +114,12 @@ export function RescuePanel({
 
       <fieldset className="tokens">
         <legend>Sweep which balances</legend>
-        {[...GNOSIS_TOKENS.map((t) => ({ label: t.symbol, address: t.address })), { label: 'native xDAI', address: NATIVE }].map(
+        {[...tokens.map((t) => ({ label: t.symbol, address: t.address })), { label: 'native token', address: NATIVE }].map(
           (token) => (
             <label key={token.address} className="checkbox">
               <input
                 type="checkbox"
-                checked={tokens.includes(token.address)}
+                checked={selected.includes(token.address)}
                 onChange={() => toggle(token.address)}
               />
               {token.label}
@@ -126,7 +129,7 @@ export function RescuePanel({
       </fieldset>
 
       <div className="actions">
-        <button onClick={() => void run('sweep')} disabled={!isOwner || busy || tokens.length === 0}>
+        <button onClick={() => void run('sweep')} disabled={!isOwner || busy || selected.length === 0}>
           {busy ? 'Working…' : 'Recover funds'}
         </button>
         {!deployed && (

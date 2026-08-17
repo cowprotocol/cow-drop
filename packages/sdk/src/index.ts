@@ -1,4 +1,5 @@
 export * from './types.js'
+export * from './chains.js'
 export * from './encoding.js'
 export * from './price.js'
 export * from './steps.js'
@@ -6,7 +7,7 @@ export * from './recipe.js'
 export * from './templates.js'
 export * from './tx.js'
 export * from './rescue.js'
-export { DEPLOYMENTS, getDeployment } from './generated/deployments.js'
+export { ADDRESSES, DEPLOYMENTS, getDeployment } from './generated/deployments.js'
 export {
   COW_SHED_EXECUTOR_FACTORY_ABI,
   DROP_EXECUTOR_ABI,

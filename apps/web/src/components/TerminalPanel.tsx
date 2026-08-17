@@ -1,6 +1,6 @@
 import { buildActivateTx, type CompiledRecipe } from '@cowprotocol/cow-drop-sdk'
 
-import { COW_API, RPC_URL } from '../lib/chain.js'
+import { cowApiUrl, rpcUrl } from '../lib/chain.js'
 import { CopyBlock } from './CopyBlock.js'
 
 /**
@@ -16,13 +16,15 @@ import { CopyBlock } from './CopyBlock.js'
  * no wallet and no funds, so it answers "would this work?" before anyone sends money to the address.
  */
 export function TerminalPanel({ compiled }: { compiled: CompiledRecipe }) {
+  const chainId = compiled.deployment.chainId
+  const rpc = rpcUrl(chainId)
   const tx = buildActivateTx({
     deployment: compiled.deployment,
     owner: compiled.owner,
     setupData: compiled.setupData,
   })
 
-  const simulate = `curl -s ${RPC_URL} \\
+  const simulate = `curl -s ${rpc} \\
   -X POST -H 'content-type: application/json' \\
   --data '${JSON.stringify({
     jsonrpc: '2.0',
@@ -35,10 +37,10 @@ export function TerminalPanel({ compiled }: { compiled: CompiledRecipe }) {
   'activate(address,bytes)' \\
   ${compiled.owner} \\
   ${compiled.setupData} \\
-  --rpc-url ${RPC_URL} \\
+  --rpc-url ${rpc} \\
   --private-key $PRIVATE_KEY`
 
-  const orders = `curl -s ${COW_API}/account/${compiled.address}/orders | jq '.[] | {uid, status, sellAmount, buyAmount}'`
+  const orders = `curl -s ${cowApiUrl(chainId)}/account/${compiled.address}/orders | jq '.[] | {uid, status, sellAmount, buyAmount}'`
 
   return (
     <details className="terminal">

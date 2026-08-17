@@ -49,13 +49,16 @@ That yields some properties worth stating plainly:
 | | Path P — pre-sign | Path C — composable |
 |---|---|---|
 | Recipe | `presignSellAll` | `twapFromBalance` |
-| Needs ERC-1271 | no | yes (`COWShedForComposableCoW`) |
+| Needs ERC-1271 | no | yes, forwarded by `DropExecutor` |
 | Needs a watch tower | no | yes, and it is automatic |
 | After activation | an off-chain poster submits the order | self-driving; each part is posted for you |
 | Good for | swap whatever arrived, once | TWAP and anything recurring |
 
-Both share a single factory: the ComposableCoW-aware shed implementation is a superset, since
-pre-signing needs nothing from the implementation.
+Both share one implementation, `COWShedWithExecutorSigner`, whose ERC-1271 delegates to the shed's
+trusted executor — which for a drop is `DropExecutor`. So the ComposableCoW forwarding that makes
+path C work lives in `DropExecutor.isValidSignature`, and pre-signing needs nothing from the
+implementation at all. That is what lets us reuse the cow-shed contracts already deployed rather than
+shipping our own variant.
 
 ## Layout
 
@@ -183,19 +186,27 @@ hardcoded table here.
 
 ## Deployments
 
-Gnosis (chain 100). Addresses are CREATE2 with a zero salt, so they are deterministic and were
-verified by deploying against a Gnosis fork.
+**The addresses are the same on every chain.** Every input to the CREATE2 derivation is itself
+deployed deterministically with a zero salt from addresses that are identical everywhere, so a recipe
+resolves to the same drop address on Gnosis, mainnet and everywhere else — verified by running the
+deploy script against Gnosis and mainnet forks and diffing the output. Only *whether the contracts
+exist there yet* differs, which the UI checks with `getCode`.
 
 | Contract | Address | Status |
 |---|---|---|
-| `COWShedForComposableCoW` (v2.1.0) | `0xF0D400089d5b9fACA64E3422AD6614546587cfFB` | already deployed |
-| `COWShedExecutorFactory` | `0x1981207D830569A9A57F42d791899CF681F4187F` | **not yet broadcast** |
+| `COWShedWithExecutorSigner` | `0x1c4b988481d945c98a21446AB2960000d290aB22` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) |
+| `COWShedExecutorFactory` | `0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) |
 | `DropRecipes` | `0x8fd40C67B633482d4a37c2c13297E8B353bc692f` | **not yet broadcast** |
-| `DropExecutor` | `0x0f81eDA6BFdB6a8733852e13DAB35c308770677a` | **not yet broadcast** |
+| `DropExecutor` | `0xaC562b272F10988356d58E14AB92B7852eee7751` | **not yet broadcast** |
 
-The shed implementation is the *canonical* cow-shed v2.1.0 build, not a fork — and because a CREATE2
-address is derived from its init code, reusing it is proof this repo reproduces the official
-bytecode. That is also why `contracts/foundry.toml` must stay byte-identical to cow-shed's.
+Both cow-shed contracts are the canonical ones already live on Gnosis, reused rather than
+redeployed — so **the only things this project deploys are its own two contracts**, and a drop address
+is derived entirely from official cow-shed code. Because a CREATE2 address is derived from init code,
+landing on #79's addresses is also proof this repo reproduces the deployed bytecode, which is why
+`contracts/foundry.toml` must stay byte-identical to cow-shed's.
+
+Supported chains are listed in `packages/sdk/src/chains.ts`. Chains without ComposableCoW
+(Base, Polygon, Avalanche) can still pre-sign orders but cannot register a TWAP.
 
 ```bash
 cd contracts

@@ -8,6 +8,7 @@ import {DropExecutor} from "src/DropExecutor.sol";
 import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
+import {IComposableCow} from "cow-shed/IComposableCow.sol";
 
 /// @notice Generates address-derivation fixtures for the SDK to check itself against.
 ///
@@ -25,7 +26,7 @@ contract FixturesScript is Script {
     function run() external {
         COWShed implementation = new COWShed();
         COWShedExecutorFactory factory = new COWShedExecutorFactory(address(implementation));
-        DropExecutor executor = new DropExecutor(factory);
+        DropExecutor executor = new DropExecutor(factory, IComposableCow(address(0)));
 
         string memory root = "fixtures";
         vm.serializeAddress(root, "implementation", address(implementation));

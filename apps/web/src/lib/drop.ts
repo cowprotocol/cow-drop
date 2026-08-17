@@ -9,7 +9,7 @@ import {
 import type { OrderCreation } from '@cowprotocol/cow-sdk'
 import type { Address, Hex, TransactionReceipt } from 'viem'
 
-import { orderBookApi, publicClient, sendTransaction } from './chain.js'
+import { getOrderBookApi, getPublicClient, sendTransaction } from './chain.js'
 
 const ERC20_ABI = [
   { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'uint256' }] },
@@ -24,13 +24,14 @@ export interface DropStatus {
 }
 
 export async function readDropStatus(compiled: CompiledRecipe, sellToken: Address): Promise<DropStatus> {
+  const client = getPublicClient(compiled.deployment.chainId)
   const [code, executorCode, balance, nativeBalance] = await Promise.all([
-    publicClient.getCode({ address: compiled.address }),
-    publicClient.getCode({ address: compiled.deployment.executor }),
-    publicClient
+    client.getCode({ address: compiled.address }),
+    client.getCode({ address: compiled.deployment.executor }),
+    client
       .readContract({ address: sellToken, abi: ERC20_ABI, functionName: 'balanceOf', args: [compiled.address] })
       .catch(() => 0n),
-    publicClient.getBalance({ address: compiled.address }),
+    client.getBalance({ address: compiled.address }),
   ])
 
   return {
@@ -58,8 +59,9 @@ export async function activateDrop(params: {
     setupData: compiled.setupData,
   })
 
-  const hash = await sendTransaction({ account: params.account, ...tx })
-  const receipt = await publicClient.waitForTransactionReceipt({ hash })
+  const chainId = compiled.deployment.chainId
+  const hash = await sendTransaction({ chainId, account: params.account, ...tx })
+  const receipt = await getPublicClient(chainId).waitForTransactionReceipt({ hash })
   return { hash, receipt }
 }
 
@@ -72,7 +74,11 @@ export async function activateDrop(params: {
  * Submitted through `OrderBookApi` rather than a hand-rolled fetch, so the base URL, the payload type
  * and the error shapes are the SDK's problem rather than ours.
  */
-export async function postPlacedOrders(receipt: TransactionReceipt, drop: Address): Promise<string[]> {
+export async function postPlacedOrders(
+  receipt: TransactionReceipt,
+  drop: Address,
+  chainId: number,
+): Promise<string[]> {
   const posted: string[] = []
 
   for (const log of receipt.logs) {
@@ -86,7 +92,7 @@ export async function postPlacedOrders(receipt: TransactionReceipt, drop: Addres
     }
 
     try {
-      posted.push(await orderBookApi.sendOrder(toOrderBookPayload(order, drop) as OrderCreation))
+      posted.push(await getOrderBookApi(chainId).sendOrder(toOrderBookPayload(order, drop) as OrderCreation))
     } catch (cause) {
       // A duplicate is a success: someone else already posted this order.
       if (JSON.stringify(cause).includes('DuplicatedOrder')) {
