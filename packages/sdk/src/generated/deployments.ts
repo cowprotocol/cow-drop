@@ -7,9 +7,9 @@ import { PROXY_CREATION_CODE } from './artifacts.js'
 export const DEPLOYMENTS: Record<number, DropDeployment> = {
   100: {
     chainId: 100,
-    factory: '0xdaB53E4DA62fc84D0A96b130E647a61755028FDD',
-    executor: '0x07BBC94Fcebe7A1aA71E2102D0A4a353dEd4Df9D',
-    recipes: '0xC5169644b3B3e9253FB0eaC0d4e98D2e4d6f0210',
+    factory: '0x1981207D830569A9A57F42d791899CF681F4187F',
+    executor: '0x0f81eDA6BFdB6a8733852e13DAB35c308770677a',
+    recipes: '0x8fd40C67B633482d4a37c2c13297E8B353bc692f',
     shedImplementation: '0xF0D400089d5b9fACA64E3422AD6614546587cfFB',
     proxyCreationCode: PROXY_CREATION_CODE,
   },

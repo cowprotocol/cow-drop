@@ -4,7 +4,7 @@ Three contracts. One of them carries the entire security argument.
 
 ```bash
 git submodule update --init --recursive   # cow-shed has its own submodules
-forge test                                # 30 hermetic tests
+forge test                                # 38 hermetic tests
 forge fmt
 ```
 
@@ -42,6 +42,14 @@ The alternative — stashing the salt in transient storage during `activate` —
 straight through the factory, which the design deliberately allows as a discardable solver
 pre-interaction.
 
+**How funds get out when a recipe can't run.** Two paths, neither needing a signature, both
+owner-only. Before deployment: `COWShedExecutorFactory.initializeProxyWithoutSetup` (cow-shed#78)
+deploys at the committed address, skips the setup, and runs caller-supplied calls as the shed in the
+same transaction — same transaction because the committed executor is trusted the moment the shed
+exists. After deployment: nothing special is needed, since `trustedExecuteHooks` is `onlyTrustedRole`
+= admin *or* trusted executor, and the owner is the admin. `DropRecipes.sweep` is the primitive both
+use. See the `test_rescue_*` tests.
+
 **Why drops are re-triggerable.** `trustedExecuteHooks` consumes no nonce, so a recipe can run again
 on funds that arrive later — which is what makes a reusable deposit address work. Set `once` for
 one-shot recipes; `DropExecutor` enforces it with a per-drop flag, written before the calls so a
@@ -65,6 +73,7 @@ deployment addresses work. Storage wouldn't, and this contract deliberately has 
 | `requireTimeWindow(from, to)` | Guard: revert outside an absolute window. `0` means unbounded. |
 | `wrapNative(wrapped)` | Wrap the whole native balance, so xDAI/ETH-funded drops can trade. |
 | `approveMax(token, spender)` | For the generic step builder; the order primitives handle their own allowances. |
+| `sweep(token, to)` | Rescue: send the whole balance out. `token = address(0)` for native. An empty balance is a no-op, not a revert. |
 
 Events emitted here come *from the drop*, since that's `address(this)` under delegatecall — which is
 what lets a poster filter `DropOrderPlaced` by drop address.

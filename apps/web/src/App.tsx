@@ -7,6 +7,7 @@ import { activateDrop, postPlacedOrders, readDropStatus, type DropStatus } from 
 import { GNOSIS_TOKENS, WRAPPED_NATIVE, findToken } from './lib/tokens.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
+import { RescuePanel } from './components/RescuePanel.js'
 import { StepTable } from './components/StepTable.js'
 
 type Template = 'swap' | 'twap'
@@ -315,7 +316,17 @@ export function App() {
           </section>
 
           <section>
-            <h2>6 &middot; Recipe file</h2>
+            <h2>6 &middot; If something goes wrong</h2>
+            <RescuePanel
+              compiled={compiled.value}
+              account={account}
+              deployed={status?.deployed ?? false}
+              sellToken={form.sellToken}
+            />
+          </section>
+
+          <section>
+            <h2>7 &middot; Recipe file</h2>
             <RecipeJson
               recipe={recipe}
               address={compiled.value.address}

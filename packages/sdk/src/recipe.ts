@@ -76,6 +76,8 @@ export interface CompiledRecipe {
   setupData: Hex
   /** The drop address. Send funds here. */
   address: Address
+  /** The owner the address was derived for — it is half the derivation, so it travels with it. */
+  owner: Address
   deployment: DropDeployment
 }
 
@@ -138,6 +140,7 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
     recipe,
     setupData,
     address: deriveDropAddress({ deployment, owner: json.owner, setupData }),
+    owner: json.owner,
     deployment,
   }
 }

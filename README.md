@@ -40,8 +40,9 @@ That yields some properties worth stating plainly:
 - **The amount is never committed.** Recipe primitives run as delegatecalls, so `address(this)` is
   the drop and `balanceOf(address(this))` is what actually arrived. A drop commits to *"split
   whatever lands here into 12 parts"*, not to a number nobody could have known.
-- **Recoverable.** The shed's admin is the `owner`, so a drop with a broken recipe is never lost
-  funds — the owner can always sweep it with an ordinary signed `executeHooks`.
+- **Recoverable.** A drop whose recipe can never succeed is not lost funds. The owner is the shed's
+  admin, and there are two owner-only rescue paths — one for before the drop is deployed and one for
+  after — neither of which needs a signature. See [Rescue](#rescue).
 
 ## Two order paths
 
@@ -68,7 +69,7 @@ Each package has its own short README — start with whichever part you're touch
 | `recipes/` | Example `.drop.json` files | |
 
 ```
-contracts/        lib/cow-shed pinned to cow-shed#64 (feat/deploy-time-setup-call)
+contracts/        lib/cow-shed pinned to cow-shed#78 (feat/owner-deploy-without-setup)
   src/DropExecutor.sol    the commitment check + activation
   src/DropRecipes.sol     recipe primitives, delegatecalled by the drop
   src/DropOrders.sol      order UID packing, limit-price math
@@ -87,7 +88,7 @@ apps/web/src/App.tsx      the form, and the recipe it builds
 git submodule update --init --recursive
 
 pnpm install
-cd contracts && forge test              # 30 hermetic tests
+cd contracts && forge test              # 38 hermetic tests
 cd ../packages/sdk && pnpm generate && pnpm build && pnpm test
 cd ../../apps/web && pnpm dev           # http://localhost:5173
 ```
@@ -180,9 +181,9 @@ verified by deploying against a Gnosis fork.
 | Contract | Address | Status |
 |---|---|---|
 | `COWShedForComposableCoW` (v2.1.0) | `0xF0D400089d5b9fACA64E3422AD6614546587cfFB` | already deployed |
-| `COWShedExecutorFactory` | `0xdaB53E4DA62fc84D0A96b130E647a61755028FDD` | **not yet broadcast** |
-| `DropRecipes` | `0xC5169644b3B3e9253FB0eaC0d4e98D2e4d6f0210` | **not yet broadcast** |
-| `DropExecutor` | `0x07BBC94Fcebe7A1aA71E2102D0A4a353dEd4Df9D` | **not yet broadcast** |
+| `COWShedExecutorFactory` | `0x1981207D830569A9A57F42d791899CF681F4187F` | **not yet broadcast** |
+| `DropRecipes` | `0x8fd40C67B633482d4a37c2c13297E8B353bc692f` | **not yet broadcast** |
+| `DropExecutor` | `0x0f81eDA6BFdB6a8733852e13DAB35c308770677a` | **not yet broadcast** |
 
 The shed implementation is the *canonical* cow-shed v2.1.0 build, not a fork — and because a CREATE2
 address is derived from its init code, reusing it is proof this repo reproduces the official
@@ -246,6 +247,40 @@ What is *not* available is a guarantee that only a chosen party may ever activat
 committing an authorised activator into the recipe and checking it in `DropExecutor` — cheap to add,
 but it gives up the property that makes drops interesting, so it is a per-recipe decision nobody has
 asked for yet. Note also that a spent run is never lost funds: the owner can still sweep.
+
+### Rescue
+
+A drop is funded before it exists, which creates a failure mode worth taking seriously: money arrives
+late, or a condition the recipe depends on stops holding, and the committed recipe can never succeed.
+`initializeProxyWithSetup` is the only entrypoint that can deploy at a setup-committed address and it
+always runs the setup — so without a hatch, those funds would be stranded at an address that can
+never exist.
+
+The first defence is recipe design: give a one-shot recipe a `requireTimeWindow` with a `notAfter`, or
+a branch that lets the setup succeed trivially once the opportunity has passed. But the recipe author
+may not have modelled it, or may have modelled it wrongly, so there are two rescue paths — and which
+applies depends only on whether the drop is deployed yet:
+
+| drop state | mechanism | SDK |
+|---|---|---|
+| not deployed | `initializeProxyWithoutSetup` ([cow-shed#78](https://github.com/cowdao-grants/cow-shed/pull/78)) — deploys at the same address, skips the recipe, sweeps in the same transaction | `buildRescueTx` |
+| deployed | `trustedExecuteHooks` — the owner is the shed's admin, so no hatch and no signature are needed | `buildOwnerSweepTx` |
+
+`buildRescueForState` picks between them. Both are owner-only.
+
+Owner-only is what keeps ordinary drops safe to fund: if anyone could deploy at a setup-committed
+address without running the setup, the address would stop being a promise about what happens to the
+money. It grants the owner nothing new, since they are the admin already. The sweep runs in the *same*
+transaction as the deployment because the committed trusted executor cannot be swapped out for the
+rescue and is trusted the moment the shed exists — sweeping separately would leave it a window to act
+first.
+
+Passing no sweep calls (`buildDeployOnlyTx`) is the "just give me the account" variant: it deploys the
+shed, skips the recipe, and leaves an ordinary cow-shed the owner drives normally. With an empty call
+list the factory never takes the trusted role at all.
+
+One consequence to keep in mind: **a drop's address no longer proves its recipe ran.** Anything
+inferring that must check the recipe's own effects or watch for `SetupSkipped`.
 
 Never discover a user's drop from `ownerOf` or `COWShedBuilt`: `initializeProxyWithSetup` is
 permissionless, so anyone can create a shed that reports someone else as its owner. Always recompute

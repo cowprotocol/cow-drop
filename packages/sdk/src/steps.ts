@@ -187,6 +187,28 @@ export const steps = {
     )
   },
 
+  /**
+   * Send the drop's whole balance of `token` to `to`. Pass the zero address as `token` to sweep the
+   * native balance.
+   *
+   * Mostly used for rescue rather than as a recipe step — see `buildRescueTx` and
+   * `buildOwnerSweepTx`. An empty balance is a no-op rather than a revert, so a rescue naming
+   * several tokens moves whatever it finds.
+   */
+  sweep(deployment: Pick<DropDeployment, 'recipes'>, params: { token: Address; to: Address }): DropCall {
+    if (params.to === ZERO_ADDRESS) {
+      throw new Error('sweep needs a non-zero recipient')
+    }
+    return recipeCall(
+      deployment,
+      encodeFunctionData({
+        abi: DROP_RECIPES_ABI,
+        functionName: 'sweep',
+        args: [params.token, params.to],
+      }),
+    )
+  },
+
   approveMax(
     deployment: Pick<DropDeployment, 'recipes'>,
     params: { token: Address; spender: Address; allowFailure?: boolean },

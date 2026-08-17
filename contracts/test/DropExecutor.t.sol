@@ -7,7 +7,9 @@ import {DropExecutor} from "src/DropExecutor.sol";
 import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
-import {MockERC20, Recorder} from "./mocks/Mocks.sol";
+import {DropRecipes} from "src/DropRecipes.sol";
+import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
+import {MockComposableCow, MockERC20, MockSettlement, Recorder} from "./mocks/Mocks.sol";
 
 contract DropExecutorTest is Test {
     COWShed internal impl;
@@ -15,6 +17,7 @@ contract DropExecutorTest is Test {
     DropExecutor internal executor;
     Recorder internal recorder;
     MockERC20 internal token;
+    DropRecipes internal recipes;
 
     address internal owner = makeAddr("owner");
     address internal attacker = makeAddr("attacker");
@@ -26,6 +29,13 @@ contract DropExecutorTest is Test {
         executor = new DropExecutor(factory);
         recorder = new Recorder();
         token = new MockERC20();
+        recipes = new DropRecipes(
+            ISettlementLike(address(new MockSettlement(keccak256("d")))),
+            address(0xC92E),
+            IComposableCowLike(address(new MockComposableCow(keccak256("c")))),
+            address(0x7A9F),
+            address(0x715)
+        );
     }
 
     // --- helpers ---------------------------------------------------------------------------
@@ -357,6 +367,142 @@ contract DropExecutorTest is Test {
     function test_attack_truncatedSetupDataIsRejected() external {
         vm.expectRevert(DropExecutor.MalformedRecipe.selector);
         executor.dropOf(owner, hex"1234");
+    }
+
+    // --- rescue ----------------------------------------------------------------------------
+    //
+    // The scenario these cover: funds are sent late, or a condition the recipe depends on is no
+    // longer true, so the committed recipe can never succeed. `initializeProxyWithSetup` is the only
+    // entrypoint that can deploy at a setup-committed address and it always runs the setup, so
+    // without a hatch those funds would be stranded at an address that can never exist.
+    // cow-shed#78's `initializeProxyWithoutSetup` is that hatch.
+
+    /// @dev Rescue before deployment: the owner deploys at the committed address, skips the broken
+    ///      recipe, and sweeps — all in one transaction.
+    function test_rescue_ownerRecoversFromARecipeThatCanNeverSucceed() external {
+        // A recipe that always reverts, so the drop can never be activated.
+        Call[] memory doomed = new Call[](1);
+        doomed[0] = Call({
+            target: address(this),
+            value: 0,
+            callData: abi.encodeWithSignature("doesNotExist()"),
+            allowFailure: false,
+            isDelegateCall: false
+        });
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "doomed", salt: bytes32(0), once: false, calls: doomed}));
+
+        address drop = executor.dropOf(owner, recipe);
+        token.mint(drop, 500);
+        vm.deal(drop, 2 ether);
+
+        // Confirm it really is stuck through the normal path.
+        vm.expectRevert();
+        executor.activate(owner, recipe);
+        assertEq(drop.code.length, 0, "doomed drop should not be deployable normally");
+
+        // The hatch: deploy without the setup call, sweeping both balances as the shed.
+        Call[] memory rescue = new Call[](2);
+        rescue[0] = Call({
+            target: address(recipes),
+            value: 0,
+            callData: abi.encodeCall(DropRecipes.sweep, (address(token), owner)),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+        rescue[1] = Call({
+            target: address(recipes),
+            value: 0,
+            callData: abi.encodeCall(DropRecipes.sweep, (address(0), owner)),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+
+        vm.prank(owner);
+        address rescued = factory.initializeProxyWithoutSetup(
+            owner, address(executor), bytes32(0), address(executor), recipe, rescue
+        );
+
+        assertEq(rescued, drop, "rescue deployed at a different address");
+        assertEq(token.balanceOf(owner), 500, "tokens not recovered");
+        assertEq(owner.balance, 2 ether, "native balance not recovered");
+        // The shed still ends up in the configuration its address commits to.
+        assertEq(COWShed(payable(drop)).trustedExecutor(), address(executor), "executor handover did not happen");
+    }
+
+    /// @dev Only the owner may skip a committed setup. Otherwise anyone could deploy at a
+    ///      setup-committed address without running its recipe, which would break the guarantee that
+    ///      makes drops safe to fund.
+    function test_rescue_isOwnerOnly() external {
+        bytes memory recipe = _pingRecipe("victim", false, 0);
+
+        vm.prank(attacker);
+        vm.expectRevert(COWShedExecutorFactory.OnlyOwner.selector);
+        factory.initializeProxyWithoutSetup(
+            owner, address(executor), bytes32(0), address(executor), recipe, new Call[](0)
+        );
+    }
+
+    /// @dev "Just give me the shed": deploy with no rescue calls and operate it as a normal cow-shed
+    ///      afterwards. With an empty call list the factory never takes the trusted role at all.
+    function test_rescue_deployOnlyLeavesAnOrdinaryShed() external {
+        bytes memory recipe = _pingRecipe("plain", false, 0);
+        address drop = executor.dropOf(owner, recipe);
+
+        vm.prank(owner);
+        factory.initializeProxyWithoutSetup(
+            owner, address(executor), bytes32(0), address(executor), recipe, new Call[](0)
+        );
+
+        assertGt(drop.code.length, 0, "not deployed");
+        assertEq(COWShed(payable(drop)).trustedExecutor(), address(executor), "executor not configured");
+        assertEq(recorder.pings(), 0, "the recipe ran despite being skipped");
+    }
+
+    /// @dev Rescue after deployment needs no hatch at all: the owner is the shed's admin, and
+    ///      `trustedExecuteHooks` is `onlyTrustedRole` — admin *or* trusted executor — so the owner
+    ///      can sweep directly, with no signature and no factory involvement.
+    function test_rescue_afterDeploymentTheOwnerSweepsDirectly() external {
+        bytes memory recipe = _pingRecipe("deployed", false, 0);
+
+        vm.prank(keeper);
+        address drop = executor.activate(owner, recipe);
+
+        // Funds arrive after the recipe has already run.
+        token.mint(drop, 250);
+
+        Call[] memory sweep = new Call[](1);
+        sweep[0] = Call({
+            target: address(recipes),
+            value: 0,
+            callData: abi.encodeCall(DropRecipes.sweep, (address(token), owner)),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+
+        vm.prank(owner);
+        COWShed(payable(drop)).trustedExecuteHooks(sweep);
+
+        assertEq(token.balanceOf(owner), 250, "owner could not sweep a deployed drop");
+    }
+
+    function test_rescue_afterDeploymentIsStillClosedToStrangers() external {
+        bytes memory recipe = _pingRecipe("deployed", false, 0);
+        vm.prank(keeper);
+        address drop = executor.activate(owner, recipe);
+        token.mint(drop, 250);
+
+        Call[] memory sweep = new Call[](1);
+        sweep[0] = Call({
+            target: address(recipes),
+            value: 0,
+            callData: abi.encodeCall(DropRecipes.sweep, (address(token), attacker)),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+
+        vm.prank(attacker);
+        vm.expectRevert(COWShed.OnlyTrustedRole.selector);
+        COWShed(payable(drop)).trustedExecuteHooks(sweep);
     }
 
     // --- recovery --------------------------------------------------------------------------

@@ -4,6 +4,7 @@ pragma solidity ^0.8.25;
 import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {DropOrders} from "./DropOrders.sol";
 import {IComposableCowLike, IERC20Like, ISettlementLike, IWrappedNative} from "./interfaces/IDropExternal.sol";
@@ -41,6 +42,12 @@ contract DropRecipes {
 
     /// @notice Activated after the recipe's window closed.
     error TooLate(uint256 notAfter);
+
+    /// @notice A sweep was pointed at the zero address.
+    error InvalidRecipient();
+
+    /// @notice The native-token transfer in a sweep was rejected by the recipient.
+    error NativeTransferFailed();
 
     /// @notice Emitted when a pre-signed order is placed, carrying everything an off-chain poster
     ///         needs to submit it to the order book. The emitter is the drop.
@@ -233,6 +240,41 @@ contract DropRecipes {
         uint256 balance = address(this).balance;
         if (balance == 0) revert NothingToSell();
         IWrappedNative(wrappedNative).deposit{value: balance}();
+    }
+
+    // --- rescue ------------------------------------------------------------------------------
+
+    /// @notice Send the drop's entire balance of `token` to `to`. `token == address(0)` sweeps the
+    ///         native balance.
+    ///
+    /// @dev The rescue primitive, for when a drop's committed recipe can never succeed and the
+    ///      funds sent to it would otherwise be stranded. Not itself part of a recipe: rescue calls
+    ///      are supplied at rescue time by the owner, either through
+    ///      `COWShedExecutorFactory.initializeProxyWithoutSetup` (drop not yet deployed) or
+    ///      `COWShed.trustedExecuteHooks` (drop already deployed, owner is admin so no signature is
+    ///      needed).
+    ///
+    ///      Amount-independent, like the trading primitives — whoever is rescuing does not
+    ///      necessarily know what arrived.
+    ///
+    ///      Unlike them, an empty balance is a no-op rather than a revert. A rescue naming five
+    ///      tokens should move whatever it finds rather than fail because one of them was empty,
+    ///      and the caller is the owner, who can see the result.
+    function sweep(address token, address to) external {
+        if (to == address(0)) revert InvalidRecipient();
+
+        if (token == address(0)) {
+            uint256 balance = address(this).balance;
+            if (balance == 0) return;
+            (bool ok,) = payable(to).call{value: balance}("");
+            if (!ok) revert NativeTransferFailed();
+        } else {
+            uint256 balance = IERC20Like(token).balanceOf(address(this));
+            if (balance == 0) return;
+            // SafeERC20 so tokens that return no boolean are handled — a rescue is the last thing
+            // that should be defeated by a non-standard ERC20.
+            SafeERC20.safeTransfer(IERC20(token), to, balance);
+        }
     }
 
     /// @notice Set an unlimited allowance for `spender`, if it is not already effectively so.

@@ -208,6 +208,24 @@ export const DROP_RECIPES_ABI = [
   },
   {
     "type": "function",
+    "name": "sweep",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "twapFromBalance",
     "inputs": [
       {
@@ -366,6 +384,28 @@ export const DROP_RECIPES_ABI = [
   },
   {
     "type": "error",
+    "name": "AddressEmptyCode",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AddressInsufficientBalance",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BalanceTooLow",
     "inputs": [
       {
@@ -382,13 +422,39 @@ export const DROP_RECIPES_ABI = [
   },
   {
     "type": "error",
+    "name": "FailedInnerCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidRecipient",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LimitPriceTooLow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NativeTransferFailed",
     "inputs": []
   },
   {
     "type": "error",
     "name": "NothingToSell",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -832,6 +898,77 @@ export const COW_SHED_EXECUTOR_FACTORY_ABI = [
   },
   {
     "type": "function",
+    "name": "initializeProxyWithoutSetup",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "trustedExecutor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "setupTarget",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "setupData",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "calls",
+        "type": "tuple[]",
+        "internalType": "struct Call[]",
+        "components": [
+          {
+            "name": "target",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "callData",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "allowFailure",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "isDelegateCall",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "proxy",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "ownerOf",
     "inputs": [
       {
@@ -956,6 +1093,31 @@ export const COW_SHED_EXECUTOR_FACTORY_ABI = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "SetupSkipped",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "shed",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "setupTarget",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "InvalidSignature",
     "inputs": []
@@ -968,6 +1130,11 @@ export const COW_SHED_EXECUTOR_FACTORY_ABI = [
   {
     "type": "error",
     "name": "NonceAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyOwner",
     "inputs": []
   }
 ] as const

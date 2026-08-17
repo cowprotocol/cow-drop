@@ -5,6 +5,7 @@ export * from './steps.js'
 export * from './recipe.js'
 export * from './templates.js'
 export * from './tx.js'
+export * from './rescue.js'
 export { DEPLOYMENTS, getDeployment } from './generated/deployments.js'
 export {
   COW_SHED_EXECUTOR_FACTORY_ABI,

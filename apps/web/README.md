@@ -25,7 +25,11 @@ Six panels, top to bottom, in the order you'd actually use them:
 5. **Status** — balance at the drop, whether it's deployed, and the activate button. It warns when
    the contracts aren't deployed on the chain yet, in which case the address is a prediction (a
    correct one — addresses are deterministic).
-6. **Recipe file** — import and export. Export, reload the page, import, and the same address comes
+6. **If something goes wrong** — the rescue panel, behind a toggle. It shows which path applies
+   (deploy-without-setup if the drop doesn't exist yet, direct sweep if it does), lets you pick which
+   balances to recover and where to send them, and offers "deploy shed only" for taking manual
+   control instead. Owner-only, so it tells you when the connected account isn't the owner.
+7. **Recipe file** — import and export. Export, reload the page, import, and the same address comes
    back, because the address is derived from the recipe rather than stored anywhere.
 
 ## Activation
@@ -47,6 +51,6 @@ takes over.
 | `src/lib/drop.ts` | Reading drop status, activating, and posting placed orders. |
 | `src/lib/chain.ts` | Public client, injected wallet, chain switching. |
 | `src/lib/tokens.ts` | A small curated Gnosis token list (symbols and decimals verified on-chain). |
-| `src/components/` | Address panel with QR, the committed-bytes table, and the JSON import/export. |
+| `src/components/` | Address panel with QR, the committed-bytes table, the rescue panel, and the JSON import/export. |
 
 All the interesting logic lives in `@cowprotocol/defi-drop-sdk` — this app is a form around it.

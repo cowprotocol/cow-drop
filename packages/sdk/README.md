@@ -64,6 +64,21 @@ await walletClient.sendTransaction(tx)
 | `parseDropOrderPlaced(log)` | Decode a `DropOrderPlaced` event into the order that got pre-signed. |
 | `toOrderBookPayload(order, drop)` | That order as a `POST /api/v1/orders` body, with `signingScheme: 'presign'`. |
 
+### Rescue
+
+For when a drop's recipe can never succeed — funds arrived late, or a condition stopped holding.
+
+| | |
+|---|---|
+| `buildRescueForState(…)` | The one to use. Picks the right path from whether the drop is deployed, and returns `{ tx, path }`. |
+| `buildRescueTx(…)` | Drop not deployed: `initializeProxyWithoutSetup` — deploy at the same address, skip the recipe, sweep atomically. |
+| `buildOwnerSweepTx(…)` | Drop deployed: `trustedExecuteHooks`, since the owner is the shed's admin. |
+| `buildDeployOnlyTx(…)` | Deploy the shed, skip the recipe, do nothing else — then operate it as a normal cow-shed. |
+| `buildSweepCalls(…)` | The `Call[]` those take: one `sweep` per token, zero address for native. |
+
+All owner-only, none needing a signature. Prefer designing the recipe so rescue is unnecessary — a
+`requireTimeWindow` with a `notAfter`, or a deadline branch that lets the setup succeed trivially.
+
 ### Prices
 
 | | |
