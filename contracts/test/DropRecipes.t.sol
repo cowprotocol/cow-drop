@@ -306,6 +306,43 @@ contract DropRecipesTest is Test {
         assertEq(composableCow.createCount(), 1, "TWAP not registered");
     }
 
+    /// @dev A guard placed *after* the step it protects is still enforced, because the recipe is
+    ///      atomic: one reverting call with `allowFailure: false` unwinds the whole activation. So
+    ///      ordering is about what a guard measures and how early it fails, not about whether it
+    ///      binds. Worth pinning, since the opposite would make the raw step builder a sharp edge.
+    function test_guardIsEnforcedEvenWhenPlacedLast() external {
+        Call[] memory calls = new Call[](2);
+        calls[0] = Call({
+            target: address(recipes),
+            value: 0,
+            callData: abi.encodeCall(
+                DropRecipes.presignSellAll,
+                (address(sellToken), address(buyToken), recipient, uint256(95), uint256(100), uint256(1 hours), bytes32(0))
+            ),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+        calls[1] = Call({
+            target: address(recipes),
+            value: 0,
+            callData: abi.encodeCall(DropRecipes.requireMinBalance, (address(sellToken), 1000e18)),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "guard-last", once: true, calls: calls}));
+        address drop = executor.dropOf(owner, recipe);
+
+        sellToken.mint(drop, 100e18);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(DropRecipes.BalanceTooLow.selector, 100e18, 1000e18));
+        executor.activate(owner, recipe);
+
+        // The pre-signature from step 1 was rolled back with everything else.
+        assertEq(settlement.signerOf(keccak256(bytes(""))), address(0), "sanity");
+        assertFalse(executor.consumed(drop), "the run was spent despite the guard failing");
+        assertEq(drop.code.length, 0, "the drop should not exist after a reverted activation");
+    }
+
     function test_requireMinBalance_guardsTheNativeBalanceToo() external {
         bytes memory recipe =
             _recipe("native-guard", abi.encodeCall(DropRecipes.requireMinBalance, (address(0), 2 ether)));
