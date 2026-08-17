@@ -1,4 +1,4 @@
-import { compileRecipe, swapOnArrival, twapOnArrival, type DropRecipeJson } from '@cowprotocol/defi-drop-sdk'
+import { compileRecipe, swapOnArrival, twapOnArrival, type DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import { formatUnits, isAddress, type Address } from 'viem'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -154,11 +154,17 @@ export function App() {
   return (
     <main>
       <header>
-        <h1>defi-drop</h1>
-        <p className="tagline">
-          A funding address that already knows what to do. The recipe is committed into the address
-          itself, so anyone can trigger it and nobody has to sign anything.
-        </p>
+        <div className="brand">
+          {/* Served from public/ rather than imported, so the favicon and og:image can share it. */}
+          <img src="/logo.png" alt="" width={56} height={56} className="brand-mark" />
+          <div>
+            <h1>cow-drop</h1>
+            <p className="tagline">
+              Drop your tokens into an address and the cow does the rest. The recipe is committed
+              into the address itself, so anyone can trigger it and nobody has to sign anything.
+            </p>
+          </div>
+        </div>
         <div className="wallet">
           {account ? (
             <span className="pill">{account}</span>
@@ -288,7 +294,7 @@ export function App() {
                 <li>Drop deployed: <strong>{status.deployed ? 'yes' : 'not yet'}</strong></li>
                 {!status.executorDeployed && (
                   <li className="warn">
-                    The defi-drop contracts are not deployed on {CHAIN.name} yet, so the address is a
+                    The cow-drop contracts are not deployed on {CHAIN.name} yet, so the address is a
                     prediction and activation will fail. Addresses are deterministic, so this one will
                     not change once they are.
                   </li>

@@ -1,12 +1,12 @@
-# defi-drop
+<img src="apps/web/public/logo.png" alt="" width="88" align="right" />
 
-A funding address that already knows what to do.
+# cow-drop
+
+Drop your tokens into an address and the cow does the rest.
 
 Compute an address, send funds to it — by bridge, exchange withdrawal, payroll, plain transfer —
 and anyone can trigger the trading logic that was baked into it. There is no signature anywhere in
 the flow, because the recipe is committed into the address itself.
-
-> Working name. See [Naming](#naming).
 
 ## The idea
 
@@ -19,7 +19,7 @@ initCode = COWShedProxy.creationCode ++ abi.encode(implementation, owner)
 
 Every action then needs the owner to sign, at the moment of acting.
 
-defi-drop inverts that. Using [cow-shed#64](https://github.com/cowdao-grants/cow-shed/pull/64)'s
+cow-drop inverts that. Using [cow-shed#64](https://github.com/cowdao-grants/cow-shed/pull/64)'s
 deploy-time setup call, the address commits to a **recipe**:
 
 ```
@@ -140,7 +140,7 @@ slightly different price.
 ## Using the SDK
 
 ```ts
-import { compileRecipe, buildActivateTx, twapOnArrival } from '@cowprotocol/defi-drop-sdk'
+import { compileRecipe, buildActivateTx, twapOnArrival } from '@cowprotocol/cow-drop-sdk'
 
 const recipe = twapOnArrival({
   chainId: 100,
@@ -328,13 +328,7 @@ Not done yet:
 - [`bridge-and-swap`](https://github.com/cowprotocol/bridge-and-swap) →
   [`orderflow-contracts#1`](https://github.com/cowprotocol/orderflow-contracts/pull/1) solves the
   same problem with a narrower commitment: the address commits to exactly one order, via a bespoke
-  per-order contract. defi-drop generalizes that to any recipe and reuses cow-shed instead. Worth
+  per-order contract. cow-drop generalizes that to any recipe and reuses cow-shed instead. Worth
   deciding whether one subsumes the other for the single-order case.
 - [`approve-and-bridge`](https://github.com/cowprotocol/approve-and-bridge) is the outbound mirror
   (swap then bridge, as a post-hook) and already uses cow-shed as its delegatecall context.
-
-## Naming
-
-`defi-drop` is a placeholder. `trough` is the current favourite — you pour things in and the cow does
-the rest, and it sits in the cow-shed family without claiming to be part of it. Runners-up: `feeder`,
-`milk-run`, `drop-shed`.

@@ -1,11 +1,15 @@
 :root {
-  --bg: #0f1115;
-  --panel: #171a21;
-  --panel-2: #1e222b;
-  --border: #2a2f3a;
+  /* Sampled from the logo: its light blue is the accent, its navy the brand tone. */
+  --brand: #62d9fd;
+  --brand-navy: #012975;
+
+  --bg: #0d1016;
+  --panel: #161a22;
+  --panel-2: #1d2230;
+  --border: #2a3040;
   --text: #e6e8ec;
   --muted: #98a1b3;
-  --accent: #65c2d7;
+  --accent: var(--brand);
   --ok: #7ddc9a;
   --warn: #e8c468;
   --error: #ef7b7b;
@@ -52,6 +56,43 @@ h2 {
 
 header {
   margin-bottom: 2rem;
+}
+
+.brand {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.brand > div {
+  min-width: 0;
+}
+
+/* A soft navy halo so the mark sits on the page rather than floating on it. */
+.brand-mark {
+  flex: 0 0 auto;
+  border-radius: 13px;
+  box-shadow: 0 0 0 1px var(--border), 0 8px 24px -12px var(--brand-navy);
+}
+
+.brand h1 {
+  margin-bottom: 0.3rem;
+}
+
+.brand .tagline {
+  margin-bottom: 0;
+}
+
+@media (max-width: 520px) {
+  .brand {
+    gap: 0.75rem;
+  }
+
+  .brand-mark {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 section {

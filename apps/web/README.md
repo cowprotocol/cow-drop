@@ -1,4 +1,4 @@
-# defi-drop web
+# cow-drop web
 
 A single page that turns a form into an address.
 
@@ -53,4 +53,4 @@ takes over.
 | `src/lib/tokens.ts` | A small curated Gnosis token list (symbols and decimals verified on-chain). |
 | `src/components/` | Address panel with QR, the committed-bytes table, the rescue panel, and the JSON import/export. |
 
-All the interesting logic lives in `@cowprotocol/defi-drop-sdk` — this app is a form around it.
+All the interesting logic lives in `@cowprotocol/cow-drop-sdk` — this app is a form around it.

@@ -10,7 +10,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@cowprotocol/defi-drop-sdk':
+      '@cowprotocol/cow-drop-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       qrcode:

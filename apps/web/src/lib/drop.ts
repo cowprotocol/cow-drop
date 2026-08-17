@@ -5,7 +5,7 @@ import {
   toOrderBookPayload,
   type CompiledRecipe,
   type DropRecipeJson,
-} from '@cowprotocol/defi-drop-sdk'
+} from '@cowprotocol/cow-drop-sdk'
 import type { Address, Hex, TransactionReceipt } from 'viem'
 
 import { COW_API, publicClient, sendTransaction } from './chain.js'

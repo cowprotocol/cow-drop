@@ -1,4 +1,4 @@
-import { compileRecipe, type DropRecipeJson } from '@cowprotocol/defi-drop-sdk'
+import { compileRecipe, type DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import { useEffect, useState } from 'react'
 import type { Address } from 'viem'
 

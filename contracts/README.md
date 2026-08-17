@@ -1,4 +1,4 @@
-# defi-drop contracts
+# cow-drop contracts
 
 Three contracts. One of them carries the entire security argument.
 

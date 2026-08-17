@@ -2,7 +2,7 @@
 pragma solidity ^0.8.25;
 
 /// @title DropConfig
-/// @notice Per-chain addresses of the contracts defi-drop builds on.
+/// @notice Per-chain addresses of the contracts cow-drop builds on.
 /// @dev The CoW Protocol core and composable-cow contracts are CREATE2-deployed to the same
 ///      address on every chain; only the wrapped native token differs. See
 ///      https://github.com/cowprotocol/composable-cow/blob/main/networks.json

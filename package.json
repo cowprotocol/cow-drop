@@ -1,5 +1,5 @@
 {
-  "name": "defi-drop",
+  "name": "cow-drop",
   "version": "0.0.0",
   "private": true,
   "description": "Funding addresses with baked-in trading logic, built on cow-shed",

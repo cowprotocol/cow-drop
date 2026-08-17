@@ -2,7 +2,7 @@ import {
   buildDeployOnlyTx,
   buildRescueForState,
   type CompiledRecipe,
-} from '@cowprotocol/defi-drop-sdk'
+} from '@cowprotocol/cow-drop-sdk'
 import { useState } from 'react'
 import { isAddress, type Address } from 'viem'
 

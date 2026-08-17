@@ -1,5 +1,5 @@
 {
-  "name": "@cowprotocol/defi-drop-web",
+  "name": "@cowprotocol/cow-drop-web",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cowprotocol/defi-drop-sdk": "workspace:*",
+    "@cowprotocol/cow-drop-sdk": "workspace:*",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

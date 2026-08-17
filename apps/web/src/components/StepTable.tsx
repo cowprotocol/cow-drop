@@ -1,4 +1,4 @@
-import type { DropCall } from '@cowprotocol/defi-drop-sdk'
+import type { DropCall } from '@cowprotocol/cow-drop-sdk'
 import type { Hex } from 'viem'
 
 /**

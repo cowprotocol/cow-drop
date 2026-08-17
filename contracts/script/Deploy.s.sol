@@ -14,7 +14,7 @@ import {IComposableCow} from "cow-shed/IComposableCow.sol";
 
 import {DropConfig} from "./DropConfig.sol";
 
-/// @notice Deploys the defi-drop stack.
+/// @notice Deploys the cow-drop stack.
 ///
 /// @dev Everything is CREATE2 with a zero salt, so the addresses are reproducible and identical
 ///      across chains — which matters more here than usual: the shed implementation address is

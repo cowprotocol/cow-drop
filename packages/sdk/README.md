@@ -1,4 +1,4 @@
-# @cowprotocol/defi-drop-sdk
+# @cowprotocol/cow-drop-sdk
 
 Turn a recipe into a drop address, and build the transaction that runs it.
 
@@ -6,14 +6,14 @@ Everything here is pure except the parts that obviously aren't — no RPC calls,
 network. You give it a recipe, it gives you an address and calldata.
 
 ```bash
-pnpm --filter @cowprotocol/defi-drop-sdk generate   # ABIs + addresses from the foundry build
-pnpm --filter @cowprotocol/defi-drop-sdk build
+pnpm --filter @cowprotocol/cow-drop-sdk generate   # ABIs + addresses from the foundry build
+pnpm --filter @cowprotocol/cow-drop-sdk build
 ```
 
 ## The 30-second version
 
 ```ts
-import { compileRecipe, buildActivateTx, twapOnArrival } from '@cowprotocol/defi-drop-sdk'
+import { compileRecipe, buildActivateTx, twapOnArrival } from '@cowprotocol/cow-drop-sdk'
 
 // 1. Describe what should happen to the money.
 const recipe = twapOnArrival({
