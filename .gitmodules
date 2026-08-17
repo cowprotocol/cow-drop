@@ -1,0 +1,4 @@
+[submodule "contracts/lib/cow-shed"]
+	path = contracts/lib/cow-shed
+	url = https://github.com/cowdao-grants/cow-shed.git
+	branch = feat/deploy-time-setup-call

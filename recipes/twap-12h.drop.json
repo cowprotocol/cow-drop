@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "label": "WXDAI -> COW over 12h",
+  "chainId": 100,
+  "owner": "0x1111111111111111111111111111111111111111",
+  "once": true,
+  "steps": [
+    {
+      "type": "twapFromBalance",
+      "sellToken": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
+      "buyToken": "0x177127622c4A00F3d409B75571e12cB3c8973d3c",
+      "parts": 12,
+      "partDuration": 3600,
+      "limitPrice": {
+        "price": "45",
+        "sellDecimals": 18,
+        "buyDecimals": 18
+      }
+    }
+  ]
+}

@@ -19,6 +19,8 @@ cbor_metadata = false
 via_ir = true
 optimizer_runs = 1_000_000
 
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+
 remappings = [
     "cow-shed/=lib/cow-shed/src/",
     "forge-std/=lib/cow-shed/lib/forge-std/src/",
