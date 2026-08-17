@@ -104,10 +104,16 @@ your code and the SDK would produce a *different address*, not a slightly differ
 
 ## Two things that will bite you otherwise
 
-**The recipe file is not the commitment.** The compiled `setupData` bytes are. The file is a
-reproducible way to get back to those bytes, which is why compilation reads fields by name in a
-fixed order and ignores key order and formatting. Change any value — the label, the `once` flag, one
-digit of the price — and you get a different address.
+**The recipe file is not the commitment — it is the key.** The compiled `setupData` bytes are what the
+address commits to, and the file is the only reproducible way back to them. Change any value — the
+label, the `once` flag, one digit of the price — and you get a different address.
+
+That makes losing a recipe fatal, not inconvenient. `activate` needs those exact bytes, and so does
+`initializeProxyWithoutSetup`, the owner's rescue hatch. `DropTriggered` emits only their hash, and a
+drop that has never been activated left nothing else on-chain. So: **fund a drop, lose its recipe before
+activating it, and nobody can recover the money — the owner included, because the owner needs the same
+bytes as everyone else.** Keep the file. (After a first activation the bytes are recoverable from the
+deploying transaction's calldata, which helps only in hindsight.)
 
 **`salt` and `orderSalt` are different things.** The recipe's `salt` is the factory's user salt: it
 moves the drop address, and exists so the same parameters can yield more than one drop (or so you can

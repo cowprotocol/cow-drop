@@ -24,10 +24,12 @@ import { activateDrop, postPlacedOrders, readDropStatus, type DropStatus } from 
 import { GNOSIS_TOKENS } from './lib/tokens.js'
 import { fetchTokenList, findToken, type TokenInfo } from './lib/tokenList.js'
 import { NetworkPicker } from './components/NetworkPicker.js'
+import { isSaved, recipeFromHash, recipeToHash, saveDrop } from './lib/storage.js'
 import { TokenPicker } from './components/TokenPicker.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
 import { RescuePanel } from './components/RescuePanel.js'
+import { SavedDrops } from './components/SavedDrops.js'
 import { TerminalPanel } from './components/TerminalPanel.js'
 import { StepTable } from './components/StepTable.js'
 
@@ -110,8 +112,12 @@ export function App() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  /** Set when the JSON panel supplies a recipe, which then takes precedence over the form. */
-  const [imported, setImported] = useState<DropRecipeJson | null>(null)
+  /**
+   * Set when the JSON panel, the URL fragment or a saved drop supplies a recipe, which then takes
+   * precedence over the form.
+   */
+  const [imported, setImported] = useState<DropRecipeJson | null>(() => recipeFromHash(window.location.hash))
+  const [saved, setSaved] = useState(false)
   /**
    * Quote state. Deliberately *not* part of FormState: the reference amount exists only to get a
    * price out of the API and must never leak into the recipe, since a drop cannot commit to an amount.
@@ -175,6 +181,16 @@ export function App() {
     void refresh()
   }, [refresh])
 
+  // The recipe lives in the URL, so a bookmark or a reload is enough to get it back. Uses replaceState
+  // rather than a hash assignment, to avoid filling the back button with every keystroke.
+  useEffect(() => {
+    window.history.replaceState(null, '', `#${recipeToHash(recipe)}`)
+  }, [recipe])
+
+  useEffect(() => {
+    if (compiled.ok) setSaved(isSaved(compiled.value.address, form.chainId))
+  }, [compiled, form.chainId])
+
   useEffect(() => {
     void fetchTokenList(form.chainId).then((loaded) => {
       setTokens(loaded)
@@ -228,8 +244,22 @@ export function App() {
     }
   }
 
+  /**
+   * Remember a recipe, since its address is useless without it.
+   *
+   * Called wherever the next step might plausibly be sending money — copying the address, downloading
+   * the file, activating — rather than only on an explicit save, because the failure this prevents is
+   * someone funding an address and closing the tab.
+   */
+  const remember = () => {
+    if (!compiled.ok) return
+    saveDrop({ address: compiled.value.address, recipe })
+    setSaved(true)
+  }
+
   const onActivate = async () => {
     if (!account || !compiled.ok) return
+    remember()
     setBusy(true)
     setError(null)
     setMessage(null)
@@ -303,6 +333,14 @@ export function App() {
           )}
         </div>
       </header>
+
+      <SavedDrops
+        currentAddress={compiled.ok ? compiled.value.address : null}
+        onLoad={(loaded) => {
+          setImported(loaded)
+          setError(null)
+        }}
+      />
 
       <section>
         <h2>1 &middot; Pick a recipe</h2>
@@ -436,7 +474,12 @@ export function App() {
         <>
           <section>
             <h2>3 &middot; Your drop address</h2>
-            <DropAddress address={compiled.value.address} />
+            <DropAddress
+              address={compiled.value.address}
+              saved={saved}
+              onRemember={remember}
+              recipe={recipe}
+            />
           </section>
 
           <section>
@@ -521,6 +564,7 @@ export function App() {
                 setError(null)
               }}
               onError={setError}
+              onRemember={remember}
             />
           </section>
         </>

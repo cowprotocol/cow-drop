@@ -74,6 +74,23 @@ takes over.
 | `src/lib/tokens.ts` | Offline fallback list (symbols and decimals verified on-chain). |
 | `src/components/` | Address panel with QR, the committed-bytes table, the rescue panel, and the JSON import/export. |
 
+## Never lose a recipe
+
+A drop address is a hash of its recipe, and every path that can touch the drop — activation *and* the
+owner's rescue — needs those exact bytes back. Nothing on-chain holds them until the first activation.
+Funding an address and losing its recipe therefore destroys the money, with no owner override.
+
+So the page treats the recipe as a key rather than a document:
+
+- it is kept in the **URL fragment**, so a bookmark, a pasted link or a plain reload restores it (and a
+  fragment never reaches a server);
+- it is saved to **localStorage** at every point where funding is plausibly next — copying the address,
+  downloading the file, activating — not only on an explicit save, because the failure to prevent is
+  someone copying an address and closing the tab;
+- **Saved drops** at the top of the page lists them, and says plainly that clearing site data loses
+  them, so the downloaded `.drop.json` is still the durable copy;
+- the address panel states the consequence, and shows whether the current recipe is saved yet.
+
 ## Tokens and logos
 
 Tokens come from `https://files.cow.fi/tokens/CowSwap.json` — the list cowswap gives priority 1 on

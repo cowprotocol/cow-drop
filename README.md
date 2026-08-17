@@ -40,9 +40,11 @@ That yields some properties worth stating plainly:
 - **The amount is never committed.** Recipe primitives run as delegatecalls, so `address(this)` is
   the drop and `balanceOf(address(this))` is what actually arrived. A drop commits to *"split
   whatever lands here into 12 parts"*, not to a number nobody could have known.
-- **Recoverable.** A drop whose recipe can never succeed is not lost funds. The owner is the shed's
-  admin, and there are two owner-only rescue paths — one for before the drop is deployed and one for
-  after — neither of which needs a signature. See [Rescue](#rescue).
+- **Recoverable, if you kept the recipe.** A drop whose recipe can never *succeed* is not lost funds:
+  there are two owner-only rescue paths, neither needing a signature — see [Rescue](#rescue). But both
+  need the recipe bytes, as does activation, and only their hash is on-chain. **Losing a recipe after
+  funding loses the money, for everyone including the owner.** The recipe file is the key, not a
+  convenience.
 
 ## Two order paths
 

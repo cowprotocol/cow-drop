@@ -14,11 +14,13 @@ export function RecipeJson({
   address,
   onImport,
   onError,
+  onRemember,
 }: {
   recipe: DropRecipeJson
   address: Address
   onImport: (recipe: DropRecipeJson) => void
   onError: (message: string) => void
+  onRemember: () => void
 }) {
   const [text, setText] = useState(() => JSON.stringify(recipe, null, 2))
   const [dirty, setDirty] = useState(false)
@@ -41,6 +43,7 @@ export function RecipeJson({
   }
 
   const download = () => {
+    onRemember()
     const blob = new Blob([JSON.stringify(recipe, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
