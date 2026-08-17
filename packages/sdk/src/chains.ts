@@ -32,29 +32,28 @@ export type DropChainId = (typeof DropChainId)[keyof typeof DropChainId]
 export interface DropChain {
   chainId: DropChainId
   name: string
-  /**
-   * Whether the composable path (TWAP) is available.
-   *
-   * `DropRecipes` bakes in ComposableCoW, the TWAP handler and the value factory as immutables. Those
-   * are at the same addresses on every chain they exist on — but they do not exist everywhere, and on
-   * a chain without them a `twapFromBalance` step reverts while pre-signed orders still work fine.
-   *
-   * Sourced from composable-cow's `networks.json`.
-   */
-  composable: boolean
 }
 
+/**
+ * Both order paths work on all of these.
+ *
+ * There was briefly a per-chain `composable` flag here, marking chains where a TWAP could not run.
+ * It was wrong: it came from composable-cow's `networks.json`, which is missing entries for chains the
+ * contracts are in fact deployed on. Checked against the chains instead — ComposableCoW, the TWAP
+ * handler and `CurrentBlockTimestampFactory` are all present at their usual addresses on every chain
+ * listed here, so there is nothing to warn about and the flag is gone.
+ */
 export const DROP_CHAINS: readonly DropChain[] = [
-  { chainId: DropChainId.MAINNET, name: 'Ethereum', composable: true },
-  { chainId: DropChainId.GNOSIS_CHAIN, name: 'Gnosis', composable: true },
-  { chainId: DropChainId.ARBITRUM_ONE, name: 'Arbitrum One', composable: true },
-  { chainId: DropChainId.BASE, name: 'Base', composable: false },
-  { chainId: DropChainId.BNB, name: 'BNB Chain', composable: true },
-  { chainId: DropChainId.LINEA, name: 'Linea', composable: true },
-  { chainId: DropChainId.PLASMA, name: 'Plasma', composable: true },
-  { chainId: DropChainId.POLYGON, name: 'Polygon', composable: false },
-  { chainId: DropChainId.AVALANCHE, name: 'Avalanche', composable: false },
-  { chainId: DropChainId.SEPOLIA, name: 'Sepolia', composable: true },
+  { chainId: DropChainId.MAINNET, name: 'Ethereum' },
+  { chainId: DropChainId.GNOSIS_CHAIN, name: 'Gnosis' },
+  { chainId: DropChainId.ARBITRUM_ONE, name: 'Arbitrum One' },
+  { chainId: DropChainId.BASE, name: 'Base' },
+  { chainId: DropChainId.BNB, name: 'BNB Chain' },
+  { chainId: DropChainId.LINEA, name: 'Linea' },
+  { chainId: DropChainId.PLASMA, name: 'Plasma' },
+  { chainId: DropChainId.POLYGON, name: 'Polygon' },
+  { chainId: DropChainId.AVALANCHE, name: 'Avalanche' },
+  { chainId: DropChainId.SEPOLIA, name: 'Sepolia' },
 ]
 
 /**

@@ -45,12 +45,29 @@ export function chainInfo(chainId: number): EvmChainInfo {
   return info
 }
 
+/**
+ * Public RPC endpoints where cow-sdk's default does not answer.
+ *
+ * cow-sdk names one RPC per chain, and three of them were unreachable or erroring when tested from a
+ * browser context: mainnet (`eth.merkle.io`), Polygon (`polygon-rpc.com`) and Sepolia
+ * (`sepolia.drpc.org`). Left as-is those chains would appear broken — no balances, no simulation — so
+ * these are overridden with endpoints that were verified to answer `eth_blockNumber`.
+ *
+ * Only the chains that needed it are listed, so this is a patch over cow-sdk rather than a second
+ * chain table. For anything beyond a demo, set `VITE_RPC_URL`.
+ */
+const RPC_OVERRIDES: Record<number, string> = {
+  [DropChainId.MAINNET]: 'https://ethereum-rpc.publicnode.com',
+  [DropChainId.POLYGON]: 'https://polygon-bor-rpc.publicnode.com',
+  [DropChainId.SEPOLIA]: 'https://ethereum-sepolia-rpc.publicnode.com',
+}
+
 /** RPC endpoint. `VITE_RPC_URL` overrides, but only for the default chain — it names one endpoint. */
 export function rpcUrl(chainId: number): string {
   const override = import.meta.env.VITE_RPC_URL
   if (override && chainId === DEFAULT_CHAIN_ID) return override
 
-  const url = chainInfo(chainId).rpcUrls.default.http[0]
+  const url = RPC_OVERRIDES[chainId] ?? chainInfo(chainId).rpcUrls.default.http[0]
   if (!url) throw new Error(`no RPC URL for chain ${chainId}`)
   return url
 }

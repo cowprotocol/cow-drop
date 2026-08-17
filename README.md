@@ -205,8 +205,10 @@ is derived entirely from official cow-shed code. Because a CREATE2 address is de
 landing on #79's addresses is also proof this repo reproduces the deployed bytecode, which is why
 `contracts/foundry.toml` must stay byte-identical to cow-shed's.
 
-Supported chains are listed in `packages/sdk/src/chains.ts`. Chains without ComposableCoW
-(Base, Polygon, Avalanche) can still pre-sign orders but cannot register a TWAP.
+Supported chains are listed in `packages/sdk/src/chains.ts`, and **both order paths work on all of
+them** — ComposableCoW, the TWAP handler and `CurrentBlockTimestampFactory` are present at their usual
+addresses on every one, checked against the chains rather than against composable-cow's
+`networks.json`, which is missing entries for chains the contracts are in fact live on.
 
 ```bash
 cd contracts
