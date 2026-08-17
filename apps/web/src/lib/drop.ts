@@ -17,26 +17,39 @@ const ERC20_ABI = [
 
 export interface DropStatus {
   deployed: boolean
-  /** Whether the on-chain executor exists at all — false until the stack is deployed on this chain. */
-  executorDeployed: boolean
+  /**
+   * Which of cow-drop's own contracts are missing on this chain.
+   *
+   * Both matter, and `recipes` matters in a way that is easy to miss: a delegatecall to a codeless
+   * address succeeds silently, so a missing `DropRecipes` would let an activation appear to work while
+   * placing no order. `DropExecutor` now rejects that on-chain, but the UI should not offer the button
+   * in the first place.
+   */
+  missing: string[]
   balance: bigint
   nativeBalance: bigint
 }
 
 export async function readDropStatus(compiled: CompiledRecipe, sellToken: Address): Promise<DropStatus> {
   const client = getPublicClient(compiled.deployment.chainId)
-  const [code, executorCode, balance, nativeBalance] = await Promise.all([
+  const [code, executorCode, recipesCode, balance, nativeBalance] = await Promise.all([
     client.getCode({ address: compiled.address }),
     client.getCode({ address: compiled.deployment.executor }),
+    client.getCode({ address: compiled.deployment.recipes }),
     client
       .readContract({ address: sellToken, abi: ERC20_ABI, functionName: 'balanceOf', args: [compiled.address] })
       .catch(() => 0n),
     client.getBalance({ address: compiled.address }),
   ])
 
+  const has = (value: string | undefined) => Boolean(value && value !== '0x')
+
   return {
-    deployed: Boolean(code && code !== '0x'),
-    executorDeployed: Boolean(executorCode && executorCode !== '0x'),
+    deployed: has(code),
+    missing: [
+      ...(has(executorCode) ? [] : ['DropExecutor']),
+      ...(has(recipesCode) ? [] : ['DropRecipes']),
+    ],
     balance,
     nativeBalance,
   }

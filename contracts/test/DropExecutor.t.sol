@@ -256,6 +256,52 @@ contract DropExecutorTest is Test {
         assertEq(token.balanceOf(drop), 100, "funds are stuck at the drop, recoverable only by the owner");
     }
 
+    /// @dev The nastiest failure mode this design has, because it is silent. A delegatecall to a
+    ///      codeless address *succeeds* returning nothing, and cow-shed only checks that flag — so a
+    ///      recipe pointing at an undeployed `DropRecipes` would activate cleanly, place no order, and
+    ///      spend a `once` recipe's single run. It must revert instead.
+    function test_recipeDelegatingToNoCodeRevertsRatherThanSilentlyDoingNothing() external {
+        address notDeployed = address(0xDEAD00);
+        assertEq(notDeployed.code.length, 0, "fixture address unexpectedly has code");
+
+        Call[] memory calls = new Call[](1);
+        calls[0] = Call({
+            target: notDeployed,
+            value: 0,
+            callData: hex"c0ffee",
+            allowFailure: false,
+            isDelegateCall: true
+        });
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "ghost", salt: bytes32(0), once: true, calls: calls}));
+        address drop = executor.dropOf(owner, recipe);
+
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(DropExecutor.NoCodeAtDelegateTarget.selector, notDeployed));
+        executor.activate(owner, recipe);
+
+        // The run survives, which is the whole point of failing loudly.
+        assertFalse(executor.consumed(drop), "a no-op activation spent the run");
+        assertEq(drop.code.length, 0, "drop should not have deployed");
+    }
+
+    /// @dev A *plain* call to a codeless address stays allowed: paying an EOA is legitimate, and only
+    ///      delegatecalling nothing is always a mistake.
+    function test_plainCallToAnEoaIsStillAllowed() external {
+        address recipient = makeAddr("eoa");
+
+        Call[] memory calls = new Call[](1);
+        calls[0] = Call({target: recipient, value: 1 ether, callData: "", allowFailure: false, isDelegateCall: false});
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "pay", salt: bytes32(0), once: false, calls: calls}));
+
+        address drop = executor.dropOf(owner, recipe);
+        vm.deal(drop, 1 ether);
+
+        vm.prank(keeper);
+        executor.activate(owner, recipe);
+
+        assertEq(recipient.balance, 1 ether, "plain call to an EOA should work");
+    }
+
     // --- the attacks -----------------------------------------------------------------------
 
     /// @dev The core attack. `DropExecutor` is the trusted executor of every drop, and

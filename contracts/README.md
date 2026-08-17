@@ -50,6 +50,13 @@ exists. After deployment: nothing special is needed, since `trustedExecuteHooks`
 = admin *or* trusted executor, and the owner is the admin. `DropRecipes.sweep` is the primitive both
 use. See the `test_rescue_*` tests.
 
+**Why a delegatecall to nothing is rejected.** The EVM treats a call to a codeless address as a
+*success* returning nothing, and cow-shed's `executeCalls` only checks that flag. So a recipe whose
+primitives point at an undeployed `DropRecipes` would activate cleanly and do nothing at all — no order,
+funds untouched, and a `once` recipe's single run spent. `_requireDelegateTargetsHaveCode` turns that
+silence into a revert, which leaves the run intact. Plain calls are left alone: paying an EOA is
+legitimate, delegatecalling nothing never is.
+
 **Why drops are re-triggerable.** `trustedExecuteHooks` consumes no nonce, so a recipe can run again
 on funds that arrive later — which is what makes a reusable deposit address work. Set `once` for
 one-shot recipes; `DropExecutor` enforces it with a per-drop flag, written before the calls so a

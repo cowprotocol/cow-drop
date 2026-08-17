@@ -70,6 +70,9 @@ contract DropExecutor is ICOWShedSetup, IERC1271 {
     /// @notice The order in an EIP-1271 signature does not hash to the digest being validated.
     error InvalidHash();
 
+    /// @notice A step delegatecalls an address with no code, which would silently do nothing.
+    error NoCodeAtDelegateTarget(address target);
+
     event DropTriggered(address indexed drop, address indexed owner, bytes32 indexed recipeHash);
 
     /// @notice The executor factory every drop is derived from. Pinned at deployment: a
@@ -174,11 +177,31 @@ contract DropExecutor is ICOWShedSetup, IERC1271 {
         (, salt) = abi.decode(setupData[0x20:0x60], (bytes32, bytes32));
     }
 
+    /// @dev Reject a recipe that delegatecalls an address with no code.
+    ///
+    ///      The EVM treats a call to a codeless address as a *success* returning nothing, and cow-shed's
+    ///      `executeCalls` only checks that flag. So a recipe whose primitives point at an undeployed
+    ///      `DropRecipes` — a chain where it has not been deployed yet, or a stale address in a shared
+    ///      recipe file — would activate cleanly and do absolutely nothing: no order placed, funds
+    ///      untouched, and for a `once` recipe the single run spent. Silence is the worst possible
+    ///      outcome here, so it becomes a revert, which leaves the run intact.
+    ///
+    ///      Only delegatecalls are checked. A plain call to a codeless address is sometimes exactly
+    ///      what is meant — paying an EOA — whereas delegatecalling nothing never is.
+    function _requireDelegateTargetsHaveCode(Call[] memory calls) internal view {
+        for (uint256 i; i < calls.length; ++i) {
+            if (calls[i].isDelegateCall && calls[i].target.code.length == 0) {
+                revert NoCodeAtDelegateTarget(calls[i].target);
+            }
+        }
+    }
+
     /// @dev Verify the recipe reproduces the shed address, then execute it as the shed.
     function _run(address shed, address owner, bytes calldata setupData) internal {
         if (dropOf(owner, setupData) != shed) revert NotADrop();
 
         Recipe memory recipe = abi.decode(setupData, (Recipe));
+        _requireDelegateTargetsHaveCode(recipe.calls);
 
         if (recipe.once) {
             if (consumed[shed]) revert AlreadyConsumed();

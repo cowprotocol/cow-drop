@@ -197,7 +197,7 @@ exist there yet* differs, which the UI checks with `getCode`.
 | `COWShedWithExecutorSigner` | `0x1c4b988481d945c98a21446AB2960000d290aB22` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) |
 | `COWShedExecutorFactory` | `0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) |
 | `DropRecipes` | `0x8fd40C67B633482d4a37c2c13297E8B353bc692f` | **not yet broadcast** |
-| `DropExecutor` | `0xaC562b272F10988356d58E14AB92B7852eee7751` | **not yet broadcast** |
+| `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | **not yet broadcast** |
 
 Both cow-shed contracts are the canonical ones already live on Gnosis, reused rather than
 redeployed — so **the only things this project deploys are its own two contracts**, and a drop address

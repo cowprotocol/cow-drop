@@ -456,12 +456,13 @@ export function App() {
                   {status.nativeBalance > 0n ? ` (+ ${formatUnits(status.nativeBalance, 18)} xDAI)` : ''}
                 </li>
                 <li>Drop deployed: <strong>{status.deployed ? 'yes' : 'not yet'}</strong></li>
-                {!status.executorDeployed && (
+                {status.missing.length > 0 && (
                   <li className="warn">
-                    The cow-drop contracts are not deployed on{' '}
-                    {getDropChain(form.chainId)?.name ?? form.chainId} yet, so the address is a
-                    prediction and activation will fail. Addresses are deterministic, so this one will
-                    not change once they are.
+                    {status.missing.join(' and ')} {status.missing.length > 1 ? 'are' : 'is'} not
+                    deployed on {getDropChain(form.chainId)?.name ?? form.chainId} yet, so activation
+                    will revert. The cow-shed contracts a drop is derived from are already live, and
+                    the addresses are deterministic — so this drop address is correct now and will not
+                    change once the missing pieces are deployed.
                   </li>
                 )}
               </ul>
@@ -473,7 +474,7 @@ export function App() {
               <button onClick={() => void refresh()}>Refresh</button>
               <button
                 onClick={() => void onActivate()}
-                disabled={!account || busy || status?.executorDeployed === false}
+                disabled={!account || busy || (status?.missing.length ?? 0) > 0}
               >
                 {busy ? 'Activating…' : 'Activate drop'}
               </button>

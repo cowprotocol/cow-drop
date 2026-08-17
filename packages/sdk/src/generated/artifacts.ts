@@ -689,6 +689,17 @@ export const DROP_EXECUTOR_ABI = [
   },
   {
     "type": "error",
+    "name": "NoCodeAtDelegateTarget",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NotADrop",
     "inputs": []
   }
