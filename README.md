@@ -58,14 +58,26 @@ pre-signing needs nothing from the implementation.
 
 ## Layout
 
+Each package has its own short README — start with whichever part you're touching.
+
+| | | |
+|---|---|---|
+| [`contracts/`](contracts/README.md) | The three contracts, why `DropExecutor` re-derives the address on every entry point, and why the build settings are load-bearing | foundry |
+| [`packages/sdk/`](packages/sdk/README.md) | Compile a recipe, get an address, build the activation tx | TypeScript, viem |
+| [`apps/web/`](apps/web/README.md) | The demo page: a form that turns into an address | Vite, React |
+| `recipes/` | Example `.drop.json` files | |
+
 ```
-contracts/        foundry; lib/cow-shed pinned to cow-shed#64 (feat/deploy-time-setup-call)
+contracts/        lib/cow-shed pinned to cow-shed#64 (feat/deploy-time-setup-call)
   src/DropExecutor.sol    the commitment check + activation
   src/DropRecipes.sol     recipe primitives, delegatecalled by the drop
   src/DropOrders.sol      order UID packing, limit-price math
-packages/sdk/     address derivation, recipe format, templates
-apps/web/         Vite + React SPA: build a recipe, get an address
-recipes/          example .drop.json files
+packages/sdk/src/
+  recipe.ts               compileRecipe: recipe file -> address + committed bytes
+  encoding.ts             the CREATE2 derivation, off-chain
+  steps.ts                the step registry (extension point)
+  templates.ts            swapOnArrival, twapOnArrival
+apps/web/src/App.tsx      the form, and the recipe it builds
 ```
 
 ## Quick start
@@ -75,7 +87,7 @@ recipes/          example .drop.json files
 git submodule update --init --recursive
 
 pnpm install
-cd contracts && forge test              # 24 hermetic tests
+cd contracts && forge test              # 30 hermetic tests
 cd ../packages/sdk && pnpm generate && pnpm build && pnpm test
 cd ../../apps/web && pnpm dev           # http://localhost:5173
 ```
@@ -122,6 +134,42 @@ covered, and is what the ABI-builder UI emits.
 Limit prices are exact integer fractions, never floats: the result is committed into an address, so
 a rounding difference between the UI and the SDK would be a *different address*, not merely a
 slightly different price.
+
+## Using the SDK
+
+```ts
+import { compileRecipe, buildActivateTx, twapOnArrival } from '@cowprotocol/defi-drop-sdk'
+
+const recipe = twapOnArrival({
+  chainId: 100,
+  owner: '0xYourAddress',            // can always recover the funds
+  sellToken: WXDAI,
+  buyToken: COW,
+  parts: 12,
+  partDuration: 3600,
+  limitPrice: { price: '45', sellDecimals: 18, buyDecimals: 18 },
+  minAmount: 1000n * 10n ** 18n,     // refuse to start on a part-delivered balance
+})
+
+const { address, setupData, deployment } = compileRecipe(recipe)
+// -> send funds to `address`, by any means. Nothing is deployed there yet.
+
+const tx = buildActivateTx({ deployment, owner: recipe.owner, setupData })
+await walletClient.sendTransaction(tx)   // anyone can send this
+```
+
+The functions you'll actually reach for:
+
+| | |
+|---|---|
+| `compileRecipe(json)` | Recipe file → `{ address, setupData, recipe, deployment }`. Validates and throws on anything ambiguous. |
+| `swapOnArrival` / `twapOnArrival` | Templates: a handful of parameters in, a complete recipe out. |
+| `steps.*` | Build steps by hand — including `requireMinBalance` / `requireTimeWindow` guards and `raw`. |
+| `deriveDropAddress(…)` | The CREATE2 derivation on its own, if you already have `setupData`. |
+| `buildActivateTx(…)` | The activation transaction. Idempotent; safe to send twice. |
+| `parseDropOrderPlaced` / `toOrderBookPayload` | Turn an activation receipt into an order-book submission (pre-sign path only). |
+
+Full reference in [`packages/sdk/README.md`](packages/sdk/README.md).
 
 ## Deployments
 
