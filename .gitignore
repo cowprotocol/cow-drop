@@ -6,7 +6,9 @@ dist/
 # foundry
 contracts/out/
 contracts/cache/
-contracts/broadcast/*/dry-run/
+# Broadcast artifacts are per-run noise; deployments/<chainId>.json is the record we keep.
+# (The narrower `*/dry-run/` pattern did not match foundry's actual nesting depth.)
+contracts/broadcast/
 
 # env
 .env
