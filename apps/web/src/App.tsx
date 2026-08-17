@@ -156,7 +156,7 @@ export function App() {
       <header>
         <div className="brand">
           {/* Served from public/ rather than imported, so the favicon and og:image can share it. */}
-          <img src="/logo.png" alt="" width={56} height={56} className="brand-mark" />
+          <img src="/logo.png" alt="" width={96} height={96} className="brand-mark" />
           <div>
             <h1>cow-drop</h1>
             <p className="tagline">
