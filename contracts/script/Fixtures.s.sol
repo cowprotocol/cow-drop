@@ -49,7 +49,7 @@ contract FixturesScript is Script {
     }
 
     function _caseCount() internal pure returns (uint256) {
-        return 6;
+        return 8;
     }
 
     /// @dev Deliberately spans the encoding edge cases: no calls, one call, several calls, empty
@@ -105,6 +105,35 @@ contract FixturesScript is Script {
             });
             return (address(0xD00D), _encode("single", false, calls), "different owner, same recipe");
         }
+        if (i == 6) {
+            // Same recipe as case 1 but with a non-zero salt: exercises the salt being read back out
+            // of the encoding and fed to the factory, in both implementations.
+            Call[] memory calls = new Call[](1);
+            calls[0] = Call({
+                target: address(0xB0B),
+                value: 0,
+                callData: hex"deadbeef",
+                allowFailure: false,
+                isDelegateCall: false
+            });
+            return (address(0xA11CE), _encodeSalted("single", bytes32(uint256(1)), false, calls), "non-zero salt");
+        }
+        if (i == 7) {
+            // A high-bit salt, so the SDK cannot get away with treating it as a small number.
+            Call[] memory calls = new Call[](1);
+            calls[0] = Call({
+                target: address(0xB0B),
+                value: 0,
+                callData: hex"deadbeef",
+                allowFailure: false,
+                isDelegateCall: false
+            });
+            return (
+                address(0xA11CE),
+                _encodeSalted("single", bytes32(type(uint256).max), false, calls),
+                "max salt"
+            );
+        }
         // Same recipe as case 1, different label: must give a different address.
         Call[] memory relabelled = new Call[](1);
         relabelled[0] =
@@ -113,6 +142,14 @@ contract FixturesScript is Script {
     }
 
     function _encode(bytes32 label, bool once, Call[] memory calls) internal pure returns (bytes memory) {
-        return abi.encode(DropExecutor.Recipe({label: label, once: once, calls: calls}));
+        return _encodeSalted(label, bytes32(0), once, calls);
+    }
+
+    function _encodeSalted(bytes32 label, bytes32 salt, bool once, Call[] memory calls)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encode(DropExecutor.Recipe({label: label, salt: salt, once: once, calls: calls}));
     }
 }

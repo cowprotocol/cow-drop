@@ -144,7 +144,9 @@ contract DropRecipes {
     ///        address never appears in `staticInput`;
     ///      - `t0 = 0` makes the handler read the start time from ComposableCoW's `cabinet`, which
     ///        `createWithContext` seeds with `block.timestamp` at activation.
-    /// @param receiver Where the bought tokens go. Pass `address(0)` to keep them in the drop.
+    /// @param receiver  Where the bought tokens go. Pass `address(0)` to keep them in the drop.
+    /// @param orderSalt Discriminator for the conditional order itself. Unrelated to the drop's
+    ///                  own factory salt, which lives in the recipe.
     function twapFromBalance(
         address sellToken,
         address buyToken,
@@ -155,7 +157,7 @@ contract DropRecipes {
         uint256 limitNumerator,
         uint256 limitDenominator,
         bytes32 appData,
-        bytes32 salt
+        bytes32 orderSalt
     ) external returns (bytes32 paramsHash) {
         if (n < 2) revert TooFewParts();
 
@@ -184,7 +186,7 @@ contract DropRecipes {
 
         IConditionalOrder.ConditionalOrderParams memory params = IConditionalOrder.ConditionalOrderParams({
             handler: IConditionalOrder(TWAP_HANDLER),
-            salt: salt,
+            salt: orderSalt,
             staticInput: abi.encode(twap)
         });
 

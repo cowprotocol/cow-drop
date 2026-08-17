@@ -84,7 +84,7 @@ contract DropGnosisForkTest is Test {
         Call[] memory calls = new Call[](1);
         calls[0] =
             Call({target: address(recipes), value: 0, callData: callData, allowFailure: false, isDelegateCall: true});
-        return abi.encode(DropExecutor.Recipe({label: label, once: false, calls: calls}));
+        return abi.encode(DropExecutor.Recipe({label: label, salt: bytes32(0), once: false, calls: calls}));
     }
 
     // --- path P against the real settlement contract -----------------------------------------

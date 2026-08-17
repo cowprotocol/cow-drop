@@ -16,7 +16,7 @@ Every drop names this contract as both its `trustedExecutor` and its `setupTarge
 question: *does this recipe belong to this address?*
 
 ```solidity
-dropOf(owner, setupData)          // the address a recipe resolves to
+dropOf(owner, setupData)          // the address a recipe resolves to (salt read from setupData)
 activate(owner, setupData)        // deploy it and run the recipe, or re-run if it exists
 setup(shed, owner, setupData)     // the factory's callback during deployment
 ```
@@ -31,10 +31,16 @@ handed. A recipe that doesn't reproduce the address is not that address's recipe
 That check guards the factory callback too, which is why there's no `msg.sender == FACTORY`
 requirement — caller identity isn't the boundary, the derivation is.
 
-**Why the salt is always zero.** `setup` receives only `(shed, owner, setupData)`. A non-zero user
-salt couldn't be recovered from those, so the address couldn't be re-derived. Uniqueness comes from
-the recipe bytes instead; the `label` field exists so two otherwise-identical recipes can have two
-addresses.
+**Why the user salt lives in the recipe.** The factory takes an arbitrary `bytes32 salt`, but
+`setup` receives only `(shed, owner, setupData)` — so a salt passed only as a factory argument
+couldn't be recovered here. `_saltOf` reads it back out of the encoding instead (it's the third word,
+right after `label`), and `dropOf`/`activate` pass that to the factory. It's committed either way, so
+this cannot be forged: deploy with a factory salt that disagrees with the recipe and you get an
+address this contract doesn't derive, so the deployment reverts.
+
+The alternative — stashing the salt in transient storage during `activate` — would break deployment
+straight through the factory, which the design deliberately allows as a discardable solver
+pre-interaction.
 
 **Why drops are re-triggerable.** `trustedExecuteHooks` consumes no nonce, so a recipe can run again
 on funds that arrive later — which is what makes a reusable deposit address work. Set `once` for
@@ -96,7 +102,7 @@ deploying the implementation collides with the one already live on Gnosis.
 
 | file | what it covers |
 |---|---|
-| `DropExecutor.t.sol` | Derivation, activation, `once` semantics, recovery, and the attacks: forged recipes, wrong owner, foreign trusted executor, non-zero salt, direct `trustedExecuteHooks`. |
+| `DropExecutor.t.sol` | Derivation, activation, `once` semantics, recovery, and the attacks: forged recipes, wrong owner, foreign trusted executor, a salt disagreeing with the recipe, truncated `setupData`, direct `trustedExecuteHooks`. |
 | `DropRecipes.t.sol` | Each primitive, run the way it really runs — delegatecalled from inside a drop by an activation nobody signed. |
 | `DropGnosisFork.t.sol` | Against the real Gnosis deployments. Skipped unless `GNOSIS_RPC_URL` is set, so the default suite is hermetic. |
 

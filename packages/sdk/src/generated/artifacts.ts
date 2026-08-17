@@ -256,7 +256,7 @@ export const DROP_RECIPES_ABI = [
         "internalType": "bytes32"
       },
       {
-        "name": "salt",
+        "name": "orderSalt",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -567,6 +567,11 @@ export const DROP_EXECUTOR_ABI = [
   {
     "type": "error",
     "name": "AlreadyConsumed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MalformedRecipe",
     "inputs": []
   },
   {

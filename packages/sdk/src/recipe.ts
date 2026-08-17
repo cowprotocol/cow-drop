@@ -1,6 +1,6 @@
 import { isAddress, type Address, type Hex } from 'viem'
 
-import { deriveDropAddress, encodeRecipe } from './encoding.js'
+import { ZERO_SALT, deriveDropAddress, encodeRecipe } from './encoding.js'
 import { getDeployment } from './generated/deployments.js'
 import { limitPriceToFraction } from './price.js'
 import { steps } from './steps.js'
@@ -32,7 +32,7 @@ export type DropStepJson =
       span?: number | string
       limitPrice: LimitPriceJson
       appData?: Hex
-      salt?: Hex
+      orderSalt?: Hex
       allowFailure?: boolean
     }
   | { type: 'requireMinBalance'; token: Address; minAmount: number | string }
@@ -59,6 +59,14 @@ export interface DropRecipeJson {
   label: string
   chainId: number
   owner: Address
+  /**
+   * The factory's user salt, as a 32-byte hex string. Defaults to zero.
+   *
+   * Use it when you want the *same* recipe at more than one address — several independent payroll
+   * drops, say — without making the human-readable label artificially unique, or as a grinding space
+   * for a vanity address.
+   */
+  salt?: Hex
   once?: boolean
   steps: DropStepJson[]
 }
@@ -100,8 +108,13 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
     throw new Error(`recipe is for chain ${json.chainId} but the deployment is for ${deployment.chainId}`)
   }
 
+  if (json.salt !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(json.salt)) {
+    throw new Error(`recipe salt must be a 32-byte hex string, got: ${String(json.salt)}`)
+  }
+
   const recipe: Recipe = {
     label: json.label,
+    salt: json.salt ?? ZERO_SALT,
     once: json.once ?? false,
     calls: json.steps.map((step) => compileStep(step, deployment)),
   }
@@ -151,7 +164,7 @@ function compileStep(step: DropStepJson, deployment: DropDeployment) {
         span: step.span === undefined ? undefined : BigInt(step.span),
         limitPrice: resolveLimitPrice(step.limitPrice),
         appData: step.appData,
-        salt: step.salt,
+        orderSalt: step.orderSalt,
         allowFailure: step.allowFailure,
       })
     case 'requireMinBalance':

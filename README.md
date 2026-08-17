@@ -23,7 +23,7 @@ defi-drop inverts that. Using [cow-shed#64](https://github.com/cowdao-grants/cow
 deploy-time setup call, the address commits to a **recipe**:
 
 ```
-salt = keccak256(abi.encode(owner, trustedExecutor, 0, setupTarget, keccak256(setupData)))
+salt = keccak256(abi.encode(owner, trustedExecutor, userSalt, setupTarget, keccak256(setupData)))
 ```
 
 `setupData` is the recipe. Change one byte of it and you get a different address — so nobody can
@@ -113,6 +113,7 @@ needs a server or a database.
   "label": "WXDAI -> COW over 12h",
   "chainId": 100,
   "owner": "0x…",
+  "salt": "0x00…00",
   "once": true,
   "steps": [
     {
@@ -181,7 +182,7 @@ verified by deploying against a Gnosis fork.
 | `COWShedForComposableCoW` (v2.1.0) | `0xF0D400089d5b9fACA64E3422AD6614546587cfFB` | already deployed |
 | `COWShedExecutorFactory` | `0xdaB53E4DA62fc84D0A96b130E647a61755028FDD` | **not yet broadcast** |
 | `DropRecipes` | `0xC5169644b3B3e9253FB0eaC0d4e98D2e4d6f0210` | **not yet broadcast** |
-| `DropExecutor` | `0xB5C464EC6a288a6aa8146415697d6c53DCFE9b2b` | **not yet broadcast** |
+| `DropExecutor` | `0x07BBC94Fcebe7A1aA71E2102D0A4a353dEd4Df9D` | **not yet broadcast** |
 
 The shed implementation is the *canonical* cow-shed v2.1.0 build, not a fork — and because a CREATE2
 address is derived from its init code, reusing it is proof this repo reproduces the official
@@ -213,10 +214,13 @@ owner, a foreign trusted executor, a non-zero salt, and calling `trustedExecuteH
 
 Two consequences of the design that are easy to miss:
 
-- **`salt` is always zero.** `ICOWShedSetup.setup` receives only `(shed, owner, setupData)`, so a
-  non-zero salt could not be recovered on-chain and the commitment could not be re-derived.
-  Uniqueness comes from the recipe bytes; `label` exists to differentiate otherwise-identical
-  recipes.
+- **The user salt lives inside the recipe.** The factory takes an arbitrary `bytes32 salt`, but
+  `ICOWShedSetup.setup` receives only `(shed, owner, setupData)` — so a salt passed *only* as a
+  factory argument could not be recovered, and the commitment could not be re-derived. Carrying it
+  in the recipe solves that at no cost: it is committed anyway, so reading it back cannot be forged,
+  and a caller who deploys with a factory salt that disagrees simply produces an address
+  `DropExecutor` does not derive. Set it to get a second drop from an otherwise identical recipe, or
+  as a grinding space for a vanity address; zero is the ordinary case.
 - **Drops are re-triggerable by design**, since `trustedExecuteHooks` consumes no nonce. That is
   what makes a reusable deposit address work. Set `"once": true` for one-shot recipes, which
   `DropExecutor` enforces with a per-drop flag.

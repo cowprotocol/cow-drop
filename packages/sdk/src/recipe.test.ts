@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
 
+import { decodeRecipe, saltOf } from './encoding.js'
 import { compileRecipe, type DropRecipeJson } from './recipe.js'
 import { swapOnArrival, twapOnArrival } from './templates.js'
 
@@ -155,6 +156,32 @@ describe('compileRecipe', () => {
 
     expect(recipe.steps.map((s) => s.type)).toEqual(['requireMinBalance', 'twapFromBalance'])
     expect(recipe.once).toBe(true)
+  })
+
+  it('gives the same recipe a different address per salt', () => {
+    const base = compileRecipe(swapRecipe()).address
+    const one = compileRecipe({ ...swapRecipe(), salt: `0x${'00'.repeat(31)}01` }).address
+    const max = compileRecipe({ ...swapRecipe(), salt: `0x${'ff'.repeat(32)}` }).address
+
+    expect(new Set([base, one, max]).size).toBe(3)
+  })
+
+  it('treats an omitted salt as zero', () => {
+    expect(compileRecipe({ ...swapRecipe(), salt: `0x${'00'.repeat(32)}` }).address).toBe(
+      compileRecipe(swapRecipe()).address,
+    )
+  })
+
+  it('round-trips the salt through the committed bytes', () => {
+    const salt = `0x${'ab'.repeat(32)}` as const
+    const { setupData } = compileRecipe({ ...swapRecipe(), salt })
+
+    expect(saltOf(setupData)).toBe(salt)
+    expect(decodeRecipe(setupData).salt).toBe(salt)
+  })
+
+  it.each(['0x01', '0xnothex', `0x${'00'.repeat(33)}`, '1'])('rejects malformed salt %o', (salt) => {
+    expect(() => compileRecipe({ ...swapRecipe(), salt: salt as `0x${string}` })).toThrow(/32-byte hex/)
   })
 
   it('rejects a recipe with no steps', () => {

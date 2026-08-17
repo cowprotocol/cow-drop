@@ -44,8 +44,11 @@ export interface TwapFromBalanceParams {
   span?: bigint
   limitPrice: LimitPriceFraction
   appData?: Hex
-  /** Discriminator for the conditional order, if you need two TWAPs with identical params. */
-  salt?: Hex
+  /**
+   * Discriminator for the conditional order itself, if you need two TWAPs with identical params.
+   * Unrelated to the drop's own factory salt, which lives on the recipe.
+   */
+  orderSalt?: Hex
   allowFailure?: boolean
 }
 
@@ -106,7 +109,7 @@ export const steps = {
           params.limitPrice.numerator,
           params.limitPrice.denominator,
           params.appData ?? ZERO_BYTES32,
-          params.salt ?? ZERO_BYTES32,
+          params.orderSalt ?? ZERO_BYTES32,
         ],
       }),
       params.allowFailure,

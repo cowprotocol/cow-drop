@@ -71,7 +71,7 @@ contract DropRecipesTest is Test {
             allowFailure: false,
             isDelegateCall: true
         });
-        return abi.encode(DropExecutor.Recipe({label: label, once: false, calls: calls}));
+        return abi.encode(DropExecutor.Recipe({label: label, salt: bytes32(0), once: false, calls: calls}));
     }
 
     function _presignRecipe(uint256 limitNum, uint256 limitDen) internal view returns (bytes memory) {
@@ -285,7 +285,7 @@ contract DropRecipesTest is Test {
             allowFailure: false,
             isDelegateCall: true
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "guarded", once: true, calls: calls}));
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "guarded", salt: bytes32(0), once: true, calls: calls}));
         address drop = executor.dropOf(owner, recipe);
 
         // A bridge pays out a first tranche and an eager keeper tries to activate.
@@ -329,7 +329,7 @@ contract DropRecipesTest is Test {
             allowFailure: false,
             isDelegateCall: true
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "guard-last", once: true, calls: calls}));
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "guard-last", salt: bytes32(0), once: true, calls: calls}));
         address drop = executor.dropOf(owner, recipe);
 
         sellToken.mint(drop, 100e18);
@@ -410,7 +410,7 @@ contract DropRecipesTest is Test {
             allowFailure: false,
             isDelegateCall: true
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "multi", once: false, calls: calls}));
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "multi", salt: bytes32(0), once: false, calls: calls}));
 
         address drop = executor.dropOf(owner, recipe);
         sellToken.mint(drop, 500e18);

@@ -80,6 +80,11 @@ reproducible way to get back to those bytes, which is why compilation reads fiel
 fixed order and ignores key order and formatting. Change any value — the label, the `once` flag, one
 digit of the price — and you get a different address.
 
+**`salt` and `orderSalt` are different things.** The recipe's `salt` is the factory's user salt: it
+moves the drop address, and exists so the same parameters can yield more than one drop (or so you can
+grind a vanity address without putting junk in `label`). The `twapFromBalance` step's `orderSalt` is
+the ComposableCoW conditional-order discriminator, and does not affect the address at all.
+
 **Guards are steps, not settings.** `requireMinBalance` and `requireTimeWindow` are ordinary steps
 committed into the address, so nobody activating your drop can skip them. Put a `minAmount` on any
 one-shot recipe that a bridge might fund in tranches; without it, the first tranche to land sizes the

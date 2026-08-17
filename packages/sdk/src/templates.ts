@@ -12,6 +12,8 @@ import type { DropRecipeJson, LimitPriceJson } from './recipe.js'
 export interface SwapOnArrivalParams {
   chainId: number
   owner: Address
+  /** Optional user salt, to get more than one drop from the same parameters. */
+  salt?: Hex
   sellToken: Address
   buyToken: Address
   /** Where the bought tokens go. Omit to leave them in the drop. */
@@ -57,6 +59,7 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
     label: params.label ?? 'swap on arrival',
     chainId: params.chainId,
     owner: params.owner,
+    salt: params.salt,
     once: false,
     steps,
   }
@@ -72,6 +75,8 @@ export interface TwapOnArrivalParams {
   parts: number
   /** Seconds between parts. */
   partDuration: number
+  /** Optional user salt, to get more than one drop from the same parameters. */
+  salt?: Hex
   span?: number
   limitPrice: LimitPriceJson
   label?: string
@@ -133,6 +138,7 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
     label: params.label ?? `twap ${params.parts} parts`,
     chainId: params.chainId,
     owner: params.owner,
+    salt: params.salt,
     once: true,
     steps,
   }

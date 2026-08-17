@@ -39,10 +39,47 @@ contract DropExecutorTest is Test {
             allowFailure: false,
             isDelegateCall: false
         });
-        return abi.encode(DropExecutor.Recipe({label: label, once: once, calls: calls}));
+        return abi.encode(DropExecutor.Recipe({label: label, salt: bytes32(0), once: once, calls: calls}));
+    }
+
+    /// @dev Same recipe, explicit salt.
+    function _saltedRecipe(bytes32 label, bytes32 salt) internal view returns (bytes memory) {
+        Call[] memory calls = new Call[](1);
+        calls[0] = Call({
+            target: address(recorder),
+            value: 0,
+            callData: abi.encodeCall(Recorder.ping, ()),
+            allowFailure: false,
+            isDelegateCall: false
+        });
+        return abi.encode(DropExecutor.Recipe({label: label, salt: salt, once: false, calls: calls}));
     }
 
     // --- derivation ------------------------------------------------------------------------
+
+    /// @dev The salt is the escape hatch for wanting the *same* recipe at more than one address —
+    ///      several independent payroll drops, say — without having to make the human-readable label
+    ///      artificially unique, and it gives a grinding space for vanity addresses.
+    function test_dropOf_saltGivesTheSameRecipeADifferentAddress() external view {
+        bytes memory a = _saltedRecipe("payroll", bytes32(0));
+        bytes memory b = _saltedRecipe("payroll", bytes32(uint256(1)));
+        bytes memory c = _saltedRecipe("payroll", bytes32(uint256(2)));
+
+        address[3] memory derived = [executor.dropOf(owner, a), executor.dropOf(owner, b), executor.dropOf(owner, c)];
+        assertTrue(derived[0] != derived[1] && derived[1] != derived[2] && derived[0] != derived[2], "salt is ignored");
+    }
+
+    function test_activate_worksWithANonZeroSalt() external {
+        bytes memory recipe = _saltedRecipe("salted", bytes32(uint256(42)));
+        address predicted = executor.dropOf(owner, recipe);
+
+        vm.prank(keeper);
+        address drop = executor.activate(owner, recipe);
+
+        assertEq(drop, predicted, "salted drop deployed at an unexpected address");
+        assertEq(recorder.lastCaller(), drop, "recipe did not run as the shed");
+    }
+
 
     function test_dropOf_isDeterministicAndRecipeSpecific() external view {
         bytes memory a = _pingRecipe("a", false, 0);
@@ -115,7 +152,7 @@ contract DropExecutorTest is Test {
             allowFailure: false,
             isDelegateCall: false
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "sweep", once: false, calls: calls}));
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "sweep", salt: bytes32(0), once: false, calls: calls}));
 
         address predicted = executor.dropOf(owner, recipe);
         token.mint(predicted, 100);
@@ -157,7 +194,7 @@ contract DropExecutorTest is Test {
             allowFailure: false,
             isDelegateCall: false
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "oneshot", once: true, calls: calls}));
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "oneshot", salt: bytes32(0), once: true, calls: calls}));
         address drop = executor.dropOf(owner, recipe);
 
         // Nothing has arrived yet, so the transfer underflows and the whole activation reverts.
@@ -190,7 +227,7 @@ contract DropExecutorTest is Test {
             allowFailure: true, // <-- the footgun
             isDelegateCall: false
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "burnable", once: true, calls: calls}));
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "burnable", salt: bytes32(0), once: true, calls: calls}));
         address drop = executor.dropOf(owner, recipe);
 
         // No funds yet, but the failure is swallowed, so the activation "succeeds".
@@ -226,7 +263,7 @@ contract DropExecutorTest is Test {
             allowFailure: false,
             isDelegateCall: false
         });
-        bytes memory forged = abi.encode(DropExecutor.Recipe({label: "theft", once: false, calls: theft}));
+        bytes memory forged = abi.encode(DropExecutor.Recipe({label: "theft", salt: bytes32(0), once: false, calls: theft}));
 
         vm.prank(attacker);
         vm.expectRevert(DropExecutor.NotADrop.selector);
@@ -260,7 +297,7 @@ contract DropExecutorTest is Test {
         // A tampered recipe simply resolves to a different, empty address.
         Call[] memory theft = new Call[](1);
         theft[0] = Call({target: attacker, value: 10 ether, callData: "", allowFailure: false, isDelegateCall: false});
-        bytes memory forged = abi.encode(DropExecutor.Recipe({label: "victim", once: false, calls: theft}));
+        bytes memory forged = abi.encode(DropExecutor.Recipe({label: "victim", salt: bytes32(0), once: false, calls: theft}));
 
         assertTrue(executor.dropOf(owner, forged) != drop, "forged recipe resolved to the victim address");
 
@@ -298,12 +335,28 @@ contract DropExecutorTest is Test {
 
     /// @dev Likewise for a non-zero user salt: drops are salt-zero by convention, which is what
     ///      lets `setup`'s three arguments recompute the address at all.
-    function test_attack_deployingWithANonZeroSaltReverts() external {
-        bytes memory recipe = _pingRecipe("salted", false, 0);
+    /// @dev The factory takes an arbitrary user salt, and we bind it to the one inside the recipe.
+    ///      Deploying with a factory salt that disagrees produces an address we do not derive, so
+    ///      the deployment reverts. Nobody can plant a drop at an address whose recipe says
+    ///      otherwise.
+    function test_attack_deployingWithASaltThatDisagreesWithTheRecipeReverts() external {
+        bytes memory recipe = _saltedRecipe("salted", bytes32(uint256(7)));
 
         vm.prank(attacker);
         vm.expectRevert(DropExecutor.NotADrop.selector);
-        factory.initializeProxyWithSetup(owner, address(executor), bytes32(uint256(1)), address(executor), recipe);
+        factory.initializeProxyWithSetup(owner, address(executor), bytes32(uint256(8)), address(executor), recipe);
+
+        // The recipe's own salt works, from any caller.
+        vm.prank(attacker);
+        factory.initializeProxyWithSetup(owner, address(executor), bytes32(uint256(7)), address(executor), recipe);
+        assertEq(recorder.pings(), 1, "recipe did not run via the direct factory path");
+    }
+
+    /// @dev `setupData` shorter than the encoded head cannot carry a salt, and must not be read past
+    ///      its end.
+    function test_attack_truncatedSetupDataIsRejected() external {
+        vm.expectRevert(DropExecutor.MalformedRecipe.selector);
+        executor.dropOf(owner, hex"1234");
     }
 
     // --- recovery --------------------------------------------------------------------------
@@ -319,7 +372,7 @@ contract DropExecutorTest is Test {
             allowFailure: false,
             isDelegateCall: false
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "broken", once: false, calls: calls}));
+        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "broken", salt: bytes32(0), once: false, calls: calls}));
 
         address predicted = executor.dropOf(owner, recipe);
         vm.deal(predicted, 1 ether);

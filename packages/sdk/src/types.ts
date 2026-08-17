@@ -21,8 +21,13 @@ export interface DropCall {
  * A compiled recipe. Its abi encoding is the `setupData` committed into the drop address.
  */
 export interface Recipe {
-  /** Free-form tag, encoded as a right-padded bytes32. Differentiates identical recipes. */
+  /** Free-form human tag, encoded as a right-padded bytes32. */
   label: string
+  /**
+   * The factory's user salt. Zero is the ordinary case; set it to get a second drop from an
+   * otherwise identical recipe, or as a grinding space for a vanity address.
+   */
+  salt: Hex
   /** Run at most once per drop. Leave false for a reusable deposit address. */
   once: boolean
   calls: DropCall[]

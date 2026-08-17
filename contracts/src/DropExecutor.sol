@@ -41,9 +41,14 @@ contract DropExecutor is ICOWShedSetup {
     ///      commits to. Adding a field changes every address, so this struct is versioned by
     ///      the deployment of this contract.
     struct Recipe {
-        /// @dev Free-form tag. Its only mechanical role is to let two otherwise-identical
-        ///      recipes resolve to two different addresses.
+        /// @dev Free-form human tag, e.g. "payroll march". Part of the commitment like everything
+        ///      else, so changing it changes the address.
         bytes32 label;
+        /// @dev The factory's user salt, carried here so it can be recovered on-chain — see
+        ///      `_saltOf`. Zero is the ordinary case; set it to get a second drop from an
+        ///      otherwise identical recipe, or to grind for a vanity address without having to
+        ///      put junk in `label`.
+        bytes32 salt;
         /// @dev If set, the recipe runs at most once per drop. Leave false for a reusable
         ///      deposit address that processes each new arrival of funds.
         bool once;
@@ -55,6 +60,9 @@ contract DropExecutor is ICOWShedSetup {
 
     /// @notice A `once` recipe has already run for this drop.
     error AlreadyConsumed();
+
+    /// @notice `setupData` is too short to be an encoded `Recipe`.
+    error MalformedRecipe();
 
     event DropTriggered(address indexed drop, address indexed owner, bytes32 indexed recipeHash);
 
@@ -74,7 +82,7 @@ contract DropExecutor is ICOWShedSetup {
     ///      derivation, so this contract and the factory can never disagree. The SDK reimplements
     ///      it off-chain and the test suite asserts the two agree.
     function dropOf(address owner, bytes calldata setupData) public view returns (address) {
-        return FACTORY.proxyOf(owner, address(this), bytes32(0), address(this), setupData);
+        return FACTORY.proxyOf(owner, address(this), _saltOf(setupData), address(this), setupData);
     }
 
     /// @notice Deploy the drop and run its recipe, or re-run it if the drop already exists.
@@ -87,7 +95,9 @@ contract DropExecutor is ICOWShedSetup {
         if (drop.code.length == 0) {
             // The factory deploys, initializes us as the trusted executor, and calls `setup`
             // back — which is where the recipe actually runs.
-            FACTORY.initializeProxyWithSetup(owner, address(this), bytes32(0), address(this), setupData);
+            FACTORY.initializeProxyWithSetup(
+                owner, address(this), _saltOf(setupData), address(this), setupData
+            );
         } else {
             // Already deployed, so the factory would skip the setup callback. Run directly:
             // this is the path for funds that arrive after the first activation.
@@ -101,6 +111,28 @@ contract DropExecutor is ICOWShedSetup {
     ///      identity, is the security boundary.
     function setup(address shed, address owner, bytes calldata setupData) external override {
         _run(shed, owner, setupData);
+    }
+
+    /// @dev The factory's user salt, read back out of the recipe.
+    ///
+    ///      The factory takes an arbitrary `bytes32 salt`, but `ICOWShedSetup.setup` only receives
+    ///      `(shed, owner, setupData)` — so a salt passed *only* as a factory argument could not be
+    ///      recovered here, and the commitment could not be re-derived. Carrying it inside
+    ///      `setupData` solves that: the salt is committed anyway, so reading it back costs nothing
+    ///      and cannot be forged. A caller who deploys with a factory salt that disagrees with the
+    ///      one in the recipe simply produces an address this function does not derive, and the
+    ///      deployment reverts.
+    ///
+    ///      The alternative — stashing the salt in (transient) storage during `activate` — would
+    ///      break deployment straight through the factory, which the design deliberately allows as
+    ///      a discardable solver pre-interaction.
+    ///
+    ///      Decoded from the head of the encoding rather than by decoding the whole `Recipe`, so
+    ///      that quoting an address does not pay to decode every call. `setupData` is
+    ///      `abi.encode(Recipe)`: one offset word, then `label`, then `salt`.
+    function _saltOf(bytes calldata setupData) internal pure returns (bytes32 salt) {
+        if (setupData.length < 0x60) revert MalformedRecipe();
+        (, salt) = abi.decode(setupData[0x20:0x60], (bytes32, bytes32));
     }
 
     /// @dev Verify the recipe reproduces the shed address, then execute it as the shed.
