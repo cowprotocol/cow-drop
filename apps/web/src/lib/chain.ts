@@ -266,6 +266,38 @@ export function onChainChanged(listener: (chainId: number) => void): () => void 
 }
 
 /**
+ * The already-authorised account, if there is one, without prompting.
+ *
+ * `eth_accounts` answers from the permission the wallet already holds, where `eth_requestAccounts`
+ * would pop a dialog. Without this a reload forgets the account — the page would still read the
+ * wallet's *chain* on mount, so it looked connected while every action that needs an account stayed
+ * disabled.
+ */
+export async function readAccount(): Promise<Address | null> {
+  if (!hasInjectedWallet()) return null
+  const [account] = (await injected().request({ method: 'eth_accounts' })) as Address[]
+  return account ?? null
+}
+
+/** Follow the wallet's account, so locking it or switching accounts moves the page too. */
+export function onAccountsChanged(listener: (account: Address | null) => void): () => void {
+  if (!hasInjectedWallet()) return () => {}
+
+  const provider = injected() as EIP1193Provider & {
+    on?: (event: string, handler: (value: unknown) => void) => void
+    removeListener?: (event: string, handler: (value: unknown) => void) => void
+  }
+
+  const handler = (value: unknown) => {
+    const accounts = Array.isArray(value) ? (value as Address[]) : []
+    listener(accounts[0] ?? null)
+  }
+
+  provider.on?.('accountsChanged', handler)
+  return () => provider.removeListener?.('accountsChanged', handler)
+}
+
+/**
  * Connect an injected wallet. Deliberately minimal: activating a drop is a single unprivileged
  * transaction that anyone can send, so there is nothing here worth a connector framework.
  */

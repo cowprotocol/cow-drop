@@ -14,6 +14,8 @@ import {
   connect,
   cowExplorer,
   isUserRejection,
+  readAccount,
+  onAccountsChanged,
   onChainChanged,
   switchChain,
   walletChainId,
@@ -324,6 +326,25 @@ export function App() {
   }, [form.chainId])
 
   // Default to whatever network the wallet is already on, when we support it.
+  /**
+   * Restore an already-authorised account on load, without prompting.
+   *
+   * The page read the wallet's chain on mount but never its account, so after a reload it looked
+   * connected while `account` was null — and the only thing that depended on it, the activate button,
+   * silently greyed out. `eth_accounts` answers from the permission the wallet already holds.
+   */
+  useEffect(() => {
+    void readAccount().then((connected) => {
+      if (!connected) return
+      setAccount(connected)
+      // Same courtesy as connecting by hand, but never over an owner already hydrated from a recipe.
+      setForm((previous) => (isAddress(previous.owner) ? previous : { ...previous, owner: connected }))
+    })
+  }, [])
+
+  /** Follow the wallet's account too, so locking it does not leave a stale one on screen. */
+  useEffect(() => onAccountsChanged(setAccount), [])
+
   useEffect(() => {
     void walletChainId().then((chain) => {
       setWalletChain(chain)
@@ -715,20 +736,28 @@ export function App() {
                     {busy ? 'Activating…' : 'Activate drop'}
                   </button>
                   <a
-                    href={`${cowExplorer(form.chainId)}/address/${compiled.value.address}`}
+                    href={`${cowExplorer(dropChainId)}/address/${compiled.value.address}`}
                     target="_blank"
                     rel="noreferrer"
                   >
                     Orders on CoW Explorer
                   </a>
                   <a
-                    href={`${blockExplorer(form.chainId).url}/address/${compiled.value.address}`}
+                    href={`${blockExplorer(dropChainId).url}/address/${compiled.value.address}`}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Balances on {blockExplorer(form.chainId).name}
+                    Balances on {blockExplorer(dropChainId).name}
                   </a>
                 </div>
+
+                {!account && (
+                  <p className="hint">
+                    <strong>Activate is disabled because no wallet is connected.</strong> Connect one
+                    above — it only pays the gas. Activation is permissionless, so the transaction
+                    authorises nothing and any account could send it.
+                  </p>
+                )}
 
                 {message && <p className="ok">{message}</p>}
 
