@@ -6,9 +6,12 @@ dist/
 # foundry
 contracts/out/
 contracts/cache/
-# Broadcast artifacts are per-run noise; deployments/<chainId>.json is the record we keep.
-# (The narrower `*/dry-run/` pattern did not match foundry's actual nesting depth.)
-contracts/broadcast/
+# Real broadcasts are kept: deployments/<chainId>.json records the addresses, but only the
+# broadcast artifact records the tx hash, block and deployer that put them there — which is what
+# you need to reconstruct a chain's deployment history without trusting an explorer.
+# Simulations are not deployments, so dry-run/ stays ignored. Note the pattern needs `**` to reach
+# foundry's actual nesting depth (broadcast/<script>/<chainId>/dry-run/).
+contracts/broadcast/**/dry-run/
 
 # env
 .env
