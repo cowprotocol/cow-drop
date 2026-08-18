@@ -3,7 +3,7 @@ import {
   buildRescueForState,
   type CompiledRecipe,
 } from '@cowprotocol/cow-drop-sdk'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { isAddress, type Address } from 'viem'
 
 import { getPublicClient, sendTransaction } from '../lib/chain.js'
@@ -36,6 +36,27 @@ export function RescuePanel({
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  /**
+   * Which balances to offer a checkbox for.
+   *
+   * The picker is fed CoW Swap's whole default token set — several hundred tokens on the busier chains
+   * — and one checkbox per token would bury this panel. So only CoW's curated tokens are listed, plus
+   * the recipe's sell token: that is the balance most likely to need rescuing, and the one case where a
+   * long-tail pick still has to be sweepable. It is listed even when absent from the token list
+   * entirely, because it is selected by default, and a selected balance with no checkbox would sweep
+   * with nothing on screen to say so.
+   */
+  const sweepable = useMemo(() => {
+    const isSellToken = (address: Address) => address.toLowerCase() === sellToken.toLowerCase()
+    const shown = tokens.filter((token) => token.curated || isSellToken(token.address))
+    const entries = shown.map((token) => ({ label: token.symbol, address: token.address }))
+
+    if (!shown.some((token) => isSellToken(token.address))) {
+      entries.unshift({ label: `${sellToken.slice(0, 10)}… (sell token)`, address: sellToken })
+    }
+    return [...entries, { label: 'native token', address: NATIVE }]
+  }, [tokens, sellToken])
 
   const isOwner = account !== null && account.toLowerCase() === compiled.owner.toLowerCase()
   const recipient = isAddress(to) ? (to as Address) : account
@@ -114,7 +135,7 @@ export function RescuePanel({
 
       <fieldset className="tokens">
         <legend>Sweep which balances</legend>
-        {[...tokens.map((t) => ({ label: t.symbol, address: t.address })), { label: 'native token', address: NATIVE }].map(
+        {sweepable.map(
           (token) => (
             <label key={token.address} className="checkbox">
               <input

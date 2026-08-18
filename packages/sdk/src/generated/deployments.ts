@@ -7,7 +7,7 @@ import { PROXY_CREATION_CODE } from './artifacts.js'
 
 /**
  * The contract addresses. Identical on every chain — see `chains.ts` for why.
- * Recorded from: chain 1, chain 100.
+ * Recorded from: chain 1, chain 100, chain 11155111.
  */
 export const ADDRESSES = {
   factory: '0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99',

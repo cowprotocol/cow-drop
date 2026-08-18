@@ -69,7 +69,7 @@ takes over.
 | `src/App.tsx` | The form, and the recipe it builds. `toRecipe` is pure, which is what makes the address update as you type. |
 | `src/lib/drop.ts` | Reading drop status, activating, and posting placed orders. |
 | `src/lib/chain.ts` | Public client, injected wallet, chain switching. |
-| `src/lib/tokenList.ts` | Loads CoW's token list — the same source cowswap gives priority 1. |
+| `src/lib/tokenList.ts` | Loads the token lists cowswap enables by default, per chain, and merges them by priority. |
 | `src/lib/tokenLogo.ts` | The logo fallback cascade, mirroring cowswap's `getTokenLogoUrls`. |
 | `src/lib/tokens.ts` | Offline fallback list (symbols and decimals verified on-chain). |
 | `src/components/` | Address panel with QR, the committed-bytes table, the rescue panel, and the JSON import/export. |
@@ -93,12 +93,29 @@ So the page treats the recipe as a key rather than a document:
 
 ## Tokens and logos
 
-Tokens come from `https://files.cow.fi/tokens/CowSwap.json` — the list cowswap gives priority 1 on
-every chain (`libs/tokens/src/const/tokensList.json`). It carries 34 Gnosis tokens, all with logos,
-which is small enough for a picker rather than a search problem. cowswap additionally loads Honeyswap,
-Uniswap, CoinGecko and Curve lists on Gnosis; adding them here would mean handling merge priority and
-duplicate addresses, which a demo does not need. If the fetch fails the built-in list stands in, since
-an unreachable token list should never stop you computing an address.
+Tokens come from the lists cowswap marks `enabledByDefault` in `libs/tokens/src/const/tokensList.json`,
+mirrored per chain in `TOKEN_LIST_SOURCES`. This used to be one hardcoded URL,
+`files.cow.fi/tokens/CowSwap.json`, on the assumption that it was what CoW Swap shows. It was not, in
+two separate ways, and both made the picker far smaller than CoW Swap's:
+
+- **Priority 1 is not the whole default set.** `CowSwap.json` is CoW's own curated list and it is tiny
+  on the newer chains — 11 tokens on Arbitrum, 5 on Polygon — while cowswap also enables the CoinGecko
+  and Uniswap lists out of the box.
+- **Sepolia never used `CowSwap.json` at all.** That file carries no Sepolia tokens whatsoever, so
+  loading it there returned nothing and the 3-token built-in fallback was all you ever saw. cowswap
+  points Sepolia at `token-lists/CowSwapSepolia.json` instead.
+
+The picker now matches a fresh CoW Swap install exactly: 617 tokens on Ethereum, 661 on Arbitrum, 624
+on Polygon, 311 on Gnosis, 7 on Sepolia. The opt-in lists cowswap keeps behind a toggle — Curve,
+Balancer, Ondo, xStocks — are left out.
+
+Lists are concatenated in cowswap's priority order and sorted *within* each list rather than across the
+whole set, so CoW's curated tokens stay at the top of the picker instead of scattering alphabetically
+through several hundred others; the first list wins on a duplicate address. Those curated tokens are
+flagged `curated`, which is what the rescue panel lists — it renders a checkbox per token, so it shows
+the short list plus the recipe's sell token rather than all 661. Results are cached per chain for the
+session, since a chain now costs up to four requests. If every source fails the built-in list stands in
+and is not cached, since an unreachable token list should never stop you computing an address.
 
 Logos follow cowswap's cascade from `getTokenLogoUrls`, and the fact that it *is* a cascade is the
 point — CoW's CDN answers **403** for addresses it does not carry, so any single URL fails regularly:
