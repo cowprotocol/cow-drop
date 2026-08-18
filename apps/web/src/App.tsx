@@ -23,6 +23,7 @@ import { applySlippage, quoteMarketPrice, type MarketQuote } from './lib/quote.j
 import {
   activateDrop,
   postPlacedOrders,
+  forgetChainReadiness,
   probeChainReadiness,
   readDropStatus,
   type DropStatus,
@@ -160,6 +161,16 @@ export function App() {
    * depend on the recipe being complete.
    */
   const [chainMissing, setChainMissing] = useState<string[] | null>(null)
+  /**
+   * Why the readiness probe failed, if it did.
+   *
+   * Without this an unreachable RPC is indistinguishable from a slow one, and the page sits on
+   * "checking…" forever — which it did, because the only error output on the page lived inside a
+   * section that this very check was hiding.
+   */
+  const [probeError, setProbeError] = useState<string | null>(null)
+  /** Bumped by the retry button to re-run the probe after clearing its cached answer. */
+  const [probeAttempt, setProbeAttempt] = useState(0)
 
   const recipe = useMemo(() => imported ?? toRecipe(form, tokens), [imported, form, tokens])
 
@@ -251,17 +262,36 @@ export function App() {
   useEffect(() => {
     let cancelled = false
     setChainMissing(null)
+    setProbeError(null)
     probeChainReadiness(dropChainId)
       .then((missing) => {
         if (!cancelled) setChainMissing(missing)
       })
       .catch((cause) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
+        if (!cancelled) setProbeError(cause instanceof Error ? cause.message : String(cause))
       })
     return () => {
       cancelled = true
     }
-  }, [dropChainId])
+  }, [dropChainId, probeAttempt])
+
+  const retryProbe = () => {
+    forgetChainReadiness(dropChainId)
+    setProbeAttempt((attempt) => attempt + 1)
+  }
+
+  /**
+   * Keep the form in step with an imported recipe.
+   *
+   * The recipe is mirrored into the URL, so a reload comes back as an import while the form is still
+   * at its initial values — which showed an empty owner field next to an address derived from the
+   * owner you had set before the reload. Only the fields the form can represent faithfully are
+   * hydrated; the rest is why `imported` overrides the form in the first place.
+   */
+  useEffect(() => {
+    if (!imported) return
+    setForm((previous) => ({ ...previous, owner: imported.owner, chainId: imported.chainId }))
+  }, [imported])
 
   // The recipe lives in the URL, so a bookmark or a reload is enough to get it back. Uses replaceState
   // rather than a hash assignment, to avoid filling the back button with every keystroke.
@@ -395,6 +425,15 @@ export function App() {
 
   return (
     <main>
+      {/*
+        Top level on purpose. This used to live inside the status section, which meant any gate that
+        hid that section also swallowed every error it was supposed to explain.
+      */}
+      {error && (
+        <p className="error banner" role="alert">
+          {error}
+        </p>
+      )}
       <header>
         <div className="brand">
           {/* Served from public/ rather than imported, so the favicon and og:image can share it. */}
@@ -561,7 +600,20 @@ export function App() {
 
       {compiled.ok ? (
         <>
-          {chainMissing === null ? (
+          {probeError !== null ? (
+            <section>
+              <h2>3 &middot; Could not check {chainName}</h2>
+              <p className="warn">
+                The address is withheld because we could not confirm the contracts are there, not
+                because they are missing. Unverified is not the same as unsafe, but it is not a good
+                enough reason to show you somewhere to send money.
+              </p>
+              <p className="error">{probeError}</p>
+              <div className="actions">
+                <button onClick={retryProbe}>Try again</button>
+              </div>
+            </section>
+          ) : chainMissing === null ? (
             <section>
               <h2>3 &middot; Your drop address</h2>
               <p className="hint">
@@ -679,7 +731,6 @@ export function App() {
                 </div>
 
                 {message && <p className="ok">{message}</p>}
-                {error && <p className="error">{error}</p>}
 
                 <TerminalPanel compiled={compiled.value} />
               </section>

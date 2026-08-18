@@ -280,6 +280,14 @@ input[aria-invalid='true'] {
   border-color: var(--error);
 }
 
+/* The page-level error. Lives outside every collapsible section so nothing can hide it. */
+.error.banner {
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  margin: 0 0 1rem;
+}
+
 .steps {
   overflow-x: auto;
 }

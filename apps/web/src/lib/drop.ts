@@ -69,6 +69,11 @@ export async function readMissingContracts(chainId: number): Promise<string[]> {
  */
 const readinessProbes = new Map<number, Promise<string[]>>()
 
+/** Drop a cached answer so the next probe genuinely re-reads. Used by the retry button. */
+export function forgetChainReadiness(chainId: number): void {
+  readinessProbes.delete(chainId)
+}
+
 export function probeChainReadiness(chainId: number): Promise<string[]> {
   const existing = readinessProbes.get(chainId)
   if (existing) return existing
