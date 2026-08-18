@@ -20,7 +20,13 @@ import {
   wrappedNative,
 } from './lib/chain.js'
 import { applySlippage, quoteMarketPrice, type MarketQuote } from './lib/quote.js'
-import { activateDrop, postPlacedOrders, readDropStatus, type DropStatus } from './lib/drop.js'
+import {
+  activateDrop,
+  postPlacedOrders,
+  probeChainReadiness,
+  readDropStatus,
+  type DropStatus,
+} from './lib/drop.js'
 import { GNOSIS_TOKENS } from './lib/tokens.js'
 import { fetchTokenList, findToken, type TokenInfo } from './lib/tokenList.js'
 import { NetworkPicker } from './components/NetworkPicker.js'
@@ -128,6 +134,15 @@ export function App() {
   /** Loaded from CoW's token list; the built-in list is the offline fallback. */
   const [tokens, setTokens] = useState<TokenInfo[]>(GNOSIS_TOKENS)
   const [walletChain, setWalletChain] = useState<number | null>(null)
+  /**
+   * Which required contracts are missing on the selected chain — `null` while the answer is still
+   * being fetched.
+   *
+   * Separate from `status`, which needs a compiled recipe and a sell token before it will read
+   * anything. Readiness has to be known *before* we are willing to render an address, so it cannot
+   * depend on the recipe being complete.
+   */
+  const [chainMissing, setChainMissing] = useState<string[] | null>(null)
 
   const recipe = useMemo(() => imported ?? toRecipe(form, tokens), [imported, form, tokens])
 
@@ -138,6 +153,16 @@ export function App() {
       return { ok: false as const, error: cause instanceof Error ? cause.message : String(cause) }
     }
   }, [recipe])
+
+  /**
+   * The chain the drop actually resolves on.
+   *
+   * Not always `form.chainId`: an imported recipe carries its own, and it is the recipe that decides
+   * where the address lives. Readiness must follow the recipe, or we could vet one chain and show an
+   * address for another.
+   */
+  const dropChainId = compiled.ok ? compiled.value.deployment.chainId : form.chainId
+  const chainName = getDropChain(dropChainId)?.name ?? `chain ${dropChainId}`
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setImported(null)
@@ -180,6 +205,21 @@ export function App() {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    let cancelled = false
+    setChainMissing(null)
+    probeChainReadiness(dropChainId)
+      .then((missing) => {
+        if (!cancelled) setChainMissing(missing)
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [dropChainId])
 
   // The recipe lives in the URL, so a bookmark or a reload is enough to get it back. Uses replaceState
   // rather than a hash assignment, to avoid filling the back button with every keystroke.
@@ -472,101 +512,135 @@ export function App() {
 
       {compiled.ok ? (
         <>
-          <section>
-            <h2>3 &middot; Your drop address</h2>
-            <DropAddress
-              address={compiled.value.address}
-              saved={saved}
-              onRemember={remember}
-              recipe={recipe}
-            />
-          </section>
+          {chainMissing === null ? (
+            <section>
+              <h2>3 &middot; Your drop address</h2>
+              <p className="hint">
+                Checking whether {chainName} has the contracts a drop needs&hellip;
+              </p>
+            </section>
+          ) : chainMissing.length > 0 ? (
+            <section>
+              <h2>3 &middot; Not available on {chainName} yet</h2>
+              <p className="warn">
+                <strong>{chainMissing.join(', ')}</strong>{' '}
+                {chainMissing.length > 1 ? 'are' : 'is'} not deployed on {chainName}, so the drop
+                address is withheld here rather than shown.
+              </p>
+              <p className="hint">
+                Withheld because an address is only worth having if something can act on it. Funding
+                one on this chain would strand the money: activation needs{' '}
+                <code>DropExecutor</code> and <code>DropRecipes</code>, and the owner&apos;s rescue
+                hatch needs <code>COWShedExecutorFactory</code> — so with these missing there is no
+                path out, not even for you. Nothing is lost forever, since the addresses are
+                deterministic and deploying the stack later would unstick it, but that is a wait with
+                no deadline attached to it.
+              </p>
+              <p className="hint">
+                The recipe itself is fine. It resolves to the same address on every chain, so this one
+                is already correct here and will not move once the contracts land — switch the network
+                above to a chain without this label to see it and fund it.
+              </p>
+            </section>
+          ) : (
+            <>
+              <section>
+                <h2>3 &middot; Your drop address</h2>
+                <DropAddress
+                  address={compiled.value.address}
+                  saved={saved}
+                  onRemember={remember}
+                  recipe={recipe}
+                />
+              </section>
 
-          <section>
-            <h2>4 &middot; What the address commits to</h2>
-            <StepTable calls={compiled.value.recipe.calls} setupData={compiled.value.setupData} />
-          </section>
+              <section>
+                <h2>4 &middot; What the address commits to</h2>
+                <StepTable calls={compiled.value.recipe.calls} setupData={compiled.value.setupData} />
+              </section>
 
-          <section>
-            <h2>5 &middot; Status</h2>
-            {status ? (
-              <ul className="status">
-                <li>
-                  Balance at drop:{' '}
-                  <strong>
-                    {formatUnits(status.balance, sellToken?.decimals ?? 18)} {sellToken?.symbol ?? ''}
-                  </strong>
-                  {status.nativeBalance > 0n ? ` (+ ${formatUnits(status.nativeBalance, 18)} xDAI)` : ''}
-                </li>
-                <li>Drop deployed: <strong>{status.deployed ? 'yes' : 'not yet'}</strong></li>
-                {status.missing.length > 0 && (
-                  <li className="warn">
-                    {status.missing.join(' and ')} {status.missing.length > 1 ? 'are' : 'is'} not
-                    deployed on {getDropChain(form.chainId)?.name ?? form.chainId} yet, so activation
-                    will revert. The cow-shed contracts a drop is derived from are already live, and
-                    the addresses are deterministic — so this drop address is correct now and will not
-                    change once the missing pieces are deployed.
-                  </li>
+              <section>
+                <h2>5 &middot; Status</h2>
+                {status ? (
+                  <ul className="status">
+                    <li>
+                      Balance at drop:{' '}
+                      <strong>
+                        {formatUnits(status.balance, sellToken?.decimals ?? 18)} {sellToken?.symbol ?? ''}
+                      </strong>
+                      {status.nativeBalance > 0n ? ` (+ ${formatUnits(status.nativeBalance, 18)} xDAI)` : ''}
+                    </li>
+                    <li>Drop deployed: <strong>{status.deployed ? 'yes' : 'not yet'}</strong></li>
+                    {status.missing.length > 0 && (
+                      <li className="warn">
+                        {status.missing.join(' and ')} {status.missing.length > 1 ? 'are' : 'is'} not
+                        deployed on {getDropChain(form.chainId)?.name ?? form.chainId} yet, so activation
+                        will revert. The cow-shed contracts a drop is derived from are already live, and
+                        the addresses are deterministic — so this drop address is correct now and will not
+                        change once the missing pieces are deployed.
+                      </li>
+                    )}
+                  </ul>
+                ) : (
+                  <p className="hint">Reading chain state…</p>
                 )}
-              </ul>
-            ) : (
-              <p className="hint">Reading chain state…</p>
-            )}
 
-            <div className="actions">
-              <button onClick={() => void refresh()}>Refresh</button>
-              <button
-                onClick={() => void onActivate()}
-                disabled={!account || busy || (status?.missing.length ?? 0) > 0}
-              >
-                {busy ? 'Activating…' : 'Activate drop'}
-              </button>
-              <a
-                href={`${cowExplorer(form.chainId)}/address/${compiled.value.address}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Orders on CoW Explorer
-              </a>
-              <a
-                href={`${blockExplorer(form.chainId).url}/address/${compiled.value.address}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Balances on {blockExplorer(form.chainId).name}
-              </a>
-            </div>
+                <div className="actions">
+                  <button onClick={() => void refresh()}>Refresh</button>
+                  <button
+                    onClick={() => void onActivate()}
+                    disabled={!account || busy || (status?.missing.length ?? 0) > 0}
+                  >
+                    {busy ? 'Activating…' : 'Activate drop'}
+                  </button>
+                  <a
+                    href={`${cowExplorer(form.chainId)}/address/${compiled.value.address}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Orders on CoW Explorer
+                  </a>
+                  <a
+                    href={`${blockExplorer(form.chainId).url}/address/${compiled.value.address}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Balances on {blockExplorer(form.chainId).name}
+                  </a>
+                </div>
 
-            {message && <p className="ok">{message}</p>}
-            {error && <p className="error">{error}</p>}
+                {message && <p className="ok">{message}</p>}
+                {error && <p className="error">{error}</p>}
 
-            <TerminalPanel compiled={compiled.value} />
-          </section>
+                <TerminalPanel compiled={compiled.value} />
+              </section>
 
-          <section>
-            <h2>6 &middot; If something goes wrong</h2>
-            <RescuePanel
-              compiled={compiled.value}
-              account={account}
-              deployed={status?.deployed ?? false}
-              sellToken={form.sellToken}
-              tokens={tokens}
-            />
-          </section>
+              <section>
+                <h2>6 &middot; If something goes wrong</h2>
+                <RescuePanel
+                  compiled={compiled.value}
+                  account={account}
+                  deployed={status?.deployed ?? false}
+                  sellToken={form.sellToken}
+                  tokens={tokens}
+                />
+              </section>
 
-          <section>
-            <h2>7 &middot; Recipe file</h2>
-            <RecipeJson
-              recipe={recipe}
-              address={compiled.value.address}
-              onImport={(next) => {
-                setImported(next)
-                setError(null)
-              }}
-              onError={setError}
-              onRemember={remember}
-            />
-          </section>
+              <section>
+                <h2>7 &middot; Recipe file</h2>
+                <RecipeJson
+                  recipe={recipe}
+                  address={compiled.value.address}
+                  onImport={(next) => {
+                    setImported(next)
+                    setError(null)
+                  }}
+                  onError={setError}
+                  onRemember={remember}
+                />
+              </section>
+            </>
+          )}
         </>
       ) : (
         <section>
