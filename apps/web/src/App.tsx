@@ -48,6 +48,23 @@ type RecipeKind = 'swap' | 'twap'
 
 const PLACEHOLDER_OWNER: Address = '0x0000000000000000000000000000000000000001'
 
+/**
+ * Owners that make a drop unrecoverable, which the UI must never hand out an address for.
+ *
+ * Both rescue paths are `msg.sender == owner` checks, and nothing can transact as either of these:
+ * `0x…0001` is the ecrecover precompile, `0x0` is nobody. A drop owned by one of them can only ever
+ * run its recipe — no sweep, no hatch, not for anyone. And since the owner also defaults to being the
+ * order's receiver, the bought tokens land there too.
+ *
+ * `compileRecipe` cannot catch this: both are well-formed addresses, indistinguishable at the SDK
+ * layer from an owner the user meant. Only the form knows the field was left empty, so only the form
+ * can refuse.
+ */
+const UNUSABLE_OWNERS: ReadonlySet<string> = new Set([
+  PLACEHOLDER_OWNER.toLowerCase(),
+  '0x0000000000000000000000000000000000000000',
+])
+
 interface FormState {
   chainId: number
   recipeKind: RecipeKind
@@ -163,6 +180,14 @@ export function App() {
    */
   const dropChainId = compiled.ok ? compiled.value.deployment.chainId : form.chainId
   const chainName = getDropChain(dropChainId)?.name ?? `chain ${dropChainId}`
+
+  /**
+   * Whether the recipe's owner is one nobody can act as.
+   *
+   * Read off the *recipe*, not the form, so an imported file is checked too — this is exactly how the
+   * first bad recipe would come back if it were re-opened.
+   */
+  const ownerUnusable = UNUSABLE_OWNERS.has(recipe.owner.toLowerCase())
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setImported(null)
@@ -416,7 +441,7 @@ export function App() {
           <label>
             Owner (can always recover the funds)
             <input
-              placeholder={PLACEHOLDER_OWNER}
+              placeholder="Paste your address, or connect a wallet"
               value={form.owner}
               onChange={(event) => set('owner', event.target.value)}
             />
@@ -540,6 +565,26 @@ export function App() {
                 The recipe itself is fine. It resolves to the same address on every chain, so this one
                 is already correct here and will not move once the contracts land — switch the network
                 above to a chain without this label to see it and fund it.
+              </p>
+            </section>
+          ) : ownerUnusable ? (
+            <section>
+              <h2>3 &middot; Set an owner first</h2>
+              <p className="warn">
+                The owner field is empty, so the drop address is withheld until you fill it in.
+              </p>
+              <p className="hint">
+                The owner is the only party who can ever recover a funded drop: both rescue paths are{' '}
+                <code>msg.sender == owner</code> checks. Left empty it would fall back to{' '}
+                <code>{PLACEHOLDER_OWNER}</code>, which is the ecrecover precompile — an address nobody
+                holds the key to. It would also become the order&apos;s receiver by default, so the
+                bought tokens would go there too. A drop like that can still be funded and still
+                activate, and the money would be unreachable from the first transfer onward.
+              </p>
+              <p className="hint">
+                Paste an address above, or connect a wallet and it fills itself in. Note the owner is
+                part of the address derivation, so setting it produces a <em>different</em> drop
+                address — it cannot be added to one you have already funded.
               </p>
             </section>
           ) : (
