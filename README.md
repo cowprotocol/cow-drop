@@ -182,7 +182,7 @@ The functions you'll actually reach for:
 | | |
 |---|---|
 | `compileRecipe(json)` | Recipe file → `{ address, setupData, recipe, deployment }`. Validates and throws on anything ambiguous. |
-| `swapOnArrival` / `twapOnArrival` | Templates: a handful of parameters in, a complete recipe out. |
+| `swapOnArrival` / `twapOnArrival` / `stopLossOnArrival` | Templates: a handful of parameters in, a complete recipe out. All take optional `minAmount` / `notBefore` / `notAfter` guards. |
 | `steps.*` | Build steps by hand — including `requireMinBalance` / `requireTimeWindow` guards and `raw`. |
 | `describeRecipe(setupData, deployment)` | Committed bytes → named steps, decoded arguments, and warnings about anything that cannot be named. |
 | `deriveDropAddress(…)` | The CREATE2 derivation on its own, if you already have `setupData`. |

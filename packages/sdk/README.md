@@ -55,6 +55,10 @@ await walletClient.sendTransaction(tx)
 | `compileRecipe(json, deployment?)` | The one you'll use. Recipe file → `{ address, setupData, recipe, deployment }`. Validates as it goes and throws on anything ambiguous. |
 | `swapOnArrival(params)` | Template: sell whatever lands here, once, at a limit price. Reusable — later arrivals get sold too. |
 | `twapOnArrival(params)` | Template: split whatever lands here into parts and sell over time. One-shot. |
+| `stopLossOnArrival(params)` | Template: sell whatever lands here once a feed pair crosses a strike. One-shot, and self-driving — the watch tower polls the condition. |
+
+All three take the same optional guards (`minAmount`, `notBefore`, `notAfter`), and `swapOnArrival`
+takes an optional `oracle` which turns its `limitPrice` into a floor the feed may only tighten.
 
 A *template* is a function; a *recipe* is what it returns and what the address commits to. The
 distinction is useful in code and not worth making a user learn, so the UI says "recipe" throughout.

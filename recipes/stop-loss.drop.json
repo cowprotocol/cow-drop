@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "generation": 1,
+  "label": "WXDAI stop-loss vs COW",
+  "chainId": 100,
+  "owner": "0x1111111111111111111111111111111111111111",
+  "once": true,
+  "steps": [
+    {
+      "type": "requireMinBalance",
+      "token": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
+      "minAmount": "1000000000000000000000"
+    },
+    {
+      "type": "stopLossFromBalance",
+      "sellToken": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
+      "buyToken": "0x177127622c4A00F3d409B75571e12cB3c8973d3c",
+      "receiver": "0x1111111111111111111111111111111111111111",
+      "limitPrice": {
+        "price": "40",
+        "sellDecimals": 18,
+        "buyDecimals": 18
+      },
+      "validitySeconds": 604800,
+      "trigger": {
+        "sellTokenPriceOracle": "0x0000000000000000000000000000000000000fe1",
+        "buyTokenPriceOracle": "0x0000000000000000000000000000000000000fe2",
+        "strike": "45000000000000000000",
+        "maxTimeSinceLastOracleUpdate": 3600
+      }
+    }
+  ]
+}

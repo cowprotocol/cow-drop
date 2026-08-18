@@ -1,6 +1,7 @@
 import {
   compileRecipe,
   getDropChain,
+  stopLossOnArrival,
   swapOnArrival,
   twapOnArrival,
   type DropRecipeJson,
@@ -48,7 +49,7 @@ import { StepTable } from './components/StepTable.js'
  * there a template is a function that produces a recipe — a distinction worth keeping in code and
  * not worth making a user learn.
  */
-type RecipeKind = 'swap' | 'twap'
+type RecipeKind = 'swap' | 'twap' | 'stoploss'
 
 const PLACEHOLDER_OWNER: Address = '0x0000000000000000000000000000000000000001'
 
@@ -81,6 +82,18 @@ interface FormState {
   parts: string
   partMinutes: string
   wrapNative: boolean
+  /** Guards. Blank means "no guard", which is why they are strings rather than numbers. */
+  minAmount: string
+  notBefore: string
+  notAfter: string
+  /** Oracle pricing, for the swap recipe and the stop-loss. */
+  useOracle: boolean
+  sellOracle: string
+  buyOracle: string
+  oracleMaxAgeMinutes: string
+  oracleHaircutBps: string
+  strike: string
+  stopLossDays: string
 }
 
 const INITIAL: FormState = {
@@ -95,6 +108,35 @@ const INITIAL: FormState = {
   parts: '12',
   partMinutes: '60',
   wrapNative: false,
+  minAmount: '',
+  notBefore: '',
+  notAfter: '',
+  useOracle: false,
+  sellOracle: '',
+  buyOracle: '',
+  oracleMaxAgeMinutes: '60',
+  oracleHaircutBps: '50',
+  strike: '',
+  stopLossDays: '7',
+}
+
+/** A blank guard field means "no guard", not "zero". */
+function optionalBigInt(value: string): bigint | undefined {
+  const trimmed = value.trim()
+  if (trimmed === '') return undefined
+  try {
+    const parsed = BigInt(trimmed)
+    return parsed > 0n ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** A local datetime input to an absolute unix timestamp. */
+function optionalTimestamp(value: string): bigint | undefined {
+  if (!value) return undefined
+  const ms = Date.parse(value)
+  return Number.isNaN(ms) ? undefined : BigInt(Math.floor(ms / 1000))
 }
 
 /** Build the recipe JSON from the form. Pure, so the address updates as the user types. */
@@ -105,6 +147,44 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
   const buyDecimals = findToken(tokens, form.buyToken)?.decimals ?? 18
   const limitPrice = { price: form.limitPrice, sellDecimals, buyDecimals }
   const wrapNative = form.wrapNative ? wrappedNative(form.chainId) : undefined
+
+  // Blank guard fields drop out entirely, so an untouched form still compiles to the same address it
+  // always did — adding a guard has to be a deliberate act, because it changes the address.
+  const guards = {
+    minAmount: optionalBigInt(form.minAmount)
+      ? optionalBigInt(form.minAmount)! * 10n ** BigInt(sellDecimals)
+      : undefined,
+    notBefore: optionalTimestamp(form.notBefore),
+    notAfter: optionalTimestamp(form.notAfter),
+  }
+
+  const oracle =
+    form.useOracle && isAddress(form.sellOracle) && isAddress(form.buyOracle)
+      ? {
+          sellTokenPriceOracle: form.sellOracle as Address,
+          buyTokenPriceOracle: form.buyOracle as Address,
+          maxAge: Number(form.oracleMaxAgeMinutes) * 60,
+          haircutBps: Number(form.oracleHaircutBps),
+        }
+      : undefined
+
+  if (form.recipeKind === 'stoploss') {
+    return stopLossOnArrival({
+      chainId: form.chainId,
+      owner,
+      sellToken: form.sellToken,
+      buyToken: form.buyToken,
+      receiver,
+      limitPrice,
+      validitySeconds: Number(form.stopLossDays) * 24 * 3600,
+      sellTokenPriceOracle: (isAddress(form.sellOracle) ? form.sellOracle : PLACEHOLDER_OWNER) as Address,
+      buyTokenPriceOracle: (isAddress(form.buyOracle) ? form.buyOracle : PLACEHOLDER_OWNER) as Address,
+      strike: optionalBigInt(form.strike) ?? 1n,
+      maxTimeSinceLastOracleUpdate: Number(form.oracleMaxAgeMinutes) * 60,
+      wrapNative,
+      ...guards,
+    })
+  }
 
   if (form.recipeKind === 'twap') {
     return twapOnArrival({
@@ -117,6 +197,7 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
       partDuration: Number(form.partMinutes) * 60,
       limitPrice,
       wrapNative,
+      ...guards,
     })
   }
 
@@ -129,6 +210,8 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
     validitySeconds: Number(form.validityMinutes) * 60,
     limitPrice,
     wrapNative,
+    oracle,
+    ...guards,
   })
 }
 
@@ -500,11 +583,19 @@ export function App() {
           >
             TWAP on arrival
           </button>
+          <button
+            className={form.recipeKind === 'stoploss' ? 'active' : ''}
+            onClick={() => set('recipeKind', 'stoploss')}
+          >
+            Stop-loss on arrival
+          </button>
         </div>
         <p className="hint">
           {form.recipeKind === 'swap'
             ? 'Sells whatever lands at the address once, at your limit price. Uses the pre-sign path: no watch tower needed, but the order is posted to the API after activation.'
-            : 'Splits whatever lands at the address into parts and sells them over time. Uses ComposableCoW: after one activation the watch tower posts each part unattended.'}
+            : form.recipeKind === 'twap'
+              ? 'Splits whatever lands at the address into parts and sells them over time. Uses ComposableCoW: after one activation the watch tower posts each part unattended.'
+              : 'Sells whatever lands at the address once a price feed pair crosses your strike. Uses ComposableCoW, so the watch tower polls the condition and posts the order itself — nobody has to be watching.'}
         </p>
       </section>
 
@@ -557,12 +648,13 @@ export function App() {
               onChange={(event) => set('receiver', event.target.value)}
             />
           </label>
-          {form.recipeKind === 'swap' ? (
+          {form.recipeKind === 'swap' && (
             <label>
               Order validity (minutes)
               <input value={form.validityMinutes} onChange={(event) => set('validityMinutes', event.target.value)} />
             </label>
-          ) : (
+          )}
+          {form.recipeKind === 'twap' && (
             <>
               <label>
                 Parts
@@ -574,6 +666,18 @@ export function App() {
               </label>
             </>
           )}
+          {form.recipeKind === 'stoploss' && (
+            <>
+              <label>
+                Strike (buy per sell, 18 decimals)
+                <input value={form.strike} onChange={(event) => set('strike', event.target.value)} />
+              </label>
+              <label>
+                Order validity (days)
+                <input value={form.stopLossDays} onChange={(event) => set('stopLossDays', event.target.value)} />
+              </label>
+            </>
+          )}
           <label className="checkbox">
             <input
               type="checkbox"
@@ -582,7 +686,121 @@ export function App() {
             />
             Wrap the native token first
           </label>
+          {form.recipeKind === 'swap' && (
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={form.useOracle}
+                onChange={(event) => set('useOracle', event.target.checked)}
+              />
+              Improve the limit with a price feed at activation
+            </label>
+          )}
         </div>
+
+        {(form.recipeKind === 'stoploss' || (form.recipeKind === 'swap' && form.useOracle)) && (
+          <fieldset className="subsection">
+            <legend>Price feeds</legend>
+            <div className="grid">
+              <label>
+                Sell token feed
+                <input
+                  placeholder="0x… Chainlink aggregator"
+                  value={form.sellOracle}
+                  onChange={(event) => set('sellOracle', event.target.value)}
+                />
+              </label>
+              <label>
+                Buy token feed
+                <input
+                  placeholder="0x… same quote currency"
+                  value={form.buyOracle}
+                  onChange={(event) => set('buyOracle', event.target.value)}
+                />
+              </label>
+              <label>
+                Max feed age (minutes)
+                <input
+                  value={form.oracleMaxAgeMinutes}
+                  onChange={(event) => set('oracleMaxAgeMinutes', event.target.value)}
+                />
+              </label>
+              {form.recipeKind === 'swap' && (
+                <label>
+                  Haircut (bps below the feed)
+                  <input
+                    value={form.oracleHaircutBps}
+                    onChange={(event) => set('oracleHaircutBps', event.target.value)}
+                  />
+                </label>
+              )}
+            </div>
+            <p className="hint">
+              Both feeds must quote the <em>same currency</em> — nothing on-chain can check that, and two
+              feeds quoting different currencies produce a number that looks fine and means nothing.
+            </p>
+            {form.recipeKind === 'swap' ? (
+              <p className="hint">
+                Your limit price above becomes a <strong>floor</strong>. The feed may only ever tighten
+                it, never loosen it — which matters because anyone may activate a drop, so without the
+                floor whoever activates would be choosing your price by choosing the moment.
+              </p>
+            ) : (
+              <p className="hint">
+                The strike is a floor on the pair: the order fires when one sell token is worth{' '}
+                <em>at most</em> that many buy tokens, scaled to 18 decimals. The limit price above is a
+                separate thing — the strike says when to sell, the limit says how bad a fill you refuse.
+              </p>
+            )}
+          </fieldset>
+        )}
+
+        <fieldset className="subsection">
+          <legend>Guards (optional)</legend>
+          <div className="grid">
+            <label>
+              Minimum amount before activating
+              <input
+                placeholder={`whole ${findToken(tokens, form.sellToken)?.symbol ?? 'tokens'}`}
+                value={form.minAmount}
+                onChange={(event) => set('minAmount', event.target.value)}
+              />
+            </label>
+            <label>
+              Not before
+              <input
+                type="datetime-local"
+                value={form.notBefore}
+                onChange={(event) => set('notBefore', event.target.value)}
+              />
+            </label>
+            <label>
+              Not after
+              <input
+                type="datetime-local"
+                value={form.notAfter}
+                onChange={(event) => set('notAfter', event.target.value)}
+              />
+            </label>
+          </div>
+          <p className="hint">
+            Activation is permissionless, so &ldquo;nobody will trigger this early&rdquo; cannot be a
+            promise made by whoever activates — it has to be committed into the address, which is what a
+            guard does. A guard reverts, so a premature activation costs the caller gas and changes
+            nothing.
+          </p>
+          {form.recipeKind !== 'swap' && !form.minAmount && (
+            <p className="hint warn-note">
+              This recipe is one-shot. Without a minimum, anyone may activate it the moment the first wei
+              lands and the whole order gets sized from a part-delivered balance — which is exactly what
+              a bridge paying out in tranches does. Strongly recommended here.
+            </p>
+          )}
+          <p className="hint">
+            Guards are part of the address, so adding one moves it. They are also{' '}
+            <em>refusals, not triggers</em>: nothing is watching for the moment a guard turns true.
+          </p>
+        </fieldset>
         <div className="quote">
           <label>
             Reference amount (for the quote only, never part of the recipe)

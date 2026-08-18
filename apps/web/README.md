@@ -21,8 +21,9 @@ cd ../apps/web && VITE_RPC_URL=http://127.0.0.1:8545 pnpm dev
 
 Eight panels, top to bottom, in the order you'd actually use them:
 
-1. **Recipe** — swap on arrival, or TWAP on arrival. The hint text under the tabs explains what
-   each one needs afterwards (a posted order vs. nothing at all).
+1. **Recipe** — swap on arrival, TWAP on arrival, or stop-loss on arrival. The hint under the tabs
+   explains what each needs afterwards: the swap's order has to be posted to the API, while the two
+   ComposableCoW recipes are self-driving once activated.
 2. **Parameters** — network, tokens, limit price, receiver, owner. The **network** selector lists the
    chains from `chains.ts` and defaults to whatever your wallet is on when that is one of them. Switching
    network does not move the drop address — the addresses are identical on every chain — it only changes
@@ -36,6 +37,19 @@ Eight panels, top to bottom, in the order you'd actually use them:
    the funds if the recipe turns out to be unrunnable, and it defaults to your connected wallet. The
    **receiver** defaults to the owner, so proceeds land in your wallet rather than piling up in the
    drop; the zero address leaves them in the drop for chaining.
+
+   **Price feeds** appear for the stop-loss, and for the swap when you tick "improve the limit with a
+   price feed". For the swap the limit price becomes a *floor* the feed may only tighten — which is the
+   point, because anyone may activate a drop, so without a floor whoever activates would be choosing
+   your price by choosing the moment. The panel says out loud that both feeds must quote the same
+   currency, since nothing on-chain can check it.
+
+   **Guards** are optional on every recipe: a minimum balance, and a not-before / not-after window.
+   The minimum is the one that matters — activation is permissionless, so on a one-shot recipe anyone
+   may trigger it the moment the first wei lands and the order gets sized from a part-delivered
+   balance, which is exactly what a bridge paying out in tranches does. The panel warns when a one-shot
+   recipe has no minimum set. Guards are part of the address, so adding one moves it — and they are
+   refusals, not triggers: nothing watches for the moment a guard turns true.
 3. **Your drop address** — updates live as you type, with a QR code. Nothing is deployed at it yet,
    and funds sent before deployment are safe; the recipe spends them on activation.
 4. **What the address commits to** — the decoded steps and the exact `setupData` bytes. This is the

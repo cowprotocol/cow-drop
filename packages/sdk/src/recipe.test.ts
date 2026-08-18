@@ -4,7 +4,7 @@ import type { Address } from 'viem'
 import { decodeRecipe, saltOf } from './encoding.js'
 import { GENERATIONS, LATEST_GENERATION, getDeployment } from './generated/deployments.js'
 import { compileRecipe, type DropRecipeJson } from './recipe.js'
-import { swapOnArrival, twapOnArrival } from './templates.js'
+import { stopLossOnArrival, swapOnArrival, twapOnArrival } from './templates.js'
 import type { DropDeployment } from './types.js'
 
 const OWNER: Address = '0x1111111111111111111111111111111111111111'
@@ -418,6 +418,82 @@ describe('generation pinning', () => {
     expect(() => compileRecipe({ ...swapRecipe(), generation: 1 }, gen2)).toThrow(
       /asks for generation 1 but the deployment is generation 2/,
     )
+  })
+})
+
+describe('templates: guards and the new handlers', () => {
+  const base = { chainId: GNOSIS, owner: OWNER, sellToken: WXDAI, buyToken: COW } as const
+  const price = { price: '0.02', sellDecimals: 18, buyDecimals: 18 } as const
+
+  it('puts the time guard first and the balance guard after any wrap', () => {
+    // Ordering is not cosmetic: the balance guard has to measure the token that will actually be sold,
+    // so on a natively-funded drop it must come after the wrap or it reads a balance of zero.
+    const recipe = swapOnArrival({
+      ...base,
+      limitPrice: price,
+      wrapNative: WXDAI,
+      minAmount: 1000n,
+      notBefore: 1n,
+      notAfter: 2n,
+    })
+
+    expect(recipe.steps.map((step) => step.type)).toEqual([
+      'requireTimeWindow',
+      'wrapNative',
+      'requireMinBalance',
+      'presignSellAll',
+    ])
+  })
+
+  it('adds no guard steps when none are asked for', () => {
+    expect(swapOnArrival({ ...base, limitPrice: price }).steps.map((s) => s.type)).toEqual(['presignSellAll'])
+  })
+
+  it('swaps in the oracle-priced step, keeping the limit as the floor', () => {
+    const recipe = swapOnArrival({
+      ...base,
+      limitPrice: price,
+      oracle: {
+        sellTokenPriceOracle: '0x0000000000000000000000000000000000000fe1',
+        buyTokenPriceOracle: '0x0000000000000000000000000000000000000fe2',
+      },
+    })
+
+    const step = recipe.steps[0]!
+    expect(step.type).toBe('presignSellAllAtOracle')
+    // The committed price is the floor the oracle may only improve on, not a starting point.
+    expect(step).toMatchObject({ floorPrice: price })
+    expect(compileRecipe(recipe).address).toMatch(/^0x[0-9a-fA-F]{40}$/)
+  })
+
+  it('builds a one-shot stop-loss', () => {
+    const recipe = stopLossOnArrival({
+      ...base,
+      limitPrice: price,
+      validitySeconds: 7 * 24 * 3600,
+      sellTokenPriceOracle: '0x0000000000000000000000000000000000000fe1',
+      buyTokenPriceOracle: '0x0000000000000000000000000000000000000fe2',
+      strike: 18n * 10n ** 17n,
+      minAmount: 1000n,
+    })
+
+    expect(recipe.once).toBe(true)
+    expect(recipe.steps.map((step) => step.type)).toEqual(['requireMinBalance', 'stopLossFromBalance'])
+    expect(compileRecipe(recipe).address).toMatch(/^0x[0-9a-fA-F]{40}$/)
+  })
+
+  it('refuses a guard-bearing one-shot recipe that also allows failure', () => {
+    // The existing rule, checked against the new templates: together they let anyone burn the run.
+    const recipe = stopLossOnArrival({
+      ...base,
+      limitPrice: price,
+      validitySeconds: 3600,
+      sellTokenPriceOracle: '0x0000000000000000000000000000000000000fe1',
+      buyTokenPriceOracle: '0x0000000000000000000000000000000000000fe2',
+      strike: 1n,
+    })
+    recipe.steps = recipe.steps.map((step) => ({ ...step, allowFailure: true }))
+    expect(() => compileRecipe(recipe)).toThrow(/allowFailure/)
   })
 })
 
