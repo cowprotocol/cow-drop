@@ -6,102 +6,187 @@ import type { Hex } from 'viem'
 /** `type(COWShedProxy).creationCode`, the first half of every drop's CREATE2 init code. */
 export const PROXY_CREATION_CODE: Hex = '0x60a03461009557601f61033d38819003918201601f19168301916001600160401b0383118484101761009957808492604094855283398101031261009557610052602061004b836100ad565b92016100ad565b6080527f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc5560405161027b90816100c28239608051818181608b01526101750152f35b5f80fd5b634e487b7160e01b5f52604160045260245ffd5b51906001600160a01b03821682036100955756fe60806040526004361015610018575b3661019757610197565b5f3560e01c8063025b22bc146100375763f851a4400361000e57610116565b346101125760207ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc3601126101125760043573ffffffffffffffffffffffffffffffffffffffff81169081810361011257337f000000000000000000000000000000000000000000000000000000000000000073ffffffffffffffffffffffffffffffffffffffff160361010d577f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc557fbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b5f80a2005b61023d565b5f80fd5b34610112575f7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc36011261011257602061014e61016c565b73ffffffffffffffffffffffffffffffffffffffff60405191168152f35b33300361010d577f000000000000000000000000000000000000000000000000000000000000000090565b60ff7f68df44b1011761f481358c0f49a711192727fb02c377d697bcb0ea8ff8393ac0541615806101f0575b1561023d577ff92ee8a9000000000000000000000000000000000000000000000000000000005f5260045ffd5b507fc4d66de8000000000000000000000000000000000000000000000000000000007fffffffff000000000000000000000000000000000000000000000000000000005f351614156101c3565b5f807f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc54368280378136915af43d5f803e15610277573d5ff35b3d5ffd'
 
-export const DROP_RECIPES_ABI = [
+export const GUARD_STEPS_ABI = [
   {
-    "type": "constructor",
+    "type": "function",
+    "name": "requireCallResult",
     "inputs": [
       {
-        "name": "settlement",
-        "type": "address",
-        "internalType": "contract ISettlementLike"
-      },
-      {
-        "name": "vaultRelayer",
+        "name": "target",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "composableCow",
-        "type": "address",
-        "internalType": "contract IComposableCowLike"
+        "name": "callData",
+        "type": "bytes",
+        "internalType": "bytes"
       },
       {
-        "name": "twapHandler",
+        "name": "wordIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "comparison",
+        "type": "uint8",
+        "internalType": "enum GuardSteps.Comparison"
+      },
+      {
+        "name": "threshold",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "requireMinBalance",
+    "inputs": [
+      {
+        "name": "token",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "currentBlockTimestampFactory",
+        "name": "minAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "requireTimeWindow",
+    "inputs": [
+      {
+        "name": "notBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "notAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "BalanceTooLow",
+    "inputs": [
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CallFailed",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "reason",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ComparisonFailed",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "int256",
+        "internalType": "int256"
+      },
+      {
+        "name": "comparison",
+        "type": "uint8",
+        "internalType": "enum GuardSteps.Comparison"
+      },
+      {
+        "name": "threshold",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ResultTooShort",
+    "inputs": [
+      {
+        "name": "returned",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "wordIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TooEarly",
+    "inputs": [
+      {
+        "name": "notBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TooLate",
+    "inputs": [
+      {
+        "name": "notAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  }
+] as const
+
+export const TOKEN_STEPS_ABI = [
+  {
+    "type": "function",
+    "name": "approveBalance",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "spender",
         "type": "address",
         "internalType": "address"
       }
     ],
+    "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "COMPOSABLE_COW",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IComposableCowLike"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "CURRENT_BLOCK_TIMESTAMP_FACTORY",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "SETTLEMENT",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract ISettlementLike"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "TWAP_HANDLER",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "VAULT_RELAYER",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -120,6 +205,135 @@ export const DROP_RECIPES_ABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sweep",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "wrapNative",
+    "inputs": [
+      {
+        "name": "wrappedNative",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "error",
+    "name": "AddressEmptyCode",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AddressInsufficientBalance",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FailedInnerCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidRecipient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NativeTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToSell",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  }
+] as const
+
+export const PRESIGN_STEPS_ABI = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "settlement",
+        "type": "address",
+        "internalType": "contract ISettlementLike"
+      },
+      {
+        "name": "vaultRelayer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "SETTLEMENT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ISettlementLike"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "VAULT_RELAYER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -172,61 +386,7 @@ export const DROP_RECIPES_ABI = [
   },
   {
     "type": "function",
-    "name": "requireMinBalance",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "minAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "requireTimeWindow",
-    "inputs": [
-      {
-        "name": "notBefore",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "notAfter",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "sweep",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "twapFromBalance",
+    "name": "presignSellAllAtOracle",
     "inputs": [
       {
         "name": "sellToken",
@@ -244,27 +404,44 @@ export const DROP_RECIPES_ABI = [
         "internalType": "address"
       },
       {
-        "name": "n",
+        "name": "floorNumerator",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "t",
+        "name": "floorDenominator",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "span",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "oracle",
+        "type": "tuple",
+        "internalType": "struct PresignSteps.OraclePrice",
+        "components": [
+          {
+            "name": "sellTokenPriceOracle",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "buyTokenPriceOracle",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "maxAge",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "haircutBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       },
       {
-        "name": "limitNumerator",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "limitDenominator",
+        "name": "validitySeconds",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -272,33 +449,15 @@ export const DROP_RECIPES_ABI = [
         "name": "appData",
         "type": "bytes32",
         "internalType": "bytes32"
-      },
-      {
-        "name": "orderSalt",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ],
     "outputs": [
       {
-        "name": "paramsHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "orderUid",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "wrapNative",
-    "inputs": [
-      {
-        "name": "wrappedNative",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -384,60 +543,34 @@ export const DROP_RECIPES_ABI = [
   },
   {
     "type": "error",
-    "name": "AddressEmptyCode",
+    "name": "BadOraclePrice",
     "inputs": [
       {
-        "name": "target",
+        "name": "feed",
         "type": "address",
         "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "AddressInsufficientBalance",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "BalanceTooLow",
-    "inputs": [
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
       },
       {
-        "name": "required",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "answer",
+        "type": "int256",
+        "internalType": "int256"
       }
     ]
   },
   {
     "type": "error",
-    "name": "FailedInnerCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidRecipient",
-    "inputs": []
+    "name": "HaircutTooLarge",
+    "inputs": [
+      {
+        "name": "haircutBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
     "name": "LimitPriceTooLow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NativeTransferFailed",
     "inputs": []
   },
   {
@@ -447,41 +580,353 @@ export const DROP_RECIPES_ABI = [
   },
   {
     "type": "error",
-    "name": "SafeERC20FailedOperation",
+    "name": "StaleOraclePrice",
     "inputs": [
       {
-        "name": "token",
+        "name": "feed",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "updatedAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAge",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
   {
     "type": "error",
-    "name": "TooEarly",
+    "name": "ValidToOverflow",
+    "inputs": []
+  }
+] as const
+
+export const TWAP_STEPS_ABI = [
+  {
+    "type": "constructor",
     "inputs": [
       {
-        "name": "notBefore",
+        "name": "vaultRelayer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "composableCow",
+        "type": "address",
+        "internalType": "contract IComposableCowLike"
+      },
+      {
+        "name": "twapHandler",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currentBlockTimestampFactory",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "COMPOSABLE_COW",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IComposableCowLike"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "CURRENT_BLOCK_TIMESTAMP_FACTORY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "TWAP_HANDLER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "VAULT_RELAYER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "twapFromBalance",
+    "inputs": [
+      {
+        "name": "sellToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "buyToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "receiver",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "n",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "t",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "span",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limitNumerator",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limitDenominator",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "appData",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "orderSalt",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
-    ]
+    ],
+    "outputs": [
+      {
+        "name": "paramsHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "error",
+    "name": "LimitPriceTooLow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToSell",
+    "inputs": []
   },
   {
     "type": "error",
     "name": "TooFewParts",
     "inputs": []
+  }
+] as const
+
+export const STOP_LOSS_STEPS_ABI = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "vaultRelayer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "composableCow",
+        "type": "address",
+        "internalType": "contract IComposableCowLike"
+      },
+      {
+        "name": "stopLossHandler",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "COMPOSABLE_COW",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IComposableCowLike"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "STOP_LOSS_HANDLER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "VAULT_RELAYER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "stopLossFromBalance",
+    "inputs": [
+      {
+        "name": "sellToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "buyToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "receiver",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "limitNumerator",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limitDenominator",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "validitySeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "trigger",
+        "type": "tuple",
+        "internalType": "struct StopLossSteps.Trigger",
+        "components": [
+          {
+            "name": "sellTokenPriceOracle",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "buyTokenPriceOracle",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "strike",
+            "type": "int256",
+            "internalType": "int256"
+          },
+          {
+            "name": "maxTimeSinceLastOracleUpdate",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "partiallyFillable",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "appData",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "orderSalt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paramsHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "error",
-    "name": "TooLate",
-    "inputs": [
-      {
-        "name": "notAfter",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
+    "name": "LimitPriceTooLow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoValidity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToSell",
+    "inputs": []
   },
   {
     "type": "error",

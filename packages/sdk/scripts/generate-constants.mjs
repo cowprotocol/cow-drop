@@ -27,44 +27,95 @@ function artifact(path) {
 }
 
 const proxy = artifact('COWShedProxy.sol/COWShedProxy.json')
-const recipes = artifact('DropRecipes.sol/DropRecipes.json')
 const executor = artifact('DropExecutor.sol/DropExecutor.json')
 const factory = artifact('COWShedExecutorFactory.sol/COWShedExecutorFactory.json')
+
+// One ABI per step contract. They are separate deployments so that each address depends only on what
+// that contract needs — see `contracts/src/steps/`. Keeping the ABIs separate here is what lets a
+// decoder resolve a step by `(target, selector)` rather than guessing.
+const guards = artifact('GuardSteps.sol/GuardSteps.json')
+const tokenOps = artifact('TokenSteps.sol/TokenSteps.json')
+const presign = artifact('PresignSteps.sol/PresignSteps.json')
+const twap = artifact('TwapSteps.sol/TwapSteps.json')
+const stopLoss = artifact('StopLossSteps.sol/StopLossSteps.json')
 
 const proxyCreationCode = proxy.bytecode.object
 if (!proxyCreationCode || proxyCreationCode === '0x') {
   throw new Error('COWShedProxy creation code is empty — the build looks incomplete')
 }
 
-// Deployment records, one JSON per chain, written by script/Deploy.s.sol.
+// Deployment records, one JSON per (generation, chain), written by script/Deploy.s.sol into
+// deployments/gen<N>/<chainId>.json.
 //
-// The four addresses are chain-independent: every input to their CREATE2 derivation is itself
-// deployed deterministically from addresses that are identical everywhere. So any record supplies
-// them all — but if several exist they must agree, and disagreeing means something in the build
-// changed between runs, which is worth failing on rather than silently picking one.
+// Generations are kept rather than replaced. Every one of these addresses is part of the CREATE2
+// preimage of every drop, so a redeploy moves every drop address — and a recipe file written against
+// an older generation has to keep resolving to the address its author funded. Past generations stay
+// deployed; this table is how the SDK still reaches them.
+//
+// Within a generation the addresses are chain-independent: every input to their CREATE2 derivation is
+// itself deployed deterministically from addresses that are identical everywhere. So any record of a
+// generation supplies them all — but if several exist they must agree, and disagreeing means something
+// in the build changed between runs, which is worth failing on rather than silently picking one.
 const deploymentsDir = join(contracts, 'deployments')
-const records = []
-for (const file of readdirSync(deploymentsDir)) {
-  if (!/^\d+\.json$/.test(file)) continue
-  records.push(JSON.parse(readFileSync(join(deploymentsDir, file), 'utf8')))
+const FIELDS = [
+  'factory',
+  'executor',
+  'guardSteps',
+  'tokenSteps',
+  'presignSteps',
+  'twapSteps',
+  'stopLossSteps',
+  'settlement',
+  'composableCow',
+  'shedImplementation',
+]
+
+const byGeneration = new Map()
+for (const dir of readdirSync(deploymentsDir)) {
+  const generation = /^gen(\d+)$/.exec(dir)
+  if (!generation) continue
+  for (const file of readdirSync(join(deploymentsDir, dir))) {
+    if (!/^\d+\.json$/.test(file)) continue
+    const record = JSON.parse(readFileSync(join(deploymentsDir, dir, file), 'utf8'))
+    if (record.generation !== Number(generation[1])) {
+      throw new Error(
+        `${dir}/${file} says generation ${record.generation} but sits in ${dir} — ` +
+          `one of the two is wrong, and guessing which would put a wrong address in the SDK`,
+      )
+    }
+    const records = byGeneration.get(record.generation) ?? []
+    records.push(record)
+    byGeneration.set(record.generation, records)
+  }
 }
-if (records.length === 0) {
+if (byGeneration.size === 0) {
   throw new Error('no deployment records — run `forge script script/Deploy.s.sol` in contracts/ first')
 }
 
-const FIELDS = ['factory', 'executor', 'recipes', 'shedImplementation']
-const addresses = Object.fromEntries(FIELDS.map((field) => [field, records[0][field]]))
+const generations = [...byGeneration.keys()].sort((a, b) => a - b)
+const latestGeneration = generations[generations.length - 1]
 
-for (const record of records.slice(1)) {
-  for (const field of FIELDS) {
-    if (record[field] !== addresses[field]) {
-      throw new Error(
-        `deployment records disagree on ${field}: ${addresses[field]} (chain ${records[0].chainId}) ` +
-          `vs ${record[field]} (chain ${record.chainId}). These addresses must be chain-independent.`,
-      )
+/** One address set per generation, having checked every record of that generation agrees. */
+const addressesByGeneration = new Map()
+for (const generation of generations) {
+  const records = byGeneration.get(generation)
+  const addresses = Object.fromEntries(FIELDS.map((field) => [field, records[0][field]]))
+  for (const record of records.slice(1)) {
+    for (const field of FIELDS) {
+      if (record[field] !== addresses[field]) {
+        throw new Error(
+          `generation ${generation} records disagree on ${field}: ` +
+            `${addresses[field]} (chain ${records[0].chainId}) vs ${record[field]} (chain ${record.chainId}). ` +
+            `These addresses must be chain-independent.`,
+        )
+      }
     }
   }
+  addressesByGeneration.set(generation, addresses)
 }
+
+const addresses = addressesByGeneration.get(latestGeneration)
+const records = byGeneration.get(latestGeneration)
 
 const banner = `// GENERATED by scripts/generate-constants.mjs — do not edit by hand.
 // Regenerate with: pnpm --filter @cowprotocol/cow-drop-sdk generate
@@ -78,7 +129,15 @@ import type { Hex } from 'viem'
 /** \`type(COWShedProxy).creationCode\`, the first half of every drop's CREATE2 init code. */
 export const PROXY_CREATION_CODE: Hex = '${proxyCreationCode}'
 
-export const DROP_RECIPES_ABI = ${JSON.stringify(recipes.abi, null, 2)} as const
+export const GUARD_STEPS_ABI = ${JSON.stringify(guards.abi, null, 2)} as const
+
+export const TOKEN_STEPS_ABI = ${JSON.stringify(tokenOps.abi, null, 2)} as const
+
+export const PRESIGN_STEPS_ABI = ${JSON.stringify(presign.abi, null, 2)} as const
+
+export const TWAP_STEPS_ABI = ${JSON.stringify(twap.abi, null, 2)} as const
+
+export const STOP_LOSS_STEPS_ABI = ${JSON.stringify(stopLoss.abi, null, 2)} as const
 
 export const DROP_EXECUTOR_ABI = ${JSON.stringify(executor.abi, null, 2)} as const
 
@@ -90,38 +149,62 @@ writeFileSync(
   join(outDir, 'deployments.ts'),
   `${banner}
 import { DROP_CHAINS, getDropChain } from '../chains.js'
-import type { DropDeployment } from '../types.js'
+import type { DropAddresses, DropDeployment } from '../types.js'
 import { PROXY_CREATION_CODE } from './artifacts.js'
 
 /**
- * The contract addresses. Identical on every chain — see \`chains.ts\` for why.
+ * The contract addresses, per generation. Identical on every chain within a generation — see
+ * \`chains.ts\` for why.
+ *
+ * A generation is one deployment of the stack. Every address here feeds the CREATE2 preimage of every
+ * drop, so a new generation means new drop addresses for the same recipe — which is why old ones are
+ * kept rather than replaced. A recipe file pinned to generation N keeps resolving to the address its
+ * author funded, forever.
+ */
+export const GENERATIONS: Record<number, DropAddresses> = {
+${generations
+  .map((generation) => {
+    const a = addressesByGeneration.get(generation)
+    return `  ${generation}: {
+${FIELDS.map((field) => `    ${field}: '${a[field]}',`).join('\n')}
+  },`
+  })
+  .join('\n')}
+}
+
+/** The generation a recipe gets when it does not ask for one. */
+export const LATEST_GENERATION = ${latestGeneration}
+
+/**
+ * The latest generation's addresses.
  * Recorded from: ${records.map((r) => `chain ${r.chainId}`).join(', ')}.
  */
-export const ADDRESSES = {
-  factory: '${addresses.factory}',
-  executor: '${addresses.executor}',
-  recipes: '${addresses.recipes}',
-  shedImplementation: '${addresses.shedImplementation}',
-} as const
+export const ADDRESSES = GENERATIONS[LATEST_GENERATION]!
 
-/** Every chain cow-drop supports, keyed by id. */
+/** Every chain cow-drop supports, keyed by id, at the latest generation. */
 export const DEPLOYMENTS: Record<number, DropDeployment> = Object.fromEntries(
-  DROP_CHAINS.map((chain) => [
-    chain.chainId,
-    { chainId: chain.chainId, ...ADDRESSES, proxyCreationCode: PROXY_CREATION_CODE },
-  ]),
+  DROP_CHAINS.map((chain) => [chain.chainId, getDeployment(chain.chainId)]),
 )
 
-export function getDeployment(chainId: number): DropDeployment {
+export function getDeployment(chainId: number, generation: number = LATEST_GENERATION): DropDeployment {
   if (!getDropChain(chainId)) {
     throw new Error(\`cow-drop does not support chain \${chainId}\`)
   }
-  return { chainId, ...ADDRESSES, proxyCreationCode: PROXY_CREATION_CODE }
+  const addresses = GENERATIONS[generation]
+  if (!addresses) {
+    // Deliberately distinct from the unsupported-chain error: this one means the recipe is newer (or
+    // older) than the SDK, and the fix is a version bump rather than a different chain.
+    throw new Error(
+      \`unknown cow-drop generation \${generation}; this SDK knows \${Object.keys(GENERATIONS).join(', ')}\`,
+    )
+  }
+  return { chainId, generation, ...addresses, proxyCreationCode: PROXY_CREATION_CODE }
 }
 `,
 )
 
 console.log(
-  `generated artifacts.ts and deployments.ts from ${records.length} record(s): ` +
+  `generated artifacts.ts and deployments.ts from ${records.length} record(s) ` +
+    `across generation(s) ${generations.join(', ')} (latest ${latestGeneration}): ` +
     `factory ${addresses.factory}, executor ${addresses.executor}`,
 )

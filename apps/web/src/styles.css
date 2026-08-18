@@ -1,7 +1,8 @@
 :root {
-  /* Sampled from the logo: its light blue is the accent, its navy the brand tone. */
+  /* Sampled from the logo: the navy it sits on, and a light tone off the cyan end of its
+     spectrum — lightened past the artwork's own cyan so links keep their contrast on the dark page. */
   --brand: #62d9fd;
-  --brand-navy: #012975;
+  --brand-navy: #000e43;
 
   --bg: #0d1016;
   --panel: #161a22;
@@ -71,12 +72,11 @@ header {
 }
 
 /* A soft navy halo so the mark sits on the page rather than floating on it.
-   The radius is a percentage matching the artwork's own corner (150/1254 = 11.96%), so it scales
-   with the element instead of clipping inside the curve — and the ring follows the shape. */
+   The artwork is a transparent silhouette, so a ring would trace a box around empty corners:
+   drop-shadow follows the basket's own outline instead. */
 .brand-mark {
   flex: 0 0 auto;
-  border-radius: 12%;
-  box-shadow: 0 0 0 1px var(--border), 0 10px 30px -14px var(--brand-navy);
+  filter: drop-shadow(0 8px 20px var(--brand-navy));
 }
 
 .brand h1 {
@@ -638,4 +638,93 @@ details.saved > summary {
   border-left: 2px solid var(--warn);
   padding-left: 0.7rem;
   color: var(--text);
+}
+
+/* --- decoded recipe steps ------------------------------------------------- */
+
+/*
+ * The step table is the funder's only safeguard, so a step the SDK cannot name has to read as a gap in
+ * what we know rather than as one more row. Same reasoning for the warnings: they are the reason the
+ * table exists, not decoration on it.
+ */
+.unknown-step {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.args {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.args > div {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: span 2;
+}
+
+.args dt {
+  color: var(--muted);
+}
+
+.args dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.step-warnings {
+  margin: 0.4rem 0 0;
+  padding-left: 1rem;
+  font-size: 0.78rem;
+  color: var(--warn);
+}
+
+/* --- custom step builder -------------------------------------------------- */
+
+.step-builder {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.step-builder label.inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.step-builder label.inline input {
+  width: auto;
+}
+
+/*
+ * The delegatecall confirmation. Boxed rather than inlined because it is the one option here that can
+ * cost the user the drop: foreign code running as the drop can rewrite the shed's admin, which is what
+ * the owner's rescue path depends on.
+ */
+.warn-box {
+  border-left: 2px solid var(--warn);
+  padding: 0.6rem 0.8rem;
+  background: rgba(232, 196, 104, 0.06);
+  font-size: 0.85rem;
+}
+
+.warn-box p {
+  margin: 0 0 0.5rem;
+}
+
+/* Name and solidity type on one line, so an argument reads as a single label. */
+.step-builder .arg-label,
+.step-builder .arg-label .hint {
+  display: inline;
+}
+
+/* A caveat inside the rescue panel, where a missed one costs money rather than confusion. */
+.warn-note {
+  border-left: 2px solid var(--warn);
+  padding-left: 0.7rem;
 }

@@ -27,8 +27,13 @@ contract MockERC20 {
         balanceOf[to] += amount;
     }
 
+    /// @dev Counted so a test can tell a skipped approval from a repeated one. The end state is the
+    ///      same either way, so the count is the only way to observe the conditional steps.
+    mapping(address => uint256) public approveCalls;
+
     function approve(address spender, uint256 amount) external returns (bool) {
         allowance[msg.sender][spender] = amount;
+        approveCalls[msg.sender] += 1;
         return true;
     }
 
@@ -107,5 +112,40 @@ contract MockWrappedNative {
 
     function deposit() external payable {
         balanceOf[msg.sender] += msg.value;
+    }
+}
+
+/// @dev A Chainlink-style feed, enough for `Oracle` and for guard reads.
+contract MockPriceFeed {
+    uint8 public decimals;
+    int256 public answer;
+    uint256 public updatedAt;
+
+    constructor(uint8 decimals_, int256 answer_) {
+        decimals = decimals_;
+        answer = answer_;
+        updatedAt = block.timestamp;
+    }
+
+    function set(int256 answer_, uint256 updatedAt_) external {
+        answer = answer_;
+        updatedAt = updatedAt_;
+    }
+
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        return (1, answer, updatedAt, updatedAt, 1);
+    }
+}
+
+/// @dev A contract with a single-word getter and one that reverts, for the generic guard.
+contract MockReadable {
+    uint256 public value;
+
+    constructor(uint256 value_) {
+        value = value_;
+    }
+
+    function boom() external pure returns (uint256) {
+        revert("nope");
     }
 }

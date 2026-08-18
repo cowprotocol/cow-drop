@@ -3,10 +3,10 @@ pragma solidity ^0.8.25;
 
 import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
-import {IComposableCow} from "cow-shed/IComposableCow.sol";
-import {IERC1271} from "cow-shed/IERC1271.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
 import {ICOWShedSetup} from "cow-shed/ICOWShedSetup.sol";
+import {IComposableCow} from "cow-shed/IComposableCow.sol";
+import {IERC1271} from "cow-shed/IERC1271.sol";
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 
 /// @title DropExecutor
@@ -137,9 +137,7 @@ contract DropExecutor is ICOWShedSetup, IERC1271 {
         if (drop.code.length == 0) {
             // The factory deploys, initializes us as the trusted executor, and calls `setup`
             // back — which is where the recipe actually runs.
-            FACTORY.initializeProxyWithSetup(
-                owner, address(this), _saltOf(setupData), address(this), setupData
-            );
+            FACTORY.initializeProxyWithSetup(owner, address(this), _saltOf(setupData), address(this), setupData);
         } else {
             // Already deployed, so the factory would skip the setup callback. Run directly:
             // this is the path for funds that arrive after the first activation.
@@ -181,10 +179,10 @@ contract DropExecutor is ICOWShedSetup, IERC1271 {
     ///
     ///      The EVM treats a call to a codeless address as a *success* returning nothing, and cow-shed's
     ///      `executeCalls` only checks that flag. So a recipe whose primitives point at an undeployed
-    ///      `DropRecipes` — a chain where it has not been deployed yet, or a stale address in a shared
-    ///      recipe file — would activate cleanly and do absolutely nothing: no order placed, funds
-    ///      untouched, and for a `once` recipe the single run spent. Silence is the worst possible
-    ///      outcome here, so it becomes a revert, which leaves the run intact.
+    ///      step contract — a chain where it has not been deployed yet, or an address from a different
+    ///      generation in a shared recipe file — would activate cleanly and do absolutely nothing: no
+    ///      order placed, funds untouched, and for a `once` recipe the single run spent. Silence is the
+    ///      worst possible outcome here, so it becomes a revert, which leaves the run intact.
     ///
     ///      Only delegatecalls are checked. A plain call to a codeless address is sometimes exactly
     ///      what is meant — paying an EOA — whereas delegatecalling nothing never is.

@@ -126,6 +126,16 @@ export function RescuePanel({
         )}
       </ul>
 
+      <p className="hint warn-note">
+        A sweep moves balances; it does not retire orders the drop has already placed. A registered
+        TWAP or stop-loss stays authorised in ComposableCoW until it is removed, and a pre-signature
+        stays valid until it expires — so an address swept mid-schedule will still trade whatever
+        arrives there next. Retiring them needs the order hashes from the activation receipt; the SDK
+        does it (<code>buildRevokeCalls</code>), but this page does not yet discover what is
+        outstanding. If this drop has a live conditional order, treat the sweep as recovering today&apos;s
+        balance rather than as closing the drop.
+      </p>
+
       <div className="grid">
         <label>
           Send recovered funds to (blank = connected account)

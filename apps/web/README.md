@@ -7,11 +7,19 @@ pnpm dev      # http://localhost:5173
 pnpm build
 ```
 
-Optional: `VITE_RPC_URL` to use your own Gnosis RPC instead of the public one.
+Optional: `VITE_RPC_URL` to use your own RPC for the default chain instead of the public one. Handy for
+pointing the page at a local fork with the stack deployed:
+
+```bash
+anvil --fork-url https://rpc.gnosischain.com --chain-id 100 &
+cd ../../contracts && forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+cd ../apps/web && VITE_RPC_URL=http://127.0.0.1:8545 pnpm dev
+```
 
 ## What the page does
 
-Six panels, top to bottom, in the order you'd actually use them:
+Eight panels, top to bottom, in the order you'd actually use them:
 
 1. **Recipe** — swap on arrival, or TWAP on arrival. The hint text under the tabs explains what
    each one needs afterwards (a posted order vs. nothing at all).
@@ -30,9 +38,19 @@ Six panels, top to bottom, in the order you'd actually use them:
    drop; the zero address leaves them in the drop for chaining.
 3. **Your drop address** — updates live as you type, with a QR code. Nothing is deployed at it yet,
    and funds sent before deployment are safe; the recipe spends them on activation.
-4. **What the address commits to** — the compiled calls and the exact `setupData` bytes. This is the
-   only place you can see what you're being asked to fund, which is why it shows raw calldata rather
-   than a friendly summary.
+4. **What the address commits to** — the decoded steps and the exact `setupData` bytes. This is the
+   only place you can see what you're being asked to fund, and since activation is permissionless and
+   unsigned, reading it *is* the safeguard — so the steps are named and their arguments decoded, via the
+   SDK's `describeRecipe`. Arguments are shown as the exact committed values, with no unit conversion: a
+   prettified amount that disagreed with the committed one by an atomic unit would be describing a
+   different drop.
+
+   A step the SDK cannot name is called out as an **unrecognised call** rather than rendered as if it
+   were understood, with a warning saying why. Three more warnings appear where they apply: a
+   delegatecall to something that is not a step contract (it can rewrite the shed's storage, including
+   the admin the rescue path depends on), a step contract invoked as a plain *call* (it would read that
+   contract's zero balance instead of the drop's), and `allowFailure` (the activation can complete
+   having skipped the step).
 5. **Status** — balance at the drop, whether it's deployed, and the activate button. Links to two
    explorers, because they answer different questions: CoW Explorer for the *orders* a drop has placed,
    the chain's own explorer for its *balances and transactions*. It warns when the contracts aren't
@@ -48,7 +66,13 @@ Six panels, top to bottom, in the order you'd actually use them:
    (deploy-without-setup if the drop doesn't exist yet, direct sweep if it does), lets you pick which
    balances to recover and where to send them, and offers "deploy shed only" for taking manual
    control instead. Owner-only, so it tells you when the connected account isn't the owner.
-7. **Recipe file** — import and export. Export, reload the page, import, and the same address comes
+7. **Add a custom step** — an ABI-driven builder for calling something the recipe types do not cover.
+   Paste human-readable signatures or a JSON ABI, pick a function, fill the arguments, and it appends a
+   `raw` step to the recipe below. Two limits are stated in the panel rather than discovered: every
+   argument is a **literal** committed into the address, so this cannot express anything that depends on
+   the amount that arrives; and `delegatecall` is off by default and needs a second, explicit
+   confirmation, because foreign code running as the drop can rewrite the shed's admin.
+8. **Recipe file** — import and export. Export, reload the page, import, and the same address comes
    back, because the address is derived from the recipe rather than stored anywhere.
 
 ## Activation
@@ -72,7 +96,7 @@ takes over.
 | `src/lib/tokenList.ts` | Loads the token lists cowswap enables by default, per chain, and merges them by priority. |
 | `src/lib/tokenLogo.ts` | The logo fallback cascade, mirroring cowswap's `getTokenLogoUrls`. |
 | `src/lib/tokens.ts` | Offline fallback list (symbols and decimals verified on-chain). |
-| `src/components/` | Address panel with QR, the committed-bytes table, the rescue panel, and the JSON import/export. |
+| `src/components/` | Address panel with QR, the decoded step table, the custom-step builder, the rescue panel, and the JSON import/export. |
 
 ## Never lose a recipe
 

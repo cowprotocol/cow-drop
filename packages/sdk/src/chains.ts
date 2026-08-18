@@ -2,7 +2,7 @@
  * Which chains cow-drop can work on, and with which order paths.
  *
  * Drop addresses are **chain-independent**: every input to the CREATE2 derivation — the executor
- * factory, the shed implementation, `DropExecutor`, `DropRecipes` — is itself CREATE2-deployed with a
+ * factory, the shed implementation, `DropExecutor`, the step contracts — is itself CREATE2-deployed with a
  * zero salt from addresses that are the same everywhere, so the same recipe resolves to the same
  * address on every chain. Verified by running the deploy script against Gnosis and mainnet forks and
  * diffing the output. Only *whether the contracts are deployed there yet* differs, which is a runtime

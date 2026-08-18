@@ -60,15 +60,21 @@ A *template* is a function; a *recipe* is what it returns and what the address c
 distinction is useful in code and not worth making a user learn, so the UI says "recipe" throughout.
 Both templates default `receiver` to the `owner` — proceeds in your wallet rather than piling up in
 the drop. Pass the zero address to leave them in the drop instead.
-| `steps.*` | Build individual steps by hand: `presignSellAll`, `twapFromBalance`, `requireMinBalance`, `requireTimeWindow`, `wrapNative`, `approveMax`, and `raw` for anything else. |
+| `steps.*` | Build individual steps by hand: `presignSellAll`, `presignSellAllAtOracle`, `twapFromBalance`, `stopLossFromBalance`, `requireCallResult`, `requireMinBalance`, `requireTimeWindow`, `wrapNative`, `approveMax`, `approveBalance`, `sweep`, and `raw` for anything else. |
+| `describeRecipe(setupData, deployment)` | The inverse: committed bytes → named steps, decoded arguments, and warnings. See below. |
+
+Each `steps.*` builder takes only the deployment field naming the contract that hosts it —
+`Pick<DropDeployment, 'guardSteps'>` for a guard, and so on. The step contracts are four separate
+deployments because a step's target is part of the drop address, so asking a guard for
+`deployment.twapSteps` would be a lie about what moves that guard's address.
 
 ### Addresses and encoding
 
 | | |
 |---|---|
 | `deriveDropAddress({ deployment, owner, setupData })` | The CREATE2 derivation, off-chain. This is why the UI can quote an address as you type. |
-| `encodeRecipe(recipe)` / `decodeRecipe(setupData)` | The abi encoding the address actually commits to. |
-| `getDeployment(chainId)` | The four addresses that define what a drop address is on that chain. Throws for unsupported chains. |
+| `encodeRecipe(recipe)` / `decodeRecipe(setupData)` | The abi encoding the address actually commits to. Structural only — for meaning, use `describeRecipe`. |
+| `getDeployment(chainId, generation?)` | The addresses that define what a drop address is. `generation` defaults to `LATEST_GENERATION`; `GENERATIONS` holds them all. Throws for an unsupported chain, and distinctly for an unknown generation. |
 
 ### Transactions and orders
 
@@ -89,6 +95,13 @@ For when a drop's recipe can never succeed — funds arrived late, or a conditio
 | `buildOwnerSweepTx(…)` | Drop deployed: `trustedExecuteHooks`, since the owner is the shed's admin. |
 | `buildDeployOnlyTx(…)` | Deploy the shed, skip the recipe, do nothing else — then operate it as a normal cow-shed. |
 | `buildSweepCalls(…)` | The `Call[]` those take: one `sweep` per token, zero address for native. |
+| `buildRevokeCalls(…)` | Retire what the drop already placed: `ComposableCoW.remove` per conditional order, `setPreSignature(uid, false)` per pre-signed one. Pass as `revoke` to the builders above. |
+| `parseConditionalOrdersCreated(logs, composableCow)` | The order hashes a rescue needs, from the activation receipt. They cannot be computed beforehand — the hash covers the amount that arrived. |
+
+**A sweep alone does not end a drop's trading.** A registered conditional order stays authorised until
+removed and a pre-signature stays valid until it expires, so an address swept mid-TWAP will still trade
+whatever lands there next. Keep the hashes from the activation receipt alongside the recipe file; they
+are the only way to retire the order later.
 
 All owner-only, none needing a signature. Prefer designing the recipe so rescue is unnecessary — a
 `requireTimeWindow` with a `notAfter`, or a deadline branch that lets the setup succeed trivially.
@@ -126,12 +139,46 @@ one-shot recipe that a bridge might fund in tranches; without it, the first tran
 whole schedule. Ordering affects what a guard measures, not whether it binds — the recipe is atomic,
 so a guard anywhere in the list unwinds the whole activation.
 
+## Reading a recipe back
+
+`describeRecipe(setupData, deployment)` turns committed bytes into named steps with decoded arguments.
+It exists because activation is permissionless and unsigned: the *only* safeguard for someone about to
+send money to a drop is re-deriving the address from a recipe they understand, and undecoded calldata
+reduces that to trusting a hex blob.
+
+So the output worth reading is `warnings`, per step. A step it cannot name is not an error — `raw`
+exists on purpose — but it has to be reported as a gap rather than rendered as though understood:
+
+| warning | why |
+|---|---|
+| target is not a step contract | its meaning cannot be shown, so a funder is trusting the bytes |
+| delegatecall to a non-step contract | runs foreign code *as the drop*: it can move any balance and rewrite the shed's storage, including the admin the owner's rescue depends on |
+| step contract as a plain call | `address(this)` would be the step contract, whose balance is always zero, so the step reverts or quietly does nothing |
+| `allowFailure` | the activation can complete having skipped the step |
+
+Targets are resolved against the generation you pass. A step pointing at a *different* generation's
+contracts comes back unknown, which is correct — those addresses host different code, and naming the
+step from this generation's ABI could describe it wrongly.
+
+## Generations, and why a recipe file pins one
+
+`DropRecipeJson.generation` says which deployment of the contracts a file was compiled against, and it
+is what makes the file reproducible. Every address in a `DropDeployment` feeds the CREATE2 preimage of
+the drop, so compiling the same file against a later generation yields a *different* address — and since
+a drop is funded before it exists and the file is the only way back to the funds, that is the difference
+between recovering them and not.
+
+It defaults to **1**, not to `LATEST_GENERATION`. A file written before the field existed was compiled
+against generation 1, and defaulting to the latest would silently repoint it. Everything this package
+exports pins the field explicitly.
+
 ## Constants are generated, not written
 
 `src/generated/` comes from the foundry build via `scripts/generate-constants.mjs`. The shed
 implementation address and the proxy creation code both feed the CREATE2 init code, so a stale
 hand-copied value would mean quoting addresses the contracts will never deploy to. Run `pnpm generate`
-after any contract change.
+after any contract change. It reads every `contracts/deployments/gen*/` directory, so past generations
+survive a redeploy rather than being replaced.
 
 ## Tests
 

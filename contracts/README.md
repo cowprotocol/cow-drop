@@ -1,10 +1,29 @@
 # cow-drop contracts
 
-Three contracts. One of them carries the entire security argument.
+`DropExecutor`, five step contracts, four shared pieces. `DropExecutor` carries the entire security
+argument; the split of the rest is an address-stability argument, explained below.
+
+One directory per category, and the categories are about **addresses**, because a contract's address is
+what ends up committed into every drop that reaches it:
+
+```
+src/DropExecutor.sol   has an address, and is not a step: every drop names it as both
+                       trustedExecutor and setupTarget
+src/steps/             each has an address, named by a recipe as a step's target
+src/lib/               code with no address of its own: inlined libraries, and the abstract
+                       base the ComposableCoW steps inherit. Never deployed, so nothing
+                       here can ever move a drop address
+src/interfaces/        the slices of external protocols the steps call
+```
+
+The names inside `steps/` and `lib/` carry no `Drop` prefix: the directory already says what they are,
+and repeating it in the folder, the prefix and the `Steps` suffix says the same thing three times. Only
+`DropExecutor` keeps it, being at the root and the one name written into the verification instructions
+below.
 
 ```bash
 git submodule update --init --recursive   # cow-shed has its own submodules
-forge test                                # 38 hermetic tests
+forge test                                # 66 hermetic tests
 forge fmt
 ```
 
@@ -47,12 +66,12 @@ owner-only. Before deployment: `COWShedExecutorFactory.initializeProxyWithoutSet
 deploys at the committed address, skips the setup, and runs caller-supplied calls as the shed in the
 same transaction — same transaction because the committed executor is trusted the moment the shed
 exists. After deployment: nothing special is needed, since `trustedExecuteHooks` is `onlyTrustedRole`
-= admin *or* trusted executor, and the owner is the admin. `DropRecipes.sweep` is the primitive both
+= admin *or* trusted executor, and the owner is the admin. `TokenSteps.sweep` is the primitive both
 use. See the `test_rescue_*` tests.
 
 **Why a delegatecall to nothing is rejected.** The EVM treats a call to a codeless address as a
 *success* returning nothing, and cow-shed's `executeCalls` only checks that flag. So a recipe whose
-primitives point at an undeployed `DropRecipes` would activate cleanly and do nothing at all — no order,
+primitives point at an undeployed step contract would activate cleanly and do nothing at all — no order,
 funds untouched, and a `once` recipe's single run spent. `_requireDelegateTargetsHaveCode` turns that
 silence into a revert, which leaves the run intact. Plain calls are left alone: paying an EOA is
 legitimate, delegatecalling nothing never is.
@@ -62,30 +81,109 @@ on funds that arrive later — which is what makes a reusable deposit address wo
 one-shot recipes; `DropExecutor` enforces it with a per-drop flag, written before the calls so a
 revert rolls it back.
 
-### `DropRecipes.sol` — the steps a recipe is built from
+### `src/steps/` — the steps a recipe is built from
 
-**Every function here is delegatecalled by the drop** (`Call.isDelegateCall = true`). That's what
-makes `address(this)` the drop, so `balanceOf(address(this))` is the amount that *actually arrived*.
-It's the reason a drop can commit to "split whatever lands here into 12 parts" without committing to
-a number nobody could have known when the address was computed.
+**Every function in these contracts is delegatecalled by the drop** (`Call.isDelegateCall = true`).
+That's what makes `address(this)` the drop, so `balanceOf(address(this))` is the amount that *actually
+arrived*. It's the reason a drop can commit to "split whatever lands here into 12 parts" without
+committing to a number nobody could have known when the address was computed.
 
 Immutables are readable under delegatecall (they live in the code, not storage), which is why the
-deployment addresses work. Storage wouldn't, and this contract deliberately has none.
+deployment addresses work. Storage wouldn't, and none of these contracts has any.
 
-| | |
-|---|---|
-| `presignSellAll(…)` | Sell the whole balance as one pre-signed CoW order. Emits `DropOrderPlaced` so an off-chain poster can submit it. |
-| `twapFromBalance(…)` | Split the whole balance into `n` parts and register a TWAP with ComposableCoW. |
-| `requireMinBalance(token, min)` | Guard: revert unless enough has arrived. `token = address(0)` for native. |
-| `requireTimeWindow(from, to)` | Guard: revert outside an absolute window. `0` means unbounded. |
-| `wrapNative(wrapped)` | Wrap the whole native balance, so xDAI/ETH-funded drops can trade. |
-| `approveMax(token, spender)` | For the generic step builder; the order primitives handle their own allowances. |
-| `sweep(token, to)` | Rescue: send the whole balance out. `token = address(0)` for native. An empty balance is a no-op, not a revert. |
+**Why four contracts rather than one.** A step's target address sits inside `setupData`, so it is part
+of the CREATE2 preimage of every drop that reaches it — and a contract's own address covers its
+constructor arguments as well as its code. One contract holding everything therefore couples things
+that have nothing to do with each other: while `sweep` shared a contract with the TWAP step, the
+address of the *rescue* primitive moved every time the TWAP handler address did. Splitting by what each
+contract actually depends on decouples them, and the two that depend on nothing get addresses that can
+only move if their own code changes.
+
+| contract | constructor | steps |
+|---|---|---|
+| `GuardSteps` | — | `requireMinBalance(token, min)`, `requireTimeWindow(from, to)`, `requireCallResult(…)` |
+| `TokenSteps` | — | `wrapNative(wrapped)`, `sweep(token, to)`, `approveMax(token, spender)`, `approveBalance(token, spender)` |
+| `PresignSteps` | settlement, vault relayer | `presignSellAll(…)`, `presignSellAllAtOracle(…)` |
+| `TwapSteps` | vault relayer, ComposableCoW, TWAP handler, timestamp factory | `twapFromBalance(…)` |
+| `StopLossSteps` | vault relayer, ComposableCoW, StopLoss handler | `stopLossFromBalance(…)` |
+
+- `requireMinBalance` / `requireTimeWindow` — revert unless enough has arrived, or outside an absolute
+  window. `token = address(0)` guards the native balance; a `0` bound means unbounded.
+- `wrapNative` — wrap the whole native balance, so xDAI/ETH-funded drops can trade.
+- `approveMax` / `approveBalance` — allow a spender everything, or exactly what arrived. Both are
+  *conditional*: they read the allowance first and skip the write when it already covers the amount,
+  which matters because a reusable drop re-runs its recipe on every arrival and an allowance survives
+  between runs. Both are upward-only, so a wider allowance already in place is never narrowed.
+
+  An allowance for a **fixed** amount needs no step at all — `token.approve(spender, n)` is an ordinary
+  call and belongs in `raw`. It is also usually wrong in a recipe: the number is committed before
+  anything is funded, so it will not match what arrives. `approveBalance` is the one that has to be a
+  step, because "the amount that arrived" is not a literal.
+- `sweep` — rescue: send the whole balance out. `token = address(0)` for native. An empty balance is a
+  no-op, not a revert, so a rescue naming five tokens moves whatever it finds.
+- `presignSellAll` — sell the whole balance as one pre-signed CoW order. Emits `DropOrderPlaced` so an
+  off-chain poster can submit it.
+- `presignSellAllAtOracle` — the same, but the limit is `max(oracle-derived, committed floor)`. The
+  floor is not optional and is the whole point: activation is permissionless, so an activator picks the
+  moment and therefore the oracle reading. Letting the oracle only *improve* on a committed number means
+  the worst they can do is hand you the price you already agreed to.
+- `requireCallResult` — the general-purpose guard: revert unless a read from another contract satisfies
+  a comparison. A `staticcall`, so the worst a malformed one can do is revert or pass wrongly, never
+  move a balance — which is why the generic *write* step it resembles does not exist. Note it is a
+  **refusal, not a trigger**: evaluated once at activation, with nothing watching for the condition to
+  turn true. "Sell when the price crosses X" is `stopLossFromBalance`, where the watch tower polls.
+- `twapFromBalance` — split the whole balance into `n` parts and register a TWAP with ComposableCoW.
+- `stopLossFromBalance` — register a stop-loss over the whole balance: composable-cow's `StopLoss`
+  handler sells it when `sellTokenPrice / buyTokenPrice` falls to or below `strike`, both prices read
+  from Chainlink-style feeds and normalised to 18 decimals. The two feeds must quote the same currency,
+  which is not checkable on-chain. `strike` decides *when* to sell; the separate limit price decides how
+  bad a fill is refused.
+
+  It resolves two things a recipe cannot commit to, not one: the amount, and the **deadline**.
+  `StopLoss` takes an absolute `uint32 validTo`, so committing one would start the clock when the
+  address was *computed* — the step takes a duration and resolves it at activation instead, the same
+  way `presignSellAll` does and the counterpart of TWAP's `t0 = 0` cabinet read.
+
+A recipe is free to mix targets; nothing in `DropExecutor` restricts it to one. The `_amountFromBalance`
+and `_register` internals live in `lib/ComposableBase.sol`, which is what a second handler is built
+from — see its notes on the two requirements a handler has to meet (it must implement the generator
+side, not just `verify`, and it must ignore `sender`).
 
 Events emitted here come *from the drop*, since that's `address(this)` under delegatecall — which is
 what lets a poster filter `DropOrderPlaced` by drop address.
 
-### `DropOrders.sol` — order plumbing
+### `lib/ComposableBase.sol` — the shared half of a ComposableCoW step
+
+Abstract, so it has no address. **One step contract per handler**, because a handler needs its own typed
+function to build its own `staticInput` — and a new function changes the contract's bytecode, which
+changes its address, which changes every drop address that named the old one. Separate contracts keep
+that from happening to handlers already in use.
+
+That leaves the shared half needing a home which is not an address. It cannot be a library: `_register`
+reads `COMPOSABLE_COW`, and `Library cannot have non-constant state variables` is a compiler error, so a
+library would have to thread the address through every call. An abstract contract holds it and is never
+deployed, and immutables stay readable under delegatecall because they live in the *concrete* contract's
+code.
+
+`_amountFromBalance(sellToken, divisor)` reads what arrived and approves the relayer — `divisor` is `n`
+for an n-part schedule, `1` for a single-shot handler. `_register` picks `createWithContext` when given a
+value factory and plain `create` when not, since a handler with no start-time field would otherwise seed
+a cabinet entry nothing reads.
+
+Note what does *not* need any of this: `TradeAboveThreshold` reads the owner's balance itself, so its
+`staticInput` carries no amount and registering it is an ordinary `raw` call to ComposableCoW. A step
+contract earns its place exactly when the amount has to be resolved at activation.
+
+### `lib/` — the rest, shared without an address
+
+`Allowance` is a library of `internal` functions, so it is inlined into each caller and never
+deployed. Its two entry points differ in what they *grant*, not just what they test: `ensureMax` writes
+an unlimited allowance when the current one is short (what the order steps want, so a later top-up needs
+no fresh approval), while `ensureAtLeast` writes exactly the amount asked for. That is the point: a deployed library would need its own address, and every address a step
+reaches is committed into the drop address. `NothingToSell` lives at file scope in `lib/Errors.sol` so
+every step contract raises the same selector for the commonest failure.
+
+### `lib/Orders.sol` — order plumbing
 
 Order UID packing (`digest ++ owner ++ validTo`), the `sell`/`erc20` flag constants, and exact
 integer limit-price arithmetic. Order *hashing* is not reimplemented — `cow-shed/LibCowOrder.sol`
@@ -127,8 +225,19 @@ addresses cow-shed#79 records as live on Gnosis, and a CREATE2 address is derive
 | file | what it covers |
 |---|---|
 | `DropExecutor.t.sol` | Derivation, activation, `once` semantics, recovery, and the attacks: forged recipes, wrong owner, foreign trusted executor, a salt disagreeing with the recipe, truncated `setupData`, direct `trustedExecuteHooks`. |
-| `DropRecipes.t.sol` | Each primitive, run the way it really runs — delegatecalled from inside a drop by an activation nobody signed. |
+| `steps/StepsBase.sol` | The shared harness: a real factory, a real `DropExecutor`, all four step contracts and the mocks. Every step test runs its step delegatecalled from inside a drop by an activation nobody signed — calling a step contract directly would read *its* balance, which is always zero. |
+| `steps/GuardSteps.t.sol` | The guards, including a one-shot recipe surviving a premature activation, and a guard placed *last* still binding because the activation is atomic. |
+| `steps/TokenSteps.t.sol` | `wrapNative`, and a recipe spanning two step contracts. |
+| `steps/PresignSteps.t.sol` | Pre-signing an arbitrary arrived amount, and that `DropOrderPlaced` is emitted by the drop. |
+| `steps/TwapSteps.t.sol` | The TWAP step, plus a hermetic assertion that `TwapData` still encodes as the ten words the deployed handler decodes. |
+| `steps/StopLossSteps.t.sol` | The stop-loss step, the deadline running from activation rather than authoring, and a hermetic assertion on the thirteen-word `StopLossData` layout. |
+| `steps/ComposableBase.t.sol` | The half of the base `TwapSteps` does not reach: `divisor == 1`, and that a zero value factory routes to plain `create`. Uses a throwaway second handler defined in the test, so the branch a future `StopLoss` step will take does not ship unexercised. |
 | `DropGnosisFork.t.sol` | Against the real Gnosis deployments. Skipped unless `GNOSIS_RPC_URL` is set, so the default suite is hermetic. |
+
+`test_fork_stopLossIsTradeableOnceTheStrikeIsCrossed` does the same against the real `StopLoss` handler
+with only the price feeds mocked — which is what makes the trigger controllable while still proving the
+deployed handler decodes our hand-copied struct field-for-field. It then moves the sell token up and
+asserts the order stops being tradeable, which pins the direction of the strike comparison.
 
 The load-bearing fork test is `test_fork_twapIsTradeableAndTheDropValidatesTheSignature`: it does
 exactly what the watch tower does — `getTradeableOrderWithSignature`, then hand the signature back to
@@ -143,6 +252,62 @@ GNOSIS_RPC_URL=https://rpc.gnosischain.com forge test --match-path 'test/DropGno
 
 | | |
 |---|---|
-| `script/Deploy.s.sol` | Deploys the stack. Idempotent: skips anything already at its deterministic address. Writes `deployments/<chainId>.json`, which the SDK generates its constants from. |
+| `script/Deploy.s.sol` | Deploys the stack. Idempotent: skips anything already at its deterministic address. Writes `deployments/gen<N>/<chainId>.json`, which the SDK generates its constants from. |
 | `script/Fixtures.s.sol` | Regenerates `deployments/derivation-fixtures.json`, the ground truth the SDK's derivation is tested against. |
 | `script/DropConfig.sol` | Per-chain addresses of the CoW and composable-cow contracts we build on. |
+
+## Generations
+
+`GENERATION` in `script/Deploy.s.sol` names one deployment of the stack, and each one writes its own
+`deployments/gen<N>/<chainId>.json`. Past directories are never touched.
+
+This is not bookkeeping. Every address the script prints is part of the CREATE2 preimage of every drop,
+so changing the code, the constructor arguments or a compiler setting moves **every** drop address. A
+recipe file therefore cannot mean anything on its own — it has to say which generation it was compiled
+against, which is what `DropRecipeJson.generation` is for, and why it defaults to 1 rather than to the
+latest. The contracts of an old generation stay deployed, so an old file keeps resolving to the address
+its author funded.
+
+Bump it whenever any input to an address changes, and let `pnpm --filter @cowprotocol/cow-drop-sdk
+generate` pick the new directory up — it reads every `gen*/` and emits them all as `GENERATIONS`.
+
+## Verifying
+
+`--verify` on the deploy script covers Etherscan-family explorers, and all four addresses are verified
+on Gnosisscan. Sourcify is the one worth checking separately, because it is what Foundry's own trace
+decoding, Otterscan and several simulators read — a contract missing there shows up as a bare address
+in a `cast run` trace even though the block explorer renders it fine.
+
+**`forge verify-contract --verifier sourcify` cannot be trusted right now.** Sourcify's API v1 is in a
+scheduled brownout until 2027-01-08, forge (1.5.1) still probes v1 to decide whether a contract is
+already verified, and it reads the brownout error as "already verified. Skipping verification" — so it
+reports success without submitting anything. Check with the v2 API instead:
+
+```sh
+curl -s https://sourcify.dev/server/v2/contract/100/0xB61071638BE341F8959492838899907FDA1dA817 | jq .match
+```
+
+To submit, POST the standard JSON input to v2 directly. `forge` still generates that input correctly:
+
+```sh
+forge verify-contract --show-standard-json-input \
+  0xB61071638BE341F8959492838899907FDA1dA817 src/DropExecutor.sol:DropExecutor > executor.stdjson
+
+jq -n --slurpfile std executor.stdjson '{
+  stdJsonInput: $std[0],
+  compilerVersion: "0.8.30+commit.73712a01",
+  contractIdentifier: "src/DropExecutor.sol:DropExecutor"
+}' | curl -s -X POST -H 'content-type: application/json' --data @- \
+  https://sourcify.dev/server/v2/verify/100/0xB61071638BE341F8959492838899907FDA1dA817
+```
+
+That returns a `verificationId`; poll `GET /v2/verify/<verificationId>` until it completes. The other
+two identifiers are `lib/cow-shed/src/COWShedExecutorFactory.sol:COWShedExecutorFactory` and
+`lib/cow-shed/src/COWShedWithExecutorSigner.sol:COWShedWithExecutorSigner` — both compile from the
+pinned submodule under this crate's settings, so no separate build is needed.
+
+Note that `bytecode_hash = "none"` and `cbor_metadata = false` mean there is no metadata hash to match
+on, so a verification lands as `match` rather than `exact_match`. That is expected here, not a failure.
+
+A drop address itself is never verified, and never can be before it is used: it has no code until
+someone activates it. An empty `eth_getCode` there means "not activated yet", not "unverified".

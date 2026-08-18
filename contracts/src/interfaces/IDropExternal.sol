@@ -6,6 +6,7 @@ import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
 /// @dev The slice of ERC20 the recipe primitives need.
 interface IERC20Like {
     function balanceOf(address account) external view returns (uint256);
+    function decimals() external view returns (uint8);
     function allowance(address owner, address spender) external view returns (uint256);
     function approve(address spender, uint256 amount) external returns (bool);
 }
@@ -39,4 +40,13 @@ interface IComposableCowLike {
 /// @dev Wrapped native token (WETH / WXDAI), so native-funded drops can trade.
 interface IWrappedNative {
     function deposit() external payable;
+}
+
+/// @dev Chainlink's `AggregatorV3Interface`, narrowed to what a price-reading step needs.
+interface IPriceFeedLike {
+    function decimals() external view returns (uint8);
+    function latestRoundData()
+        external
+        view
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
 }

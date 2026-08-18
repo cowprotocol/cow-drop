@@ -4,14 +4,16 @@ pragma solidity ^0.8.25;
 import {Test} from "forge-std/Test.sol";
 
 import {DropExecutor} from "src/DropExecutor.sol";
-import {DropOrders} from "src/DropOrders.sol";
-import {DropRecipes} from "src/DropRecipes.sol";
 import {IComposableCowLike, IERC20Like, ISettlementLike} from "src/interfaces/IDropExternal.sol";
+import {Orders} from "src/lib/Orders.sol";
+import {PresignSteps} from "src/steps/PresignSteps.sol";
+import {StopLossSteps} from "src/steps/StopLossSteps.sol";
+import {TwapSteps} from "src/steps/TwapSteps.sol";
 
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
+import {Call} from "cow-shed/ICOWAuthHook.sol";
 import {IComposableCow} from "cow-shed/IComposableCow.sol";
 import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
-import {Call} from "cow-shed/ICOWAuthHook.sol";
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
@@ -42,6 +44,7 @@ contract DropGnosisForkTest is Test {
     address internal constant COMPOSABLE_COW = 0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74;
     address internal constant TWAP_HANDLER = 0x6cF1e9cA41f7611dEf408122793c358a3d11E5a5;
     address internal constant TIMESTAMP_FACTORY = 0x52eD56Da04309Aca4c3FECC595298d80C2f16BAc;
+    address internal constant STOP_LOSS_HANDLER = 0x412c36e5011CD2517016D243a2dfB37f73A242E7;
     address internal constant SETTLEMENT = 0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
     address internal constant VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
 
@@ -49,13 +52,19 @@ contract DropGnosisForkTest is Test {
     address internal constant EXECUTOR_FACTORY = 0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99;
 
     address internal constant WXDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
+
+    /// @dev Price feeds are mocked, so any address will do — these just need to be distinct.
+    address internal constant SELL_ORACLE = address(0x0FEE01);
+    address internal constant BUY_ORACLE = address(0x0FEE02);
     address internal constant COW = 0x177127622c4A00F3d409B75571e12cB3c8973d3c;
 
     bytes4 internal constant MAGIC_VALUE_1271 = 0x1626ba7e;
 
     COWShedExecutorFactory internal factory;
     DropExecutor internal executor;
-    DropRecipes internal recipes;
+    PresignSteps internal presign;
+    TwapSteps internal twapSteps;
+    StopLossSteps internal stopLossSteps;
 
     address internal owner = makeAddr("owner");
     address internal keeper = makeAddr("keeper");
@@ -73,19 +82,14 @@ contract DropGnosisForkTest is Test {
         // deployed, so this test exercises the same bytecode production drops will use.
         factory = COWShedExecutorFactory(EXECUTOR_FACTORY);
         executor = new DropExecutor(factory, IComposableCow(COMPOSABLE_COW));
-        recipes = new DropRecipes(
-            ISettlementLike(SETTLEMENT),
-            VAULT_RELAYER,
-            IComposableCowLike(COMPOSABLE_COW),
-            TWAP_HANDLER,
-            TIMESTAMP_FACTORY
-        );
+        presign = new PresignSteps(ISettlementLike(SETTLEMENT), VAULT_RELAYER);
+        stopLossSteps = new StopLossSteps(VAULT_RELAYER, IComposableCowLike(COMPOSABLE_COW), STOP_LOSS_HANDLER);
+        twapSteps = new TwapSteps(VAULT_RELAYER, IComposableCowLike(COMPOSABLE_COW), TWAP_HANDLER, TIMESTAMP_FACTORY);
     }
 
-    function _recipe(bytes32 label, bytes memory callData) internal view returns (bytes memory) {
+    function _recipe(bytes32 label, address target, bytes memory callData) internal pure returns (bytes memory) {
         Call[] memory calls = new Call[](1);
-        calls[0] =
-            Call({target: address(recipes), value: 0, callData: callData, allowFailure: false, isDelegateCall: true});
+        calls[0] = Call({target: target, value: 0, callData: callData, allowFailure: false, isDelegateCall: true});
         return abi.encode(DropExecutor.Recipe({label: label, salt: bytes32(0), once: false, calls: calls}));
     }
 
@@ -94,7 +98,8 @@ contract DropGnosisForkTest is Test {
     function test_fork_presignedOrderIsAcceptedByTheRealSettlement() external {
         bytes memory recipe = _recipe(
             "presign",
-            abi.encodeCall(DropRecipes.presignSellAll, (WXDAI, COW, recipient, 1, 1000, 30 minutes, bytes32(0)))
+            address(presign),
+            abi.encodeCall(PresignSteps.presignSellAll, (WXDAI, COW, recipient, 1, 1000, 30 minutes, bytes32(0)))
         );
 
         address drop = executor.dropOf(owner, recipe);
@@ -112,20 +117,18 @@ contract DropGnosisForkTest is Test {
             validTo: uint32(block.timestamp + 30 minutes),
             appData: bytes32(0),
             feeAmount: 0,
-            kind: DropOrders.KIND_SELL,
+            kind: Orders.KIND_SELL,
             partiallyFillable: false,
-            sellTokenBalance: DropOrders.BALANCE_ERC20,
-            buyTokenBalance: DropOrders.BALANCE_ERC20
+            sellTokenBalance: Orders.BALANCE_ERC20,
+            buyTokenBalance: Orders.BALANCE_ERC20
         });
         bytes memory uid =
-            DropOrders.packUid(LibCowOrder.hash(order, ISettlementLike(SETTLEMENT).domainSeparator()), drop, order.validTo);
+            Orders.packUid(LibCowOrder.hash(order, ISettlementLike(SETTLEMENT).domainSeparator()), drop, order.validTo);
 
         // The real GPv2Settlement only records a pre-signature if the caller is the order's owner,
         // so this passing proves the drop signed as itself.
         assertGt(ISettlementLike(SETTLEMENT).preSignature(uid), 0, "settlement did not record the pre-signature");
-        assertEq(
-            IERC20Like(WXDAI).allowance(drop, VAULT_RELAYER), type(uint256).max, "vault relayer allowance not set"
-        );
+        assertEq(IERC20Like(WXDAI).allowance(drop, VAULT_RELAYER), type(uint256).max, "vault relayer allowance not set");
     }
 
     // --- path C against the real ComposableCoW + TWAP handler --------------------------------
@@ -137,7 +140,11 @@ contract DropGnosisForkTest is Test {
     function test_fork_twapIsTradeableAndTheDropValidatesTheSignature() external {
         uint256 n = 12;
         bytes memory recipe = _recipe(
-            "twap", abi.encodeCall(DropRecipes.twapFromBalance, (WXDAI, COW, recipient, n, 1 hours, 0, 1, 1000, bytes32(0), bytes32(0)))
+            "twap",
+            address(twapSteps),
+            abi.encodeCall(
+                TwapSteps.twapFromBalance, (WXDAI, COW, recipient, n, 1 hours, 0, 1, 1000, bytes32(0), bytes32(0))
+            )
         );
 
         address drop = executor.dropOf(owner, recipe);
@@ -146,7 +153,7 @@ contract DropGnosisForkTest is Test {
         vm.prank(keeper);
         executor.activate(owner, recipe);
 
-        DropRecipes.TwapData memory twap = DropRecipes.TwapData({
+        TwapSteps.TwapData memory twap = TwapSteps.TwapData({
             sellToken: WXDAI,
             buyToken: COW,
             receiver: recipient,
@@ -159,9 +166,7 @@ contract DropGnosisForkTest is Test {
             appData: bytes32(0)
         });
         IConditionalOrder.ConditionalOrderParams memory params = IConditionalOrder.ConditionalOrderParams({
-            handler: IConditionalOrder(TWAP_HANDLER),
-            salt: bytes32(0),
-            staticInput: abi.encode(twap)
+            handler: IConditionalOrder(TWAP_HANDLER), salt: bytes32(0), staticInput: abi.encode(twap)
         });
         bytes32 paramsHash = keccak256(abi.encode(params));
 
@@ -189,6 +194,99 @@ contract DropGnosisForkTest is Test {
             IERC1271(drop).isValidSignature(digest, signature),
             MAGIC_VALUE_1271,
             "the drop did not validate its own conditional order"
+        );
+    }
+
+    /// @notice The same end-to-end proof for the stop-loss step, against the real deployed handler.
+    ///
+    /// @dev The oracles are mocked, everything else is real: the live `ComposableCoW`, the live
+    ///      `StopLoss` handler at its canonical address, and a drop that has to answer ERC-1271 for it.
+    ///      Mocking only the price feeds is what makes the *trigger* controllable while still proving
+    ///      the thing that actually matters — that the deployed handler decodes our hand-copied
+    ///      `StopLossData` field-for-field. A layout error would surface here as a nonsense order or a
+    ///      revert, not as a passing test.
+    function test_fork_stopLossIsTradeableOnceTheStrikeIsCrossed() external {
+        uint256 validity = 7 days;
+        StopLossSteps.Trigger memory trigger = StopLossSteps.Trigger({
+            sellTokenPriceOracle: SELL_ORACLE,
+            buyTokenPriceOracle: BUY_ORACLE,
+            // Fires when sellPrice/buyPrice <= strike. The feeds below sit under this.
+            strike: 2e18,
+            maxTimeSinceLastOracleUpdate: 1 hours
+        });
+
+        bytes memory recipe = _recipe(
+            "stoploss",
+            address(stopLossSteps),
+            abi.encodeCall(
+                StopLossSteps.stopLossFromBalance,
+                (WXDAI, COW, recipient, 1, 1000, validity, trigger, false, bytes32(0), bytes32(0))
+            )
+        );
+
+        address drop = executor.dropOf(owner, recipe);
+        deal(WXDAI, drop, 100e18);
+
+        // Both feeds 8-decimal, same quote currency, fresh. Rate = 1e8/1e8 * 1e18 = 1e18 <= 2e18.
+        _mockFeed(SELL_ORACLE, 1e8);
+        _mockFeed(BUY_ORACLE, 1e8);
+
+        vm.prank(keeper);
+        executor.activate(owner, recipe);
+
+        StopLossSteps.StopLossData memory data = StopLossSteps.StopLossData({
+            sellToken: WXDAI,
+            buyToken: COW,
+            sellAmount: 100e18,
+            buyAmount: (100e18 * 1) / 1000,
+            appData: bytes32(0),
+            receiver: recipient,
+            isSellOrder: true,
+            isPartiallyFillable: false,
+            validTo: uint32(block.timestamp + validity),
+            sellTokenPriceOracle: SELL_ORACLE,
+            buyTokenPriceOracle: BUY_ORACLE,
+            strike: 2e18,
+            maxTimeSinceLastOracleUpdate: 1 hours
+        });
+        IConditionalOrder.ConditionalOrderParams memory params = IConditionalOrder.ConditionalOrderParams({
+            handler: IConditionalOrder(STOP_LOSS_HANDLER), salt: bytes32(0), staticInput: abi.encode(data)
+        });
+
+        assertTrue(
+            IComposableCowFork(COMPOSABLE_COW).singleOrders(drop, keccak256(abi.encode(params))),
+            "stop-loss not registered for the drop"
+        );
+
+        // What the watch tower calls. If the handler decoded our struct differently, this is where it
+        // would revert or hand back an order with the wrong fields.
+        (LibCowOrder.Data memory order, bytes memory signature) =
+            IComposableCowFork(COMPOSABLE_COW).getTradeableOrderWithSignature(drop, params, "", new bytes32[](0));
+
+        assertEq(address(order.sellToken), WXDAI, "sellToken decoded wrongly");
+        assertEq(address(order.buyToken), COW, "buyToken decoded wrongly");
+        assertEq(order.sellAmount, 100e18, "sellAmount is not the balance that arrived");
+        assertEq(order.receiver, recipient, "receiver decoded wrongly");
+
+        // And the drop vouches for it, which is what makes a cow-shed drop able to own the order.
+        bytes32 digest = LibCowOrder.hash(order, IComposableCowFork(COMPOSABLE_COW).domainSeparator());
+        assertEq(IERC1271(drop).isValidSignature(digest, signature), bytes4(0x1626ba7e), "drop rejected its own order");
+
+        // The other side of the trigger, which is what pins the direction documented on `Trigger.strike`:
+        // move the sell token *up* against the buy token and the order must stop being tradeable. If
+        // base and quote were the other way round, this would still return an order.
+        _mockFeed(SELL_ORACLE, 3e8);
+        vm.expectRevert();
+        IComposableCowFork(COMPOSABLE_COW).getTradeableOrderWithSignature(drop, params, "", new bytes32[](0));
+    }
+
+    /// @dev Chainlink's `latestRoundData` and `decimals`, enough for `StopLoss` to price the pair.
+    function _mockFeed(address feed, int256 answer) internal {
+        vm.mockCall(feed, abi.encodeWithSignature("decimals()"), abi.encode(uint8(8)));
+        vm.mockCall(
+            feed,
+            abi.encodeWithSignature("latestRoundData()"),
+            abi.encode(uint80(1), answer, block.timestamp, block.timestamp, uint80(1))
         );
     }
 }

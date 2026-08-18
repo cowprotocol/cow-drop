@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "generation": 1,
   "label": "bridged USDC.e -> COW",
   "chainId": 100,
   "owner": "0x1111111111111111111111111111111111111111",

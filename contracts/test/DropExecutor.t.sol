@@ -3,14 +3,13 @@ pragma solidity ^0.8.25;
 
 import {Test} from "forge-std/Test.sol";
 
-import {DropExecutor} from "src/DropExecutor.sol";
+import {MockComposableCow, MockERC20, Recorder} from "./mocks/Mocks.sol";
 import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
 import {IComposableCow} from "cow-shed/IComposableCow.sol";
-import {DropRecipes} from "src/DropRecipes.sol";
-import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
-import {MockComposableCow, MockERC20, MockSettlement, Recorder} from "./mocks/Mocks.sol";
+import {DropExecutor} from "src/DropExecutor.sol";
+import {TokenSteps} from "src/steps/TokenSteps.sol";
 
 contract DropExecutorTest is Test {
     COWShed internal impl;
@@ -18,7 +17,7 @@ contract DropExecutorTest is Test {
     DropExecutor internal executor;
     Recorder internal recorder;
     MockERC20 internal token;
-    DropRecipes internal recipes;
+    TokenSteps internal tokenOps;
 
     address internal owner = makeAddr("owner");
     address internal attacker = makeAddr("attacker");
@@ -31,13 +30,10 @@ contract DropExecutorTest is Test {
         executor = new DropExecutor(factory, IComposableCow(address(composableCow)));
         recorder = new Recorder();
         token = new MockERC20();
-        recipes = new DropRecipes(
-            ISettlementLike(address(new MockSettlement(keccak256("d")))),
-            address(0xC92E),
-            IComposableCowLike(address(composableCow)),
-            address(0x7A9F),
-            address(0x715)
-        );
+        // `sweep` is all this suite needs, and `TokenSteps` takes no constructor arguments — so the
+        // rescue tests no longer have to conjure a settlement mock and a TWAP handler address to reach
+        // it. That is the split paying for itself: the rescue primitive depends on nothing.
+        tokenOps = new TokenSteps();
     }
 
     // --- helpers ---------------------------------------------------------------------------
@@ -91,7 +87,6 @@ contract DropExecutorTest is Test {
         assertEq(drop, predicted, "salted drop deployed at an unexpected address");
         assertEq(recorder.lastCaller(), drop, "recipe did not run as the shed");
     }
-
 
     function test_dropOf_isDeterministicAndRecipeSpecific() external view {
         bytes memory a = _pingRecipe("a", false, 0);
@@ -164,7 +159,8 @@ contract DropExecutorTest is Test {
             allowFailure: false,
             isDelegateCall: false
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "sweep", salt: bytes32(0), once: false, calls: calls}));
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "sweep", salt: bytes32(0), once: false, calls: calls}));
 
         address predicted = executor.dropOf(owner, recipe);
         token.mint(predicted, 100);
@@ -206,7 +202,8 @@ contract DropExecutorTest is Test {
             allowFailure: false,
             isDelegateCall: false
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "oneshot", salt: bytes32(0), once: true, calls: calls}));
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "oneshot", salt: bytes32(0), once: true, calls: calls}));
         address drop = executor.dropOf(owner, recipe);
 
         // Nothing has arrived yet, so the transfer underflows and the whole activation reverts.
@@ -239,7 +236,8 @@ contract DropExecutorTest is Test {
             allowFailure: true, // <-- the footgun
             isDelegateCall: false
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "burnable", salt: bytes32(0), once: true, calls: calls}));
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "burnable", salt: bytes32(0), once: true, calls: calls}));
         address drop = executor.dropOf(owner, recipe);
 
         // No funds yet, but the failure is swallowed, so the activation "succeeds".
@@ -258,21 +256,17 @@ contract DropExecutorTest is Test {
 
     /// @dev The nastiest failure mode this design has, because it is silent. A delegatecall to a
     ///      codeless address *succeeds* returning nothing, and cow-shed only checks that flag — so a
-    ///      recipe pointing at an undeployed `DropRecipes` would activate cleanly, place no order, and
+    ///      recipe pointing at an undeployed step contract would activate cleanly, place no order, and
     ///      spend a `once` recipe's single run. It must revert instead.
     function test_recipeDelegatingToNoCodeRevertsRatherThanSilentlyDoingNothing() external {
         address notDeployed = address(0xDEAD00);
         assertEq(notDeployed.code.length, 0, "fixture address unexpectedly has code");
 
         Call[] memory calls = new Call[](1);
-        calls[0] = Call({
-            target: notDeployed,
-            value: 0,
-            callData: hex"c0ffee",
-            allowFailure: false,
-            isDelegateCall: true
-        });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "ghost", salt: bytes32(0), once: true, calls: calls}));
+        calls[0] =
+            Call({target: notDeployed, value: 0, callData: hex"c0ffee", allowFailure: false, isDelegateCall: true});
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "ghost", salt: bytes32(0), once: true, calls: calls}));
         address drop = executor.dropOf(owner, recipe);
 
         vm.prank(keeper);
@@ -291,7 +285,8 @@ contract DropExecutorTest is Test {
 
         Call[] memory calls = new Call[](1);
         calls[0] = Call({target: recipient, value: 1 ether, callData: "", allowFailure: false, isDelegateCall: false});
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "pay", salt: bytes32(0), once: false, calls: calls}));
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "pay", salt: bytes32(0), once: false, calls: calls}));
 
         address drop = executor.dropOf(owner, recipe);
         vm.deal(drop, 1 ether);
@@ -314,14 +309,9 @@ contract DropExecutorTest is Test {
         vm.deal(drop, 10 ether);
 
         Call[] memory theft = new Call[](1);
-        theft[0] = Call({
-            target: attacker,
-            value: 10 ether,
-            callData: "",
-            allowFailure: false,
-            isDelegateCall: false
-        });
-        bytes memory forged = abi.encode(DropExecutor.Recipe({label: "theft", salt: bytes32(0), once: false, calls: theft}));
+        theft[0] = Call({target: attacker, value: 10 ether, callData: "", allowFailure: false, isDelegateCall: false});
+        bytes memory forged =
+            abi.encode(DropExecutor.Recipe({label: "theft", salt: bytes32(0), once: false, calls: theft}));
 
         vm.prank(attacker);
         vm.expectRevert(DropExecutor.NotADrop.selector);
@@ -355,7 +345,8 @@ contract DropExecutorTest is Test {
         // A tampered recipe simply resolves to a different, empty address.
         Call[] memory theft = new Call[](1);
         theft[0] = Call({target: attacker, value: 10 ether, callData: "", allowFailure: false, isDelegateCall: false});
-        bytes memory forged = abi.encode(DropExecutor.Recipe({label: "victim", salt: bytes32(0), once: false, calls: theft}));
+        bytes memory forged =
+            abi.encode(DropExecutor.Recipe({label: "victim", salt: bytes32(0), once: false, calls: theft}));
 
         assertTrue(executor.dropOf(owner, forged) != drop, "forged recipe resolved to the victim address");
 
@@ -437,7 +428,8 @@ contract DropExecutorTest is Test {
             allowFailure: false,
             isDelegateCall: false
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "doomed", salt: bytes32(0), once: false, calls: doomed}));
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "doomed", salt: bytes32(0), once: false, calls: doomed}));
 
         address drop = executor.dropOf(owner, recipe);
         token.mint(drop, 500);
@@ -451,16 +443,16 @@ contract DropExecutorTest is Test {
         // The hatch: deploy without the setup call, sweeping both balances as the shed.
         Call[] memory rescue = new Call[](2);
         rescue[0] = Call({
-            target: address(recipes),
+            target: address(tokenOps),
             value: 0,
-            callData: abi.encodeCall(DropRecipes.sweep, (address(token), owner)),
+            callData: abi.encodeCall(TokenSteps.sweep, (address(token), owner)),
             allowFailure: false,
             isDelegateCall: true
         });
         rescue[1] = Call({
-            target: address(recipes),
+            target: address(tokenOps),
             value: 0,
-            callData: abi.encodeCall(DropRecipes.sweep, (address(0), owner)),
+            callData: abi.encodeCall(TokenSteps.sweep, (address(0), owner)),
             allowFailure: false,
             isDelegateCall: true
         });
@@ -520,9 +512,9 @@ contract DropExecutorTest is Test {
 
         Call[] memory sweep = new Call[](1);
         sweep[0] = Call({
-            target: address(recipes),
+            target: address(tokenOps),
             value: 0,
-            callData: abi.encodeCall(DropRecipes.sweep, (address(token), owner)),
+            callData: abi.encodeCall(TokenSteps.sweep, (address(token), owner)),
             allowFailure: false,
             isDelegateCall: true
         });
@@ -541,9 +533,9 @@ contract DropExecutorTest is Test {
 
         Call[] memory sweep = new Call[](1);
         sweep[0] = Call({
-            target: address(recipes),
+            target: address(tokenOps),
             value: 0,
-            callData: abi.encodeCall(DropRecipes.sweep, (address(token), attacker)),
+            callData: abi.encodeCall(TokenSteps.sweep, (address(token), attacker)),
             allowFailure: false,
             isDelegateCall: true
         });
@@ -566,7 +558,8 @@ contract DropExecutorTest is Test {
             allowFailure: false,
             isDelegateCall: false
         });
-        bytes memory recipe = abi.encode(DropExecutor.Recipe({label: "broken", salt: bytes32(0), once: false, calls: calls}));
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "broken", salt: bytes32(0), once: false, calls: calls}));
 
         address predicted = executor.dropOf(owner, recipe);
         vm.deal(predicted, 1 ether);

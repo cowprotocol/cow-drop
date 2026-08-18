@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
 
 import { decodeRecipe, saltOf } from './encoding.js'
+import { GENERATIONS, LATEST_GENERATION, getDeployment } from './generated/deployments.js'
 import { compileRecipe, type DropRecipeJson } from './recipe.js'
 import { swapOnArrival, twapOnArrival } from './templates.js'
+import type { DropDeployment } from './types.js'
 
 const OWNER: Address = '0x1111111111111111111111111111111111111111'
 const WXDAI: Address = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d'
@@ -29,7 +31,7 @@ describe('compileRecipe', () => {
     expect(compiled.recipe.calls).toHaveLength(1)
     // Every recipe primitive must be a delegatecall, or it would read the helper's balance.
     expect(compiled.recipe.calls[0]!.isDelegateCall).toBe(true)
-    expect(compiled.recipe.calls[0]!.target).toBe(compiled.deployment.recipes)
+    expect(compiled.recipe.calls[0]!.target).toBe(compiled.deployment.presignSteps)
   })
 
   it('is deterministic regardless of JSON key order or formatting', () => {
@@ -347,6 +349,75 @@ describe('templates', () => {
         }),
       ),
     ).toThrow(/span cannot exceed/)
+  })
+})
+
+describe('generation pinning', () => {
+  it('defaults to generation 1, not to the latest', () => {
+    // The distinction only becomes visible once a second generation exists, and by then it is too
+    // late to notice: `?? LATEST_GENERATION` would silently repoint every file written before the
+    // field existed, at addresses their authors have already funded. Asserted against the literal 1
+    // so that bumping `LATEST_GENERATION` cannot make this pass by accident.
+    const { generation, ...rest } = swapRecipe()
+    expect(generation).toBe(LATEST_GENERATION)
+
+    const compiled = compileRecipe(rest as DropRecipeJson)
+    expect(compiled.deployment.generation).toBe(1)
+    expect(compiled.deployment.presignSteps).toBe(GENERATIONS[1]!.presignSteps)
+  })
+
+  it('reads an explicit generation 1 as the same thing as omitting it', () => {
+    const { generation, ...rest } = swapRecipe()
+    expect(compileRecipe({ ...(rest as DropRecipeJson), generation: 1 }).address).toBe(
+      compileRecipe(rest as DropRecipeJson).address,
+    )
+  })
+
+  it('exports a pinned generation from the templates', () => {
+    // A file that does not say which generation it belongs to is only reproducible by luck, so
+    // anything this SDK hands to a user has to say.
+    expect(swapRecipe().generation).toBe(LATEST_GENERATION)
+    expect(
+      twapOnArrival({
+        chainId: GNOSIS,
+        owner: OWNER,
+        sellToken: WXDAI,
+        buyToken: COW,
+        parts: 4,
+        partDuration: 600,
+        limitPrice: { price: '0.02', sellDecimals: 18, buyDecimals: 18 },
+      }).generation,
+    ).toBe(LATEST_GENERATION)
+  })
+
+  it('refuses a generation it does not know, distinctly from an unsupported chain', () => {
+    expect(() => compileRecipe({ ...swapRecipe(), generation: 99 })).toThrow(/unknown cow-drop generation 99/)
+  })
+
+  it('resolves the same recipe to a different address in a different generation', () => {
+    // This is the whole reason generations exist: a step's target address sits inside `setupData`, so
+    // moving the step contracts moves every drop address. Simulated with an override rather than by
+    // waiting for a real generation 2, but the arithmetic being exercised is the real derivation.
+    const gen2: DropDeployment = {
+      ...getDeployment(GNOSIS),
+      generation: 2,
+      presignSteps: '0x2222222222222222222222222222222222222222',
+    }
+
+    const onGen1 = compileRecipe({ ...swapRecipe(), generation: 1 })
+    const onGen2 = compileRecipe({ ...swapRecipe(), generation: 2 }, gen2)
+
+    expect(onGen2.address).not.toBe(onGen1.address)
+    expect(onGen2.recipe.calls[0]!.target).toBe(gen2.presignSteps)
+  })
+
+  it('refuses an override that disagrees with the generation the recipe asked for', () => {
+    // Spelled out rather than leaning on whatever the templates currently pin, so that this keeps
+    // testing the disagreement itself once `LATEST_GENERATION` moves.
+    const gen2: DropDeployment = { ...getDeployment(GNOSIS), generation: 2 }
+    expect(() => compileRecipe({ ...swapRecipe(), generation: 1 }, gen2)).toThrow(
+      /asks for generation 1 but the deployment is generation 2/,
+    )
   })
 })
 

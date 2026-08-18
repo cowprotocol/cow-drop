@@ -9,6 +9,7 @@ import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
 import {IComposableCow} from "cow-shed/IComposableCow.sol";
+import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
 
 /// @notice Generates address-derivation fixtures for the SDK to check itself against.
 ///
@@ -45,12 +46,77 @@ contract FixturesScript is Script {
             cases[i] = vm.serializeAddress(obj, "expected", executor.dropOf(owner, setupData));
         }
 
-        string memory json = vm.serializeString(root, "cases", cases);
+        vm.serializeString(root, "cases", cases);
+
+        // ComposableCoW keys an authorisation by `keccak256(abi.encode(params))`, and a rescue that
+        // retires an order has to reproduce that hash off-chain. Same reasoning as the drop-address
+        // cases above: two implementations of one formula drift silently, and here the failure mode is
+        // a rescue that looks like it retired an order and did not.
+        string[] memory orders = new string[](_orderCaseCount());
+        for (uint256 i; i < _orderCaseCount(); i++) {
+            (IConditionalOrder.ConditionalOrderParams memory params, string memory name) = _orderCase(i);
+
+            string memory obj = string.concat("order", vm.toString(i));
+            vm.serializeString(obj, "name", name);
+            vm.serializeAddress(obj, "handler", address(params.handler));
+            vm.serializeBytes32(obj, "salt", params.salt);
+            vm.serializeBytes(obj, "staticInput", params.staticInput);
+            orders[i] = vm.serializeBytes32(obj, "expected", keccak256(abi.encode(params)));
+        }
+
+        string memory json = vm.serializeString(root, "conditionalOrders", orders);
         vm.writeJson(json, "./deployments/derivation-fixtures.json");
     }
 
     function _caseCount() internal pure returns (uint256) {
         return 8;
+    }
+
+    function _orderCaseCount() internal pure returns (uint256) {
+        return 4;
+    }
+
+    /// @dev Spans the shapes that matter to the encoding: empty `staticInput`, a short one, one that
+    ///      crosses a word boundary (so the length prefix and padding both matter), and a non-zero salt.
+    function _orderCase(uint256 i)
+        internal
+        pure
+        returns (IConditionalOrder.ConditionalOrderParams memory params, string memory name)
+    {
+        if (i == 0) {
+            return (
+                IConditionalOrder.ConditionalOrderParams({
+                    handler: IConditionalOrder(address(0x7A9F)), salt: bytes32(0), staticInput: ""
+                }),
+                "empty static input"
+            );
+        }
+        if (i == 1) {
+            return (
+                IConditionalOrder.ConditionalOrderParams({
+                    handler: IConditionalOrder(address(0x7A9F)), salt: bytes32(0), staticInput: hex"deadbeef"
+                }),
+                "short static input"
+            );
+        }
+        if (i == 2) {
+            return (
+                IConditionalOrder.ConditionalOrderParams({
+                    handler: IConditionalOrder(address(0x570F)),
+                    salt: bytes32(uint256(1)),
+                    staticInput: abi.encode(uint256(1), uint256(2), address(0xB0B))
+                }),
+                "multi-word static input, non-zero salt"
+            );
+        }
+        return (
+            IConditionalOrder.ConditionalOrderParams({
+                handler: IConditionalOrder(address(0x570F)),
+                salt: bytes32(type(uint256).max),
+                staticInput: hex"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff11"
+            }),
+            "static input crossing a word boundary, max salt"
+        );
     }
 
     /// @dev Deliberately spans the encoding edge cases: no calls, one call, several calls, empty
@@ -62,23 +128,14 @@ contract FixturesScript is Script {
         if (i == 1) {
             Call[] memory calls = new Call[](1);
             calls[0] = Call({
-                target: address(0xB0B),
-                value: 0,
-                callData: hex"deadbeef",
-                allowFailure: false,
-                isDelegateCall: false
+                target: address(0xB0B), value: 0, callData: hex"deadbeef", allowFailure: false, isDelegateCall: false
             });
             return (address(0xA11CE), _encode("single", false, calls), "one plain call");
         }
         if (i == 2) {
             Call[] memory calls = new Call[](1);
-            calls[0] = Call({
-                target: address(0xB0B),
-                value: 1 ether,
-                callData: "",
-                allowFailure: true,
-                isDelegateCall: true
-            });
+            calls[0] =
+                Call({target: address(0xB0B), value: 1 ether, callData: "", allowFailure: true, isDelegateCall: true});
             return (address(0xA11CE), _encode("flags", true, calls), "empty calldata, both flags, once");
         }
         if (i == 3) {
@@ -98,11 +155,7 @@ contract FixturesScript is Script {
             // Same recipe as case 1, different owner: must give a different address.
             Call[] memory calls = new Call[](1);
             calls[0] = Call({
-                target: address(0xB0B),
-                value: 0,
-                callData: hex"deadbeef",
-                allowFailure: false,
-                isDelegateCall: false
+                target: address(0xB0B), value: 0, callData: hex"deadbeef", allowFailure: false, isDelegateCall: false
             });
             return (address(0xD00D), _encode("single", false, calls), "different owner, same recipe");
         }
@@ -111,11 +164,7 @@ contract FixturesScript is Script {
             // of the encoding and fed to the factory, in both implementations.
             Call[] memory calls = new Call[](1);
             calls[0] = Call({
-                target: address(0xB0B),
-                value: 0,
-                callData: hex"deadbeef",
-                allowFailure: false,
-                isDelegateCall: false
+                target: address(0xB0B), value: 0, callData: hex"deadbeef", allowFailure: false, isDelegateCall: false
             });
             return (address(0xA11CE), _encodeSalted("single", bytes32(uint256(1)), false, calls), "non-zero salt");
         }
@@ -123,22 +172,15 @@ contract FixturesScript is Script {
             // A high-bit salt, so the SDK cannot get away with treating it as a small number.
             Call[] memory calls = new Call[](1);
             calls[0] = Call({
-                target: address(0xB0B),
-                value: 0,
-                callData: hex"deadbeef",
-                allowFailure: false,
-                isDelegateCall: false
+                target: address(0xB0B), value: 0, callData: hex"deadbeef", allowFailure: false, isDelegateCall: false
             });
-            return (
-                address(0xA11CE),
-                _encodeSalted("single", bytes32(type(uint256).max), false, calls),
-                "max salt"
-            );
+            return (address(0xA11CE), _encodeSalted("single", bytes32(type(uint256).max), false, calls), "max salt");
         }
         // Same recipe as case 1, different label: must give a different address.
         Call[] memory relabelled = new Call[](1);
-        relabelled[0] =
-            Call({target: address(0xB0B), value: 0, callData: hex"deadbeef", allowFailure: false, isDelegateCall: false});
+        relabelled[0] = Call({
+            target: address(0xB0B), value: 0, callData: hex"deadbeef", allowFailure: false, isDelegateCall: false
+        });
         return (address(0xA11CE), _encode("relabelled", false, relabelled), "different label, same calls");
     }
 

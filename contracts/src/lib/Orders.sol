@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.25;
 
-/// @title DropOrders
+/// @title Orders
 /// @notice Shared CoW Protocol order plumbing: the flag constants, order UID packing and the
 ///         limit-price arithmetic used by every recipe primitive.
 /// @dev Order *hashing* is not reimplemented here — `cow-shed/LibCowOrder.sol` already carries
 ///      the canonical assembly implementation, and having two would be one too many.
-library DropOrders {
+library Orders {
     /// @notice Rounding to zero would produce an order with no minimum output.
     error LimitPriceTooLow();
 

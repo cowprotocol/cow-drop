@@ -3,6 +3,25 @@ import { encodeFunctionData, type Address, type Hex } from 'viem'
 import { saltOf } from './encoding.js'
 import { COW_SHED_EXECUTOR_FACTORY_ABI } from './generated/artifacts.js'
 import { steps } from './steps.js'
+
+/**
+ * Hand-written rather than generated: composable-cow is not a submodule of this repo, so there is no
+ * artifact to generate from. One function, and its signature is asserted against the deployed contract
+ * by the fork tests that register orders through it.
+ */
+const COMPOSABLE_COW_REVOKE_ABI = [
+  { type: 'function', name: 'remove', stateMutability: 'nonpayable', inputs: [{ name: 'singleOrderHash', type: 'bytes32' }], outputs: [] },
+] as const
+
+const SETTLEMENT_PRESIGN_ABI = [
+  {
+    type: 'function',
+    name: 'setPreSignature',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'orderUid', type: 'bytes' }, { name: 'signed', type: 'bool' }],
+    outputs: [],
+  },
+] as const
 import type { DropCall, DropDeployment } from './types.js'
 import type { EvmCall } from './tx.js'
 
@@ -31,7 +50,7 @@ import type { EvmCall } from './tx.js'
 
 /** Sweep the drop's whole balance of each token to `to`. The zero address means native. */
 export function buildSweepCalls(params: {
-  deployment: Pick<DropDeployment, 'recipes'>
+  deployment: Pick<DropDeployment, 'tokenSteps'>
   to: Address
   /** Tokens to sweep. Include the zero address to also sweep the native balance. */
   tokens: Address[]
@@ -40,6 +59,58 @@ export function buildSweepCalls(params: {
     throw new Error('nothing to sweep: pass at least one token (zero address for native)')
   }
   return params.tokens.map((token) => steps.sweep(params.deployment, { token, to: params.to }))
+}
+
+/**
+ * Retire orders the drop has already placed.
+ *
+ * **A sweep on its own does not end a drop's trading.** Both order paths outlive it: a registered
+ * conditional order stays authorised in ComposableCoW until removed, and a pre-signature stays valid
+ * until its `validTo`. So an owner who sweeps a drop mid-TWAP, or with days left on a stop-loss, still
+ * has an address that will trade whatever arrives there next — and the relayer's allowance is still
+ * standing. That is not what "rescued" should mean.
+ *
+ * Neither call needs a step contract: both take literals, and by rescue time those literals are known
+ * — the params hash and the order UID are both in the activation receipt. See
+ * `parseConditionalOrdersCreated` and `parseDropOrderPlaced`.
+ *
+ * These are plain calls, not delegatecalls: `msg.sender` has to be the drop, and the shed calling out
+ * directly is already that.
+ */
+export function buildRevokeCalls(params: {
+  deployment: Pick<DropDeployment, 'composableCow' | 'settlement'>
+  /** ComposableCoW params hashes to de-authorise, from `parseConditionalOrdersCreated`. */
+  conditionalOrderHashes?: Hex[]
+  /** Pre-signed order UIDs to un-sign, from `parseDropOrderPlaced`. */
+  orderUids?: Hex[]
+}): DropCall[] {
+  const calls: DropCall[] = []
+
+  for (const hash of params.conditionalOrderHashes ?? []) {
+    calls.push({
+      target: params.deployment.composableCow,
+      value: 0n,
+      callData: encodeFunctionData({ abi: COMPOSABLE_COW_REVOKE_ABI, functionName: 'remove', args: [hash] }),
+      allowFailure: false,
+      isDelegateCall: false,
+    })
+  }
+
+  for (const uid of params.orderUids ?? []) {
+    calls.push({
+      target: params.deployment.settlement,
+      value: 0n,
+      callData: encodeFunctionData({
+        abi: SETTLEMENT_PRESIGN_ABI,
+        functionName: 'setPreSignature',
+        args: [uid, false],
+      }),
+      allowFailure: false,
+      isDelegateCall: false,
+    })
+  }
+
+  return calls
 }
 
 /**
@@ -152,17 +223,42 @@ export function buildOwnerExecuteTx(params: { drop: Address; calls: DropCall[] }
   }
 }
 
-/** Sweep an already-deployed drop's balances to `to`, as the owner. */
+/** Sweep an already-deployed drop's balances to `to`, as the owner, retiring any live orders first. */
 export function buildOwnerSweepTx(params: {
-  deployment: Pick<DropDeployment, 'recipes'>
+  deployment: Pick<DropDeployment, 'tokenSteps' | 'composableCow' | 'settlement'>
   drop: Address
   to: Address
   tokens: Address[]
+  revoke?: RevokeTargets
 }): EvmCall {
   return buildOwnerExecuteTx({
     drop: params.drop,
-    calls: buildSweepCalls({ deployment: params.deployment, to: params.to, tokens: params.tokens }),
+    calls: buildRescueCalls(params),
   })
+}
+
+/** What a rescue should retire, alongside the balances it moves. */
+export interface RevokeTargets {
+  conditionalOrderHashes?: Hex[]
+  orderUids?: Hex[]
+}
+
+/**
+ * Revocations first, then the sweep.
+ *
+ * Ordering is cosmetic — the whole thing is one transaction — but retiring the order before taking the
+ * money is the order a person would describe, and it reads that way in a simulation trace.
+ */
+function buildRescueCalls(params: {
+  deployment: Pick<DropDeployment, 'tokenSteps' | 'composableCow' | 'settlement'>
+  to: Address
+  tokens: Address[]
+  revoke?: RevokeTargets
+}): DropCall[] {
+  return [
+    ...buildRevokeCalls({ deployment: params.deployment, ...(params.revoke ?? {}) }),
+    ...buildSweepCalls({ deployment: params.deployment, to: params.to, tokens: params.tokens }),
+  ]
 }
 
 /**
@@ -171,15 +267,20 @@ export function buildOwnerSweepTx(params: {
  * @param deployed Whether the drop already has code.
  */
 export function buildRescueForState(params: {
-  deployment: Pick<DropDeployment, 'factory' | 'executor' | 'recipes'>
+  deployment: Pick<DropDeployment, 'factory' | 'executor' | 'tokenSteps' | 'composableCow' | 'settlement'>
   owner: Address
   setupData: Hex
   drop: Address
   to: Address
   tokens: Address[]
   deployed: boolean
+  /**
+   * Orders to retire as part of the rescue. Omitting this sweeps without ending the drop's trading,
+   * which is only right when you know there is nothing outstanding.
+   */
+  revoke?: RevokeTargets
 }): { tx: EvmCall; path: 'without-setup' | 'owner-execute' } {
-  const calls = buildSweepCalls({ deployment: params.deployment, to: params.to, tokens: params.tokens })
+  const calls = buildRescueCalls(params)
 
   return params.deployed
     ? { tx: buildOwnerExecuteTx({ drop: params.drop, calls }), path: 'owner-execute' }

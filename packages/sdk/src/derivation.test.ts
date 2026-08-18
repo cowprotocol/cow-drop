@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { getAddress, type Address, type Hex } from 'viem'
 
 import { decodeRecipe, deriveDropAddress, encodeRecipe } from './encoding.js'
+import { conditionalOrderParamsHash } from './tx.js'
 
 interface Fixtures {
   implementation: Address
@@ -13,6 +14,7 @@ interface Fixtures {
   executor: Address
   proxyCreationCode: Hex
   cases: Array<{ name: string; owner: Address; setupData: Hex; expected: Address }>
+  conditionalOrders: Array<{ name: string; handler: Address; salt: Hex; staticInput: Hex; expected: Hex }>
 }
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -61,5 +63,23 @@ describe('recipe encoding round-trips against Solidity output', () => {
   it.each(fixtures.cases.map((c) => [c.name, c] as const))('%s', (_name, testCase) => {
     const decoded = decodeRecipe(testCase.setupData)
     expect(encodeRecipe(decoded)).toBe(testCase.setupData.toLowerCase())
+  })
+})
+
+/**
+ * ComposableCoW keys an authorisation by `keccak256(abi.encode(params))`, and a rescue that retires an
+ * order has to reproduce that hash off-chain. Checked against the compiled contract for the same reason
+ * the address derivation is: two implementations of one formula drift silently, and here the failure
+ * mode is a rescue that appears to retire an order and leaves it live.
+ */
+describe('conditionalOrderParamsHash matches the contract', () => {
+  it.each(fixtures.conditionalOrders.map((c) => [c.name, c] as const))('%s', (_name, testCase) => {
+    expect(
+      conditionalOrderParamsHash({
+        handler: testCase.handler,
+        salt: testCase.salt,
+        staticInput: testCase.staticInput,
+      }),
+    ).toBe(testCase.expected)
   })
 })

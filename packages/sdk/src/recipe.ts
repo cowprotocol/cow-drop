@@ -3,7 +3,7 @@ import { isAddress, type Address, type Hex } from 'viem'
 import { ZERO_SALT, deriveDropAddress, encodeRecipe } from './encoding.js'
 import { getDeployment } from './generated/deployments.js'
 import { limitPriceToFraction } from './price.js'
-import { steps } from './steps.js'
+import { steps, type Comparison } from './steps.js'
 import type { DropDeployment, LimitPriceFraction, Recipe } from './types.js'
 
 /** A limit price, either as the exact atomic fraction or as a human price plus token decimals. */
@@ -35,10 +35,71 @@ export type DropStepJson =
       orderSalt?: Hex
       allowFailure?: boolean
     }
+  | {
+      type: 'stopLossFromBalance'
+      sellToken: Address
+      buyToken: Address
+      receiver?: Address
+      /** The minimum output. Distinct from `strike`, which decides *when* to sell. */
+      limitPrice: LimitPriceJson
+      /** Order lifetime from activation, not an absolute deadline. */
+      validitySeconds: number | string
+      trigger: {
+        sellTokenPriceOracle: Address
+        /** Must quote the same currency as the sell-token feed. */
+        buyTokenPriceOracle: Address
+        /** Fires when `sellPrice / buyPrice <= strike`, scaled to 18 decimals. */
+        strike: number | string
+        maxTimeSinceLastOracleUpdate: number | string
+      }
+      partiallyFillable?: boolean
+      appData?: Hex
+      orderSalt?: Hex
+      allowFailure?: boolean
+    }
+  | {
+      type: 'presignSellAllAtOracle'
+      sellToken: Address
+      buyToken: Address
+      receiver?: Address
+      /** The limit if the oracle cannot beat it. The oracle may only improve on it. */
+      floorPrice: LimitPriceJson
+      oracle: {
+        sellTokenPriceOracle: Address
+        buyTokenPriceOracle: Address
+        maxAge: number | string
+        haircutBps: number | string
+      }
+      validitySeconds: number | string
+      appData?: Hex
+      allowFailure?: boolean
+    }
+  | {
+      type: 'requireCallResult'
+      target: Address
+      callData: Hex
+      /** Which 32-byte word of the return data to compare. Defaults to 0. */
+      wordIndex?: number | string
+      comparison: Comparison
+      threshold: number | string
+    }
   | { type: 'requireMinBalance'; token: Address; minAmount: number | string }
   | { type: 'requireTimeWindow'; notBefore?: number | string; notAfter?: number | string }
   | { type: 'wrapNative'; wrappedNative: Address; allowFailure?: boolean }
   | { type: 'approveMax'; token: Address; spender: Address; allowFailure?: boolean }
+  /**
+   * Approve exactly the balance that arrived. The allowance counterpart of the other amount-dependent
+   * steps — an allowance for a fixed number is a `raw` call to the token and needs nothing from here.
+   */
+  | { type: 'approveBalance'; token: Address; spender: Address; allowFailure?: boolean }
+  /**
+   * Mostly a rescue primitive, reached through the `build*` helpers in `rescue.ts` rather than from a
+   * file. Reachable from a recipe too, though: an escape branch that pays the balance back to the owner
+   * once a deadline has passed is a legitimate recipe, and refusing to express it would push the author
+   * to `raw` — which the UI cannot describe. Pass the zero address as `token` to sweep the native
+   * balance.
+   */
+  | { type: 'sweep'; token: Address; to: Address }
   | {
       type: 'raw'
       target: Address
@@ -58,6 +119,16 @@ export interface DropRecipeJson {
   version: 1
   label: string
   chainId: number
+  /**
+   * Which generation of the contracts to compile against. Defaults to **1**, not to the latest.
+   *
+   * The step contracts' addresses are inputs to the drop's CREATE2 derivation, so a file compiled
+   * against a later generation resolves to a *different* address. Defaulting to the latest would mean
+   * that upgrading the SDK silently repoints every file written before this field existed — and since
+   * a drop is funded before it exists, and the file is the only way back to the funds, that is the
+   * difference between recovering them and not. Anything this SDK exports pins the field explicitly.
+   */
+  generation?: number
   owner: Address
   /**
    * The factory's user salt, as a 32-byte hex string. Defaults to zero.
@@ -105,9 +176,17 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
     throw new Error('a recipe needs at least one step')
   }
 
-  const deployment = deploymentOverride ?? getDeployment(json.chainId)
+  // `?? 1` rather than `?? LATEST_GENERATION` — see the field's doc comment. A file that predates the
+  // field was compiled against generation 1, and that is what it has to keep meaning.
+  const generation = json.generation ?? 1
+  const deployment = deploymentOverride ?? getDeployment(json.chainId, generation)
   if (deployment.chainId !== json.chainId) {
     throw new Error(`recipe is for chain ${json.chainId} but the deployment is for ${deployment.chainId}`)
+  }
+  if (deployment.generation !== generation) {
+    throw new Error(
+      `recipe asks for generation ${generation} but the deployment is generation ${deployment.generation}`,
+    )
   }
 
   if (json.salt !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(json.salt)) {
@@ -170,6 +249,48 @@ function compileStep(step: DropStepJson, deployment: DropDeployment) {
         orderSalt: step.orderSalt,
         allowFailure: step.allowFailure,
       })
+    case 'stopLossFromBalance':
+      return steps.stopLossFromBalance(deployment, {
+        sellToken: step.sellToken,
+        buyToken: step.buyToken,
+        receiver: step.receiver,
+        limitPrice: resolveLimitPrice(step.limitPrice),
+        validitySeconds: BigInt(step.validitySeconds),
+        trigger: {
+          sellTokenPriceOracle: step.trigger.sellTokenPriceOracle,
+          buyTokenPriceOracle: step.trigger.buyTokenPriceOracle,
+          strike: BigInt(step.trigger.strike),
+          maxTimeSinceLastOracleUpdate: BigInt(step.trigger.maxTimeSinceLastOracleUpdate),
+        },
+        partiallyFillable: step.partiallyFillable,
+        appData: step.appData,
+        orderSalt: step.orderSalt,
+        allowFailure: step.allowFailure,
+      })
+    case 'presignSellAllAtOracle':
+      return steps.presignSellAllAtOracle(deployment, {
+        sellToken: step.sellToken,
+        buyToken: step.buyToken,
+        receiver: step.receiver,
+        floorPrice: resolveLimitPrice(step.floorPrice),
+        oracle: {
+          sellTokenPriceOracle: step.oracle.sellTokenPriceOracle,
+          buyTokenPriceOracle: step.oracle.buyTokenPriceOracle,
+          maxAge: BigInt(step.oracle.maxAge),
+          haircutBps: BigInt(step.oracle.haircutBps),
+        },
+        validitySeconds: BigInt(step.validitySeconds),
+        appData: step.appData,
+        allowFailure: step.allowFailure,
+      })
+    case 'requireCallResult':
+      return steps.requireCallResult(deployment, {
+        target: step.target,
+        callData: step.callData,
+        wordIndex: step.wordIndex === undefined ? undefined : BigInt(step.wordIndex),
+        comparison: step.comparison,
+        threshold: BigInt(step.threshold),
+      })
     case 'requireMinBalance':
       return steps.requireMinBalance(deployment, {
         token: step.token,
@@ -182,8 +303,12 @@ function compileStep(step: DropStepJson, deployment: DropDeployment) {
       })
     case 'wrapNative':
       return steps.wrapNative(deployment, step)
+    case 'sweep':
+      return steps.sweep(deployment, { token: step.token, to: step.to })
     case 'approveMax':
       return steps.approveMax(deployment, step)
+    case 'approveBalance':
+      return steps.approveBalance(deployment, step)
     case 'raw':
       return steps.raw({
         target: step.target,

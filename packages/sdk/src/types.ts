@@ -11,7 +11,7 @@ export interface DropCall {
   /** Let the recipe continue if this call reverts. */
   allowFailure: boolean
   /**
-   * Run the target's code in the drop's context. Required for every `DropRecipes` primitive: that
+   * Run the target's code in the drop's context. Required for every step-contract primitive: that
    * is what makes `address(this)` the drop, so a step can read the balance that actually arrived.
    */
   isDelegateCall: boolean
@@ -36,18 +36,51 @@ export interface Recipe {
 /**
  * The four addresses that collectively define what a drop address is. Changing any of them
  * changes every drop address, which is why they travel together as one object rather than being
- * read from ambient config.
+ * read from ambient config — and why they are versioned as a *generation* rather than updated in
+ * place. See `GENERATIONS` in `generated/deployments.ts`.
  */
-export interface DropDeployment {
-  chainId: number
+export interface DropAddresses {
   /** `COWShedExecutorFactory` — the CREATE2 deployer of every drop. */
   factory: Address
   /** `DropExecutor` — both the `trustedExecutor` and the `setupTarget` of every drop. */
   executor: Address
-  /** `DropRecipes` — the delegatecall target for recipe primitives. */
-  recipes: Address
+  /**
+   * The step contracts, each the delegatecall target of the steps it hosts.
+   *
+   * Four rather than one because a step's target sits inside the committed bytes, so its address is
+   * part of every drop address that reaches it. Splitting them by what they actually depend on means
+   * adding a ComposableCoW handler no longer moves the guards or the rescue sweep. `guards` and
+   * `tokenOps` take no constructor arguments at all, so their addresses track nothing but their own
+   * code — which matters most for `tokenOps`, since it hosts `sweep`, the rescue primitive.
+   */
+  guardSteps: Address
+  tokenSteps: Address
+  presignSteps: Address
+  twapSteps: Address
+  stopLossSteps: Address
+  /**
+   * `GPv2Settlement` and `ComposableCoW`. Not cow-drop's own contracts and not inputs to a drop
+   * address — but they *are* constructor inputs to the step contracts, so they belong to the
+   * generation. Carried so a rescue can retire live orders without an RPC round-trip.
+   */
+  settlement: Address
+  composableCow: Address
   /** The shed implementation, which is baked into each drop's init code. */
   shedImplementation: Address
+}
+
+/** One generation of the contracts, resolved for one chain. */
+export interface DropDeployment extends DropAddresses {
+  chainId: number
+  /**
+   * Which deployment of the stack these addresses come from.
+   *
+   * A recipe is only reproducible if it records this. The addresses above are inputs to the drop's
+   * CREATE2 derivation, so compiling the same recipe file against a later generation yields a
+   * *different* drop address — and since a drop is funded before it exists, that is the difference
+   * between recovering the funds and not.
+   */
+  generation: number
   /** `type(COWShedProxy).creationCode`, the other half of the init code. */
   proxyCreationCode: Hex
 }

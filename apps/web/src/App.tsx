@@ -37,6 +37,7 @@ import { isSaved, recipeFromHash, recipeToHash, saveDrop } from './lib/storage.j
 import { TokenPicker } from './components/TokenPicker.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
+import { StepBuilder } from './components/StepBuilder.js'
 import { RescuePanel } from './components/RescuePanel.js'
 import { SavedDrops } from './components/SavedDrops.js'
 import { TerminalPanel } from './components/TerminalPanel.js'
@@ -457,7 +458,7 @@ export function App() {
       )}
       <header>
         <div className="brand">
-          {/* Served from public/ rather than imported, so the favicon and og:image can share it. */}
+          {/* Served from public/ rather than imported, so index.html's icon tags point at the same set. */}
           <img src="/logo.png" alt="" width={96} height={96} className="brand-mark" />
           <div>
             <h1>cow-drop</h1>
@@ -652,7 +653,7 @@ export function App() {
               <p className="hint">
                 Withheld because an address is only worth having if something can act on it. Funding
                 one on this chain would strand the money: activation needs{' '}
-                <code>DropExecutor</code> and <code>DropRecipes</code>, and the owner&apos;s rescue
+                <code>DropExecutor</code> and the step contracts, and the owner&apos;s rescue
                 hatch needs <code>COWShedExecutorFactory</code> — so with these missing there is no
                 path out, not even for you. Nothing is lost forever, since the addresses are
                 deterministic and deploying the stack later would unstick it, but that is a wait with
@@ -698,7 +699,7 @@ export function App() {
 
               <section>
                 <h2>4 &middot; What the address commits to</h2>
-                <StepTable calls={compiled.value.recipe.calls} setupData={compiled.value.setupData} />
+                <StepTable setupData={compiled.value.setupData} deployment={compiled.value.deployment} />
               </section>
 
               <section>
@@ -776,7 +777,23 @@ export function App() {
               </section>
 
               <section>
-                <h2>7 &middot; Recipe file</h2>
+                <h2>7 &middot; Add a custom step</h2>
+                <p className="hint">
+                  For calling something the recipe types do not cover. Every argument is a literal
+                  committed into the address, so this cannot express anything that depends on the amount
+                  that arrives — that is what the built-in steps are for.
+                </p>
+                <StepBuilder
+                  onAddStep={(step) => {
+                    setImported({ ...recipe, steps: [...recipe.steps, step] })
+                    setError(null)
+                  }}
+                  onError={setError}
+                />
+              </section>
+
+              <section>
+                <h2>8 &middot; Recipe file</h2>
                 <RecipeJson
                   recipe={recipe}
                   address={compiled.value.address}

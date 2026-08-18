@@ -1,5 +1,6 @@
 import type { Address, Hex } from 'viem'
 
+import { LATEST_GENERATION } from './generated/deployments.js'
 import type { DropRecipeJson, LimitPriceJson } from './recipe.js'
 
 /**
@@ -66,6 +67,7 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
 
   return {
     version: 1,
+    generation: LATEST_GENERATION,
     label: params.label ?? 'swap on arrival',
     chainId: params.chainId,
     owner: params.owner,
@@ -146,6 +148,7 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
 
   return {
     version: 1,
+    generation: LATEST_GENERATION,
     label: params.label ?? `twap ${params.parts} parts`,
     chainId: params.chainId,
     owner: params.owner,

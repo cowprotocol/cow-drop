@@ -1,4 +1,4 @@
-<img src="apps/web/public/logo.png" alt="" width="88" align="right" />
+<img src="apps/web/public/logo.png" alt="" width="150" align="right" />
 
 # cow-drop
 
@@ -50,7 +50,7 @@ That yields some properties worth stating plainly:
 
 | | Path P — pre-sign | Path C — composable |
 |---|---|---|
-| Recipe | `presignSellAll` | `twapFromBalance` |
+| Step | `PresignSteps.presignSellAll` | `TwapSteps.twapFromBalance` |
 | Needs ERC-1271 | no | yes, forwarded by `DropExecutor` |
 | Needs a watch tower | no | yes, and it is automatic |
 | After activation | an off-chain poster submits the order | self-driving; each part is posted for you |
@@ -76,8 +76,11 @@ Each package has its own short README — start with whichever part you're touch
 ```
 contracts/        lib/cow-shed pinned to cow-shed#78 (feat/owner-deploy-without-setup)
   src/DropExecutor.sol    the commitment check + activation
-  src/DropRecipes.sol     recipe primitives, delegatecalled by the drop
-  src/DropOrders.sol      order UID packing, limit-price math
+  src/steps/              the steps, one contract per dependency set (see below)
+  src/lib/                internal libraries: inlined, never deployed, so they cost no address
+    Orders.sol            order UID packing, limit-price math
+    Allowance.sol         allowance handling
+    Errors.sol            the errors more than one step contract raises
 packages/sdk/src/
   recipe.ts               compileRecipe: recipe file -> address + committed bytes
   encoding.ts             the CREATE2 derivation, off-chain
@@ -93,7 +96,7 @@ apps/web/src/App.tsx      the form, and the recipe it builds
 git submodule update --init --recursive
 
 pnpm install
-cd contracts && forge test              # 38 hermetic tests
+cd contracts && forge test              # 66 hermetic tests
 cd ../packages/sdk && pnpm generate && pnpm build && pnpm test
 cd ../../apps/web && pnpm dev           # http://localhost:5173
 ```
@@ -116,6 +119,7 @@ needs a server or a database.
 ```json
 {
   "version": 1,
+  "generation": 1,
   "label": "WXDAI -> COW over 12h",
   "chainId": 100,
   "owner": "0x…",
@@ -134,8 +138,16 @@ needs a server or a database.
 }
 ```
 
+`generation` is which deployment of the contracts to compile against, and it is the field that makes
+the file reproducible. The step contracts' addresses live inside the committed bytes, so compiling the
+same file against a later generation resolves to a *different* address — which for a drop that is
+already funded is the difference between recovering the money and not. It defaults to **1**, not to the
+latest: a file written before the field existed was compiled against generation 1, and that is what it
+has to keep meaning. Everything the SDK exports pins it explicitly.
+
 Adding a capability is a new entry in the step registry (`packages/sdk/src/steps.ts`) plus a
-matching primitive in `DropRecipes.sol`. `{"type": "raw"}` is the escape hatch for anything not
+matching primitive in one of the contracts under `contracts/src/steps/`. `{"type": "raw"}` is the
+escape hatch for anything not
 covered, and is what the ABI-builder UI emits.
 
 Limit prices are exact integer fractions, never floats: the result is committed into an address, so
@@ -172,6 +184,7 @@ The functions you'll actually reach for:
 | `compileRecipe(json)` | Recipe file → `{ address, setupData, recipe, deployment }`. Validates and throws on anything ambiguous. |
 | `swapOnArrival` / `twapOnArrival` | Templates: a handful of parameters in, a complete recipe out. |
 | `steps.*` | Build steps by hand — including `requireMinBalance` / `requireTimeWindow` guards and `raw`. |
+| `describeRecipe(setupData, deployment)` | Committed bytes → named steps, decoded arguments, and warnings about anything that cannot be named. |
 | `deriveDropAddress(…)` | The CREATE2 derivation on its own, if you already have `setupData`. |
 | `buildActivateTx(…)` | The activation transaction. Idempotent; safe to send twice. |
 | `parseDropOrderPlaced` / `toOrderBookPayload` | Turn an activation receipt into an order-book submission (pre-sign path only). |
@@ -194,15 +207,28 @@ resolves to the same drop address on Gnosis, mainnet and everywhere else — ver
 deploy script against Gnosis and mainnet forks and diffing the output. Only *whether the contracts
 exist there yet* differs, which the UI checks with `getCode`.
 
+Addresses are recorded per **generation**, one deployment of the stack, under
+`contracts/deployments/gen<N>/<chainId>.json`. Every address below feeds the CREATE2 preimage of every
+drop, so a redeploy is a new generation with new drop addresses for the same recipe — never an update
+in place. Past generations stay deployed and the SDK keeps their addresses in `GENERATIONS`, which is
+what lets a recipe file pinned to an older generation still resolve to the address its author funded.
+Bump `GENERATION` in `script/Deploy.s.sol` whenever any input to an address changes.
+
+Generation 1:
+
 | Contract | Address | Status |
 |---|---|---|
 | `COWShedWithExecutorSigner` | `0x1c4b988481d945c98a21446AB2960000d290aB22` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) |
 | `COWShedExecutorFactory` | `0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) |
-| `DropRecipes` | `0x8fd40C67B633482d4a37c2c13297E8B353bc692f` | **not yet broadcast** |
+| `GuardSteps` | `0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7` | **not yet broadcast** |
+| `TokenSteps` | `0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c` | **not yet broadcast** |
+| `PresignSteps` | `0xE9659a153DeE9B90FDA9653F78E2879dB695e74B` | **not yet broadcast** |
+| `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | **not yet broadcast** |
+| `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | **not yet broadcast** |
 | `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | **not yet broadcast** |
 
 Both cow-shed contracts are the canonical ones already live on Gnosis, reused rather than
-redeployed — so **the only things this project deploys are its own two contracts**, and a drop address
+redeployed — so **the only things this project deploys are its own six contracts**, and a drop address
 is derived entirely from official cow-shed code. Because a CREATE2 address is derived from init code,
 landing on #79's addresses is also proof this repo reproduces the deployed bytecode, which is why
 `contracts/foundry.toml` must stay byte-identical to cow-shed's.
@@ -324,14 +350,14 @@ Not done yet:
   covers this manually for now; [`bridge-and-swap`](https://github.com/cowprotocol/bridge-and-swap)'s
   `backend/` is a working reference, though its `getLogs` has no address filter and its factory
   verification is commented out, so both need fixing before reuse.
-- A custom step-builder tab in the UI (the `raw` step type is supported by the SDK already).
 
 ## Known constraints
 
 - **Nothing upstream is merged.** The stack is cow-shed `#61 → #64 → #67 → PR2`, all unreviewed.
   The submodule is pinned to a commit; expect rebases. Any change to the shed implementation changes
-  its address, which changes `initCodeHash`, which changes **every** drop address — so treat the
-  deployment as a versioned generation from day one.
+  its address, which changes `initCodeHash`, which changes **every** drop address — which is why
+  deployments are cut as numbered generations and recipe files pin the one they were compiled against.
+  Expect the generation counter to move while the upstream stack is still in flux.
 - **composable-cow#145 explicitly distrusts this trust model.** `ComposableCowPoller.registerFromShed`
   rejects sheds from `COWShedExecutorFactory` because the caller picks the trusted executor "who can
   then drive the shed with no signature at all". The objection does not apply to a

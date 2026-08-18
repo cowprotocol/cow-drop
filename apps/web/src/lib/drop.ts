@@ -18,46 +18,102 @@ const ERC20_ABI = [
 ] as const
 
 /**
- * Every contract a drop depends on, and what its absence costs.
+ * The contracts every drop depends on whatever its recipe, and what their absence costs.
  *
- * All four matter, and it is worth being precise about why, because two of them are cow-shed's rather
- * than ours and it is tempting to assume they are simply there:
+ * Worth being precise about, because two of them are cow-shed's rather than ours and it is tempting to
+ * assume they are simply there:
  *
  * - `COWShedExecutorFactory` is the CREATE2 deployer *and* the home of `initializeProxyWithoutSetup`,
  *   the owner's pre-deployment rescue hatch. Without it a funded drop can be neither activated nor
  *   rescued.
  * - `COWShedWithExecutorSigner` is the implementation every drop proxies to, so nothing runs without it.
- * - `DropRecipes` matters in a way that is easy to miss: a delegatecall to a codeless address succeeds
- *   silently, so a missing one would let an activation appear to work while placing no order.
- *   `DropExecutor` rejects that on-chain, but the UI should not offer the button in the first place.
  * - `DropExecutor` is the trusted executor and the commitment check.
  *
  * Listed deepest-dependency first, so a chain with nothing deployed reads in the order things must
  * arrive rather than in the order we happen to check them.
+ *
+ * The step contracts are deliberately *not* here — see `STEP_CONTRACTS`.
  */
-const REQUIRED_CONTRACTS: readonly { name: string; at: (deployment: DropDeployment) => Address }[] = [
+const CORE_CONTRACTS: readonly { name: string; at: (deployment: DropDeployment) => Address }[] = [
   { name: 'COWShedWithExecutorSigner', at: (d) => d.shedImplementation },
   { name: 'COWShedExecutorFactory', at: (d) => d.factory },
-  { name: 'DropRecipes', at: (d) => d.recipes },
   { name: 'DropExecutor', at: (d) => d.executor },
+]
+
+/**
+ * The step contracts, which matter in a way that is easy to miss: a delegatecall to a codeless address
+ * *succeeds silently*, so a missing one would let an activation appear to work while placing no order.
+ * `DropExecutor._requireDelegateTargetsHaveCode` rejects that on-chain, but the UI should not offer the
+ * button in the first place.
+ *
+ * Which of them a given drop needs depends on its recipe — a pre-sign drop never touches
+ * `TwapSteps` — so these are resolved per recipe by `readMissingForRecipe`, and only used as a
+ * whole for the coarse per-chain question the network picker asks.
+ */
+const STEP_CONTRACTS: readonly { name: string; at: (deployment: DropDeployment) => Address }[] = [
+  { name: 'GuardSteps', at: (d) => d.guardSteps },
+  { name: 'TokenSteps', at: (d) => d.tokenSteps },
+  { name: 'PresignSteps', at: (d) => d.presignSteps },
+  { name: 'TwapSteps', at: (d) => d.twapSteps },
+  { name: 'StopLossSteps', at: (d) => d.stopLossSteps },
 ]
 
 const hasCode = (value: string | undefined) => Boolean(value && value !== '0x')
 
+/** Probe a list of named addresses and return the names of the ones with no code. */
+async function readMissing(
+  chainId: number,
+  contracts: readonly { name: string; address: Address }[],
+): Promise<string[]> {
+  const client = getPublicClient(chainId)
+  const codes = await Promise.all(contracts.map((contract) => client.getCode({ address: contract.address })))
+  return contracts.filter((_, index) => !hasCode(codes[index])).map((contract) => contract.name)
+}
+
 /**
- * Which of the required contracts are missing on a chain.
+ * Which contracts are missing on a chain, asking about the whole generation.
  *
  * This is a question about the *chain*, not about a recipe: the addresses are identical everywhere, so
  * readiness depends on nothing but the chain id. That is what lets the network picker ask it about
- * chains the user has not selected.
+ * chains the user has not selected — and why it has to check every step contract rather than the ones
+ * some particular recipe happens to use.
  */
 export async function readMissingContracts(chainId: number): Promise<string[]> {
   const deployment = getDeployment(chainId)
-  const client = getPublicClient(chainId)
-  const codes = await Promise.all(
-    REQUIRED_CONTRACTS.map((contract) => client.getCode({ address: contract.at(deployment) })),
+  return readMissing(
+    chainId,
+    [...CORE_CONTRACTS, ...STEP_CONTRACTS].map((contract) => ({
+      name: contract.name,
+      address: contract.at(deployment),
+    })),
   )
-  return REQUIRED_CONTRACTS.filter((_, index) => !hasCode(codes[index])).map((contract) => contract.name)
+}
+
+/**
+ * The same question narrowed to one recipe: the core contracts, plus exactly the contracts this
+ * recipe delegatecalls into.
+ *
+ * The narrowing is the point. A pre-sign recipe does not care whether `TwapSteps` exists, and
+ * gating its Activate button on a contract it never reaches would be a false negative. Conversely a
+ * `raw` step that delegatecalls somewhere unexpected is checked too, named by its bare address —
+ * delegatecalling a codeless address is the one thing that fails silently, so it is the one thing the
+ * UI must not let the user walk into.
+ */
+export async function readMissingForRecipe(compiled: CompiledRecipe): Promise<string[]> {
+  const deployment = compiled.deployment
+  const named = new Map(STEP_CONTRACTS.map((contract) => [contract.at(deployment).toLowerCase(), contract.name]))
+
+  const targets = new Map<string, string>()
+  for (const call of compiled.recipe.calls) {
+    if (!call.isDelegateCall) continue
+    const key = call.target.toLowerCase()
+    targets.set(key, named.get(key) ?? `the step contract at ${call.target}`)
+  }
+
+  return readMissing(deployment.chainId, [
+    ...CORE_CONTRACTS.map((contract) => ({ name: contract.name, address: contract.at(deployment) })),
+    ...[...targets].map(([address, name]) => ({ name, address: address as Address })),
+  ])
 }
 
 /**
@@ -88,7 +144,7 @@ export function probeChainReadiness(chainId: number): Promise<string[]> {
 
 export interface DropStatus {
   deployed: boolean
-  /** Which of the contracts in `REQUIRED_CONTRACTS` are missing on this chain. */
+  /** Which contracts this recipe needs but cannot find on this chain. */
   missing: string[]
   balance: bigint
   nativeBalance: bigint
@@ -98,7 +154,7 @@ export async function readDropStatus(compiled: CompiledRecipe, sellToken: Addres
   const client = getPublicClient(compiled.deployment.chainId)
   const [code, missing, balance, nativeBalance] = await Promise.all([
     client.getCode({ address: compiled.address }),
-    readMissingContracts(compiled.deployment.chainId),
+    readMissingForRecipe(compiled),
     client
       .readContract({ address: sellToken, abi: ERC20_ABI, functionName: 'balanceOf', args: [compiled.address] })
       .catch(() => 0n),

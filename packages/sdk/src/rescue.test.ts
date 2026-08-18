@@ -3,12 +3,13 @@ import type { Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 
 import { saltOf } from './encoding.js'
-import { COW_SHED_EXECUTOR_FACTORY_ABI, DROP_RECIPES_ABI } from './generated/artifacts.js'
+import { COW_SHED_EXECUTOR_FACTORY_ABI, TOKEN_STEPS_ABI } from './generated/artifacts.js'
 import { compileRecipe } from './recipe.js'
 import {
   buildDeployOnlyTx,
   buildOwnerSweepTx,
   buildRescueForState,
+  buildRevokeCalls,
   buildRescueTx,
   buildSweepCalls,
 } from './rescue.js'
@@ -37,9 +38,9 @@ describe('buildSweepCalls', () => {
     expect(calls).toHaveLength(2)
     // Must be delegatecalls, or `sweep` would read the helper's own balance.
     expect(calls.every((call) => call.isDelegateCall)).toBe(true)
-    expect(calls.every((call) => call.target === compiled.deployment.recipes)).toBe(true)
+    expect(calls.every((call) => call.target === compiled.deployment.tokenSteps)).toBe(true)
 
-    const decoded = calls.map((call) => decodeFunctionData({ abi: DROP_RECIPES_ABI, data: call.callData }))
+    const decoded = calls.map((call) => decodeFunctionData({ abi: TOKEN_STEPS_ABI, data: call.callData }))
     expect(decoded.map((d) => d.functionName)).toEqual(['sweep', 'sweep'])
     expect(decoded.map((d) => d.args?.[0])).toEqual([WXDAI, NATIVE])
   })
@@ -129,3 +130,86 @@ describe('buildRescueForState', () => {
     expect(tx.to).toBe(compiled.address)
   })
 })
+
+describe('buildRevokeCalls', () => {
+  const deployment = compiled.deployment
+
+  it('retires a conditional order and un-signs a pre-signed one, as plain calls', () => {
+    const hash = `0x${'11'.repeat(32)}` as const
+    const uid = `0x${'22'.repeat(56)}` as const
+
+    const calls = buildRevokeCalls({
+      deployment,
+      conditionalOrderHashes: [hash],
+      orderUids: [uid],
+    })
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0]!.target).toBe(deployment.composableCow)
+    expect(calls[1]!.target).toBe(deployment.settlement)
+    // Plain calls: `msg.sender` has to be the drop, and the shed calling out already is that.
+    // A delegatecall would run ComposableCoW's code in the drop's storage, which is nonsense.
+    expect(calls.every((call) => !call.isDelegateCall)).toBe(true)
+    // A revocation that silently fails is worse than one that reverts.
+    expect(calls.every((call) => !call.allowFailure)).toBe(true)
+
+    expect(decodeFunctionData({ abi: COMPOSABLE_COW_ABI, data: calls[0]!.callData })).toMatchObject({
+      functionName: 'remove',
+      args: [hash],
+    })
+    expect(decodeFunctionData({ abi: SETTLEMENT_ABI, data: calls[1]!.callData })).toMatchObject({
+      functionName: 'setPreSignature',
+      args: [uid, false],
+    })
+  })
+
+  it('is empty when there is nothing outstanding', () => {
+    expect(buildRevokeCalls({ deployment })).toEqual([])
+  })
+
+  it('puts revocations before the sweep in a rescue', () => {
+    // Ordering is cosmetic — one transaction — but retiring the order before taking the money is the
+    // order a person would describe, and it reads that way in a simulation trace.
+    const { tx } = buildRescueForState({
+      deployment,
+      owner: OWNER,
+      setupData: compiled.setupData,
+      drop: compiled.address,
+      to: OWNER,
+      tokens: [WXDAI],
+      deployed: true,
+      revoke: { conditionalOrderHashes: [`0x${'11'.repeat(32)}`] },
+    })
+
+    // The revoke targets ComposableCoW and the sweep targets the step contract, so decoding the
+    // executeHooks payload is not needed: the two addresses appear in that order in the calldata.
+    const composableAt = tx.data.toLowerCase().indexOf(deployment.composableCow.slice(2).toLowerCase())
+    const sweepAt = tx.data.toLowerCase().indexOf(deployment.tokenSteps.slice(2).toLowerCase())
+    expect(composableAt).toBeGreaterThan(-1)
+    expect(sweepAt).toBeGreaterThan(-1)
+    expect(composableAt).toBeLessThan(sweepAt)
+  })
+})
+
+const COMPOSABLE_COW_ABI = [
+  {
+    type: 'function',
+    name: 'remove',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'singleOrderHash', type: 'bytes32' }],
+    outputs: [],
+  },
+] as const
+
+const SETTLEMENT_ABI = [
+  {
+    type: 'function',
+    name: 'setPreSignature',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'orderUid', type: 'bytes' },
+      { name: 'signed', type: 'bool' },
+    ],
+    outputs: [],
+  },
+] as const

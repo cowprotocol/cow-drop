@@ -19,6 +19,7 @@ library DropConfig {
     address internal constant COMPOSABLE_COW = 0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74;
     address internal constant TWAP_HANDLER = 0x6cF1e9cA41f7611dEf408122793c358a3d11E5a5;
     address internal constant CURRENT_BLOCK_TIMESTAMP_FACTORY = 0x52eD56Da04309Aca4c3FECC595298d80C2f16BAc;
+    address internal constant STOP_LOSS_HANDLER = 0x412c36e5011CD2517016D243a2dfB37f73A242E7;
 
     function wrappedNative(uint256 chainId) internal pure returns (address) {
         if (chainId == GNOSIS) return 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d; // WXDAI

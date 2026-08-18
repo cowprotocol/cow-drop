@@ -2,31 +2,58 @@
 // Regenerate with: pnpm --filter @cowprotocol/cow-drop-sdk generate
 
 import { DROP_CHAINS, getDropChain } from '../chains.js'
-import type { DropDeployment } from '../types.js'
+import type { DropAddresses, DropDeployment } from '../types.js'
 import { PROXY_CREATION_CODE } from './artifacts.js'
 
 /**
- * The contract addresses. Identical on every chain — see `chains.ts` for why.
+ * The contract addresses, per generation. Identical on every chain within a generation — see
+ * `chains.ts` for why.
+ *
+ * A generation is one deployment of the stack. Every address here feeds the CREATE2 preimage of every
+ * drop, so a new generation means new drop addresses for the same recipe — which is why old ones are
+ * kept rather than replaced. A recipe file pinned to generation N keeps resolving to the address its
+ * author funded, forever.
+ */
+export const GENERATIONS: Record<number, DropAddresses> = {
+  1: {
+    factory: '0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99',
+    executor: '0xB61071638BE341F8959492838899907FDA1dA817',
+    guardSteps: '0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7',
+    tokenSteps: '0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c',
+    presignSteps: '0xE9659a153DeE9B90FDA9653F78E2879dB695e74B',
+    twapSteps: '0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5',
+    stopLossSteps: '0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C',
+    settlement: '0x9008D19f58AAbD9eD0D60971565AA8510560ab41',
+    composableCow: '0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74',
+    shedImplementation: '0x1c4b988481d945c98a21446AB2960000d290aB22',
+  },
+}
+
+/** The generation a recipe gets when it does not ask for one. */
+export const LATEST_GENERATION = 1
+
+/**
+ * The latest generation's addresses.
  * Recorded from: chain 1, chain 100, chain 11155111.
  */
-export const ADDRESSES = {
-  factory: '0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99',
-  executor: '0xB61071638BE341F8959492838899907FDA1dA817',
-  recipes: '0x8fd40C67B633482d4a37c2c13297E8B353bc692f',
-  shedImplementation: '0x1c4b988481d945c98a21446AB2960000d290aB22',
-} as const
+export const ADDRESSES = GENERATIONS[LATEST_GENERATION]!
 
-/** Every chain cow-drop supports, keyed by id. */
+/** Every chain cow-drop supports, keyed by id, at the latest generation. */
 export const DEPLOYMENTS: Record<number, DropDeployment> = Object.fromEntries(
-  DROP_CHAINS.map((chain) => [
-    chain.chainId,
-    { chainId: chain.chainId, ...ADDRESSES, proxyCreationCode: PROXY_CREATION_CODE },
-  ]),
+  DROP_CHAINS.map((chain) => [chain.chainId, getDeployment(chain.chainId)]),
 )
 
-export function getDeployment(chainId: number): DropDeployment {
+export function getDeployment(chainId: number, generation: number = LATEST_GENERATION): DropDeployment {
   if (!getDropChain(chainId)) {
     throw new Error(`cow-drop does not support chain ${chainId}`)
   }
-  return { chainId, ...ADDRESSES, proxyCreationCode: PROXY_CREATION_CODE }
+  const addresses = GENERATIONS[generation]
+  if (!addresses) {
+    // Deliberately distinct from the unsupported-chain error: this one means the recipe is newer (or
+    // older) than the SDK, and the fix is a version bump rather than a different chain.
+    throw new Error(
+      `unknown cow-drop generation ${generation}; this SDK knows ${Object.keys(GENERATIONS).join(', ')}`,
+    )
+  }
+  return { chainId, generation, ...addresses, proxyCreationCode: PROXY_CREATION_CODE }
 }
