@@ -189,6 +189,23 @@ export function App() {
    */
   const ownerUnusable = UNUSABLE_OWNERS.has(recipe.owner.toLowerCase())
 
+  /**
+   * What is wrong with the owner *field*, as opposed to with the recipe.
+   *
+   * The section-3 gate is the backstop that stops the money moving; this is the part that says which
+   * input caused it. Reported against `form.owner` rather than the recipe, because an imported recipe
+   * does not come from this field and blaming it would be wrong.
+   */
+  const ownerError = imported
+    ? null
+    : form.owner.trim() === ''
+      ? 'Required. Without it the drop has no owner, and an unowned drop can never be recovered by anyone.'
+      : !isAddress(form.owner)
+        ? 'Not a valid address.'
+        : UNUSABLE_OWNERS.has(form.owner.toLowerCase())
+          ? 'Nobody can transact as this address, so a drop owned by it could never be recovered.'
+          : null
+
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setImported(null)
     setForm((previous) => ({ ...previous, [key]: value }))
@@ -444,7 +461,14 @@ export function App() {
               placeholder="Paste your address, or connect a wallet"
               value={form.owner}
               onChange={(event) => set('owner', event.target.value)}
+              aria-invalid={ownerError !== null}
+              aria-describedby={ownerError ? 'owner-error' : undefined}
             />
+            {ownerError && (
+              <span className="field-error" id="owner-error">
+                {ownerError}
+              </span>
+            )}
           </label>
           <TokenPicker
             label="Sell token"

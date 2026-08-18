@@ -269,6 +269,17 @@ code {
   word-break: break-word;
 }
 
+/* Said next to the input that caused it, rather than only in the panel that withholds the address. */
+.field-error {
+  color: var(--error);
+  font-size: 0.8rem;
+  max-width: 46ch;
+}
+
+input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
 .steps {
   overflow-x: auto;
 }
