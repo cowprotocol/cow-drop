@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
 
 import { BridgeError } from '../errors.js'
+import { DESTINATION_EXECUTING_BRIDGES } from './wire.js'
 import { BungeeDropProvider } from './provider.js'
 
 const SENDER: Address = '0x1111111111111111111111111111111111111111'
@@ -144,17 +145,17 @@ describe('BungeeDropProvider.getQuote', () => {
   })
 
   /**
-   * Restricting bridges is what made Base to Gnosis look unreachable: across, cctp and
-   * gnosis-native-bridge serve none of it, while Symbiosis serves it and supports the destination
-   * payload. So the filter is opt-in, and its absence is worth a test of its own.
+   * The default that stops a silent loss. A bridge that ignores the destination payload quotes exactly
+   * like one that honours it — `destinationExec` is echoed back verbatim either way — so an unfiltered
+   * quote can deliver with a plain transfer, stranding the tokens at the receiver with no drop funded.
    */
-  it('does not restrict the bridges unless asked to', async () => {
+  it('only asks for bridges that run the destination payload', async () => {
     const { doFetch, calls } = fakeFetch({ '/quote': quoteBody([route('q1', '999000000')]), '/build-tx': BUILD_BODY })
 
     await new BungeeDropProvider({ fetch: doFetch }).getQuote(request())
 
     const quote = calls.find((url) => url.pathname.endsWith('/quote'))
-    expect(quote?.searchParams.has('includeBridges')).toBe(false)
+    expect(quote?.searchParams.get('includeBridges')).toBe(DESTINATION_EXECUTING_BRIDGES.join(','))
   })
 
   it('restricts them when asked', async () => {

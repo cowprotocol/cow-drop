@@ -486,9 +486,9 @@ function Bridge({
 
       {reachable === false && (
         <p className="error">
-          Bungee cannot deliver that token on {chainName(destinationChain)} from{' '}
-          {chainName(sourceChainId)}. Try another source chain, or a recipe that sells a token this
-          bridge can deliver there.
+          No bridge that runs a destination payload can deliver that token on{' '}
+          {chainName(destinationChain)} from {chainName(sourceChainId)}. Only those bridges can activate
+          the drop on arrival, so this pair will not work — try another source chain.
         </p>
       )}
 

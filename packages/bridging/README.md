@@ -67,13 +67,22 @@ the destination to `OrderFlow`. Naming the destination as data instead means one
 serves both — everything else (the quote call, `destinationPayload`, `destinationGasLimit`, route
 selection) is already identical.
 
-## Do not filter the bridges
+## Why the bridge list is an allowlist
 
-`includeBridges` is opt-in and omitted by default, which lets Bungee offer everything it has. The
-chain list is far more permissive than any single bridge, so a narrow set silently turns supported
-pairs into "no route": restricting to `across, cctp, gnosis-native-bridge` leaves **Base to Gnosis
-with no route at all**, while Symbiosis serves it and supports the destination payload. Verified
-working end to end — quote through build-tx — for WETH on Base to WETH on Gnosis.
+`includeBridges` defaults to `DESTINATION_EXECUTING_BRIDGES` — `across`, `cctp`, `gnosis-native-bridge`
+— and widening it is dangerous, because **Bungee gives no signal for destination-execution support**.
+A route that ignores the payload quotes exactly like one that honours it: `destinationExec` in the
+response is a verbatim echo of what you sent, and no field on the route says otherwise.
+
+Observed the hard way. Symbiosis quotes Base→Gnosis happily and then delivers with a plain transfer:
+tokens land at the receiver, `executeData` is never called, no drop is funded, no order is placed. The
+money is recoverable — anyone may call `executeData` and sweep the balance into the drop it names —
+but until someone does, it sits in a permissionless contract where anyone may sweep it into a drop of
+*their* own.
+
+The price is reach. With the allowlist, Gnosis is only reachable from Ethereum; Base and Arbitrum
+reach Ethereum, and Ethereum reaches Base. Widen the list only for a bridge whose destination
+execution you have watched work on-chain.
 
 ## What is not here
 

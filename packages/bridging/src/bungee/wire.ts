@@ -8,21 +8,28 @@
  * Every amount is a decimal string here: JSON has no bigint, and these are token atoms.
  */
 
-/**
- * A bridge name as Bungee spells it in `includeBridges`.
- *
- * Deliberately not a union. Bungee's set is theirs to change, and pinning it here turns a bridge they
- * added into a pair we report as unreachable — which is exactly what happened: restricting to
- * across/cctp/gnosis-native-bridge left Base to Gnosis with no route at all, while Symbiosis serves it
- * and supports the destination payload.
- */
+/** A bridge name as Bungee spells it in `includeBridges`. */
 export type BridgeName = string
 
 /**
- * Bridges seen in Bungee's answers. Informational — a starting point for anyone who wants to restrict
- * the set, never a filter applied on your behalf.
+ * The bridges that actually run a destination payload — and the default, because the alternative
+ * silently loses money.
+ *
+ * **Bungee gives no signal for this.** A quote for a route that ignores destination execution looks
+ * identical to one for a route that honours it: `destinationExec` in the response is a verbatim echo
+ * of what you sent (send `0xdeadbeef` and it comes back), and no field on the route says whether the
+ * bridge will do anything with it.
+ *
+ * So an unfiltered quote is not "more routes", it is a coin flip. Symbiosis quotes Base to Gnosis
+ * happily, and then delivers with a plain transfer: the tokens land at the receiver, `executeData` is
+ * never called, no drop is funded and no order is placed. The money is recoverable — anyone may call
+ * `executeData` and sweep the balance into the drop it names — but until someone does, it is sitting
+ * in a permissionless contract where *anyone* may sweep it into a drop of their own.
+ *
+ * An allowlist is therefore the only safe default, and narrowing the reachable pairs is the price.
+ * Widen it only for a bridge whose destination execution you have watched work on-chain.
  */
-export const KNOWN_BRIDGES: readonly BridgeName[] = ['across', 'cctp', 'gnosis-native-bridge', 'symbiosis']
+export const DESTINATION_EXECUTING_BRIDGES: readonly BridgeName[] = ['across', 'cctp', 'gnosis-native-bridge']
 
 export const BUNGEE_BASE_URL = 'https://public-backend.bungee.exchange'
 export const BUNGEE_API_PATH = '/api/v1/bungee'
