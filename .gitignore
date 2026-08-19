@@ -16,6 +16,10 @@ contracts/broadcast/**/dry-run/
 # keeper and watch tower state: registry, spend ledger, block cursors
 out/
 
+# npm pack output — the release workflow packs the SDK into packages/, and a local `pnpm pack` lands
+# in whichever directory it was run from
+*.tgz
+
 # env
 .env
 .env.local

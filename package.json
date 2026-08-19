@@ -3,6 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "description": "Funding addresses with baked-in trading logic, built on cow-shed",
+  "license": "GPL-3.0-or-later",
+  "author": "CoW Protocol",
+  "homepage": "https://github.com/cowprotocol/cow-drop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cowprotocol/cow-drop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cowprotocol/cow-drop/issues"
+  },
   "scripts": {
     "build": "pnpm -r build",
     "dev:keeper": "pnpm --filter @cowprotocol/cow-drop-keeper dev",
