@@ -963,8 +963,11 @@ details.subsection > summary .guard-count {
  * The option is a paragraph, so the control has to sit at the top of it rather than centred against a
  * block of text — and `align-items: start` on a flex row is what keeps it beside the first line.
  */
-.radio {
-  display: flex;
+label.radio {
+  /* `label` is a column by default, which is right for a field and wrong for a choice — the same
+     reason `label.checkbox` above exists. `start` rather than `center` because the option is a
+     sentence, so the control belongs beside its first line. */
+  flex-direction: row;
   align-items: start;
   gap: 0.55rem;
   margin: 0 0 0.6rem;
@@ -972,8 +975,8 @@ details.subsection > summary .guard-count {
   font-weight: normal;
 }
 
-.radio input {
-  margin-top: 0.2rem;
+label.radio input {
+  margin-top: 0.15rem;
   width: auto;
   flex: none;
 }
