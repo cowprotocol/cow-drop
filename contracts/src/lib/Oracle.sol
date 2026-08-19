@@ -13,7 +13,7 @@ error StaleOraclePrice(address feed, uint256 updatedAt, uint256 maxAge);
 /// @notice Turning a pair of Chainlink-style feeds into an amount of buy token.
 ///
 /// @dev A library of `internal` functions, so it is inlined and never deployed — no address, and
-///      therefore nothing here can move a drop address. See `contracts/README.md` on the layout.
+///      therefore nothing here can move a drop address. See `contracts/ARCHITECTURE.md` on the layout.
 ///
 ///      Every read is checked for a positive answer and for staleness. A feed that has stopped
 ///      updating otherwise reads as a confident wrong price, which for a step that sets an order's
@@ -57,6 +57,8 @@ library Oracle {
         if (block.timestamp - updatedAt > maxAge) revert StaleOraclePrice(feed, updatedAt, maxAge);
 
         uint8 feedDecimals = IPriceFeedLike(feed).decimals();
+        // casting to 'uint256' is safe because the `answer <= 0` revert above leaves it positive
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 price = uint256(answer);
         if (feedDecimals < 18) return price * (10 ** (18 - feedDecimals));
         if (feedDecimals > 18) return price / (10 ** (feedDecimals - 18));

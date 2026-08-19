@@ -243,6 +243,9 @@ contract DropGnosisForkTest is Test {
             receiver: recipient,
             isSellOrder: true,
             isPartiallyFillable: false,
+            // casting to 'uint32' is safe because the fork's timestamp plus a test validity is far
+            // below 2^32
+            // forge-lint: disable-next-line(unsafe-typecast)
             validTo: uint32(block.timestamp + validity),
             sellTokenPriceOracle: SELL_ORACLE,
             buyTokenPriceOracle: BUY_ORACLE,

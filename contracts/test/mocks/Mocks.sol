@@ -53,6 +53,10 @@ contract MockERC20 {
 
 /// @dev Just enough GPv2Settlement to observe pre-signatures.
 contract MockSettlement {
+    // `ISettlementLike.domainSeparator()` is the ABI this mock exists to imitate, so the lowercase name
+    // is load-bearing: SCREAMING_SNAKE_CASE would rename the getter's selector and `CowOrder.uidOf`
+    // would stop finding it.
+    // forge-lint: disable-next-line(screaming-snake-case-immutable)
     bytes32 public immutable domainSeparator;
 
     mapping(bytes32 => bool) internal signed;
@@ -74,6 +78,9 @@ contract MockSettlement {
 
 /// @dev Just enough ComposableCoW to observe conditional-order registration.
 contract MockComposableCow {
+    // Same as `MockSettlement` above: `IComposableCowLike.domainSeparator()` is the ABI being imitated,
+    // so the getter's name cannot be changed to satisfy the lint.
+    // forge-lint: disable-next-line(screaming-snake-case-immutable)
     bytes32 public immutable domainSeparator;
 
     mapping(address => mapping(bytes32 => bool)) public singleOrders;

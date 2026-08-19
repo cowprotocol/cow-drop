@@ -229,6 +229,8 @@ contract FixturesScript is Script {
         if (i == 3) {
             Call[] memory calls = new Call[](3);
             for (uint256 j; j < 3; j++) {
+                // both casts are safe because `j < 3`
+                // forge-lint: disable-start(unsafe-typecast)
                 calls[j] = Call({
                     target: address(uint160(0xC0FFEE + j)),
                     value: j,
@@ -236,6 +238,7 @@ contract FixturesScript is Script {
                     allowFailure: j % 2 == 0,
                     isDelegateCall: j % 2 == 1
                 });
+                // forge-lint: disable-end(unsafe-typecast)
             }
             return (address(0xA11CE), _encode("multi", false, calls), "three calls, varying lengths");
         }

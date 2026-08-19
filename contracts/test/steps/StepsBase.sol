@@ -16,14 +16,7 @@ import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
 import {IComposableCow} from "cow-shed/IComposableCow.sol";
 
-import {
-    MockComposableCow,
-    MockERC20,
-    MockPriceFeed,
-    MockReadable,
-    MockSettlement,
-    MockWrappedNative
-} from "../mocks/Mocks.sol";
+import {MockComposableCow, MockERC20, MockSettlement, MockWrappedNative} from "../mocks/Mocks.sol";
 
 /// @dev Local mirror of `IConditionalOrder.ConditionalOrderParams` with `handler` as a plain address,
 ///      so tests can build the struct without importing the interface type.
