@@ -143,6 +143,29 @@ describe('BungeeDropProvider.getQuote', () => {
     expect(quote?.searchParams.get('disableAuto')).toBe('true')
   })
 
+  /**
+   * Restricting bridges is what made Base to Gnosis look unreachable: across, cctp and
+   * gnosis-native-bridge serve none of it, while Symbiosis serves it and supports the destination
+   * payload. So the filter is opt-in, and its absence is worth a test of its own.
+   */
+  it('does not restrict the bridges unless asked to', async () => {
+    const { doFetch, calls } = fakeFetch({ '/quote': quoteBody([route('q1', '999000000')]), '/build-tx': BUILD_BODY })
+
+    await new BungeeDropProvider({ fetch: doFetch }).getQuote(request())
+
+    const quote = calls.find((url) => url.pathname.endsWith('/quote'))
+    expect(quote?.searchParams.has('includeBridges')).toBe(false)
+  })
+
+  it('restricts them when asked', async () => {
+    const { doFetch, calls } = fakeFetch({ '/quote': quoteBody([route('q1', '999000000')]), '/build-tx': BUILD_BODY })
+
+    await new BungeeDropProvider({ fetch: doFetch, includeBridges: ['across'] }).getQuote(request())
+
+    const quote = calls.find((url) => url.pathname.endsWith('/quote'))
+    expect(quote?.searchParams.get('includeBridges')).toBe('across')
+  })
+
   it('maps the route, the approval and the transaction', async () => {
     const { doFetch } = fakeFetch({ '/quote': quoteBody([route('q1', '999000000')]), '/build-tx': BUILD_BODY })
 

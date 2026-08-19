@@ -1,4 +1,4 @@
-import { SUPPORTED_BRIDGES, type BridgeQuote } from '@cowprotocol/cow-drop-bridging'
+import type { BridgeQuote } from '@cowprotocol/cow-drop-bridging'
 import { ON_FAILURE, type DropRecipeJson, type OnFailure } from '@cowprotocol/cow-drop-sdk'
 import { formatUnits, parseUnits, type Address, type Hex } from 'viem'
 import { useEffect, useMemo, useState } from 'react'
@@ -453,8 +453,8 @@ function Bridge({
       {reachable === false && (
         <p className="error">
           Bungee cannot deliver that token on {chainName(destinationChain)} from{' '}
-          {chainName(sourceChainId)}. Only {SUPPORTED_BRIDGES.join(', ')} are enabled here, and they do
-          not all serve every chain — try another source chain.
+          {chainName(sourceChainId)}. Try another source chain, or a recipe that sells a token this
+          bridge can deliver there.
         </p>
       )}
 
@@ -609,7 +609,7 @@ function describeBridgeError(cause: unknown): string {
     // Bungee answering "no routes" is a successful response, not a failed one — say so, or the next
     // move looks like "retry" when it is actually "pick a different chain or token".
     if (code === 'no-routes') {
-      return `Bungee has no route for this pair and amount. It answered, with nothing to offer: only ${SUPPORTED_BRIDGES.join(', ')} are enabled here, and they do not all serve every chain. Try another source chain, another token, or a larger amount.`
+      return 'Bungee answered, with nothing to offer: no bridge it has covers this pair at this amount. Try another source chain, another token, or a larger amount.'
     }
     if (code === 'quote-failed') return 'Bungee rejected the quote request — the pair or amount may be unsupported'
     if (code === 'build-failed') return 'the quote expired before it could be built — get a fresh one'

@@ -3,14 +3,13 @@ import {
   BUNGEE_API_PATH,
   BUNGEE_BASE_URL,
   BUNGEE_MANUAL_API_PATH,
-  SUPPORTED_BRIDGES,
   type BungeeBuildTxResponseWire,
   type BungeeQuoteRequestWire,
   type BungeeQuoteResponseWire,
   type BungeeRouteWire,
   type BungeeTokenListResponseWire,
   type BungeeTokenWire,
-  type SupportedBridge,
+  type BridgeName,
 } from './wire.js'
 
 /**
@@ -23,21 +22,28 @@ import {
 export interface BungeeApiOptions {
   baseUrl?: string
   manualBaseUrl?: string
-  /** Which bridges to consider. Defaults to all Bungee supports through this API. */
-  includeBridges?: readonly SupportedBridge[]
+  /**
+   * Restrict the bridges Bungee may route through.
+   *
+   * Omitted by default, which lets Bungee offer everything it has. Filtering is a real foot-gun here:
+   * the chain list is far more permissive than any one bridge, so a narrow set silently turns
+   * supported pairs into "no route" — Base to Gnosis has none through across/cctp/gnosis-native-bridge
+   * and a perfectly good one through Symbiosis. See `KNOWN_BRIDGES` for names.
+   */
+  includeBridges?: readonly BridgeName[]
   fetch?: typeof globalThis.fetch
 }
 
 export class BungeeApi {
   private readonly baseUrl: string
   private readonly manualBaseUrl: string
-  private readonly includeBridges: readonly SupportedBridge[]
+  private readonly includeBridges: readonly BridgeName[] | undefined
   private readonly doFetch: typeof globalThis.fetch
 
   constructor(options: BungeeApiOptions = {}) {
     this.baseUrl = options.baseUrl ?? `${BUNGEE_BASE_URL}${BUNGEE_API_PATH}`
     this.manualBaseUrl = options.manualBaseUrl ?? `${BUNGEE_BASE_URL}${BUNGEE_MANUAL_API_PATH}`
-    this.includeBridges = options.includeBridges ?? SUPPORTED_BRIDGES
+    this.includeBridges = options.includeBridges
 
     const injected = options.fetch ?? globalThis.fetch
     if (!injected) throw new Error('no fetch available: pass one in BungeeApiOptions')
@@ -55,7 +61,7 @@ export class BungeeApi {
       toChainId: String(params.toChainId),
       fromChainId: params.fromChainId === undefined ? undefined : String(params.fromChainId),
       fromTokenAddress: params.fromTokenAddress,
-      includeBridges: this.includeBridges.join(','),
+      includeBridges: this.includeBridges?.join(','),
     })
 
     if (!response.success) throw new BridgeError('quote-failed', 'Bungee could not list destination tokens', response)
@@ -72,7 +78,7 @@ export class BungeeApi {
   async getQuote(request: BungeeQuoteRequestWire): Promise<{ route: BungeeRouteWire; input: BungeeTokenWire }> {
     const response = await this.get<BungeeQuoteResponseWire>(this.baseUrl, '/quote', {
       ...request,
-      includeBridges: request.includeBridges ?? this.includeBridges.join(','),
+      includeBridges: request.includeBridges ?? this.includeBridges?.join(','),
     })
 
     if (!response.success) throw new BridgeError('quote-failed', 'Bungee rejected the quote request', response)

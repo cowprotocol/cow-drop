@@ -67,6 +67,14 @@ the destination to `OrderFlow`. Naming the destination as data instead means one
 serves both — everything else (the quote call, `destinationPayload`, `destinationGasLimit`, route
 selection) is already identical.
 
+## Do not filter the bridges
+
+`includeBridges` is opt-in and omitted by default, which lets Bungee offer everything it has. The
+chain list is far more permissive than any single bridge, so a narrow set silently turns supported
+pairs into "no route": restricting to `across, cctp, gnosis-native-bridge` leaves **Base to Gnosis
+with no route at all**, while Symbiosis serves it and supports the destination payload. Verified
+working end to end — quote through build-tx — for WETH on Base to WETH on Gnosis.
+
 ## What is not here
 
 - **Bridge status.** The destination balance is the ground truth and the app already watches it;

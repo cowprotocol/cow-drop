@@ -8,9 +8,21 @@
  * Every amount is a decimal string here: JSON has no bigint, and these are token atoms.
  */
 
-export type SupportedBridge = 'across' | 'cctp' | 'gnosis-native-bridge'
+/**
+ * A bridge name as Bungee spells it in `includeBridges`.
+ *
+ * Deliberately not a union. Bungee's set is theirs to change, and pinning it here turns a bridge they
+ * added into a pair we report as unreachable — which is exactly what happened: restricting to
+ * across/cctp/gnosis-native-bridge left Base to Gnosis with no route at all, while Symbiosis serves it
+ * and supports the destination payload.
+ */
+export type BridgeName = string
 
-export const SUPPORTED_BRIDGES: readonly SupportedBridge[] = ['across', 'cctp', 'gnosis-native-bridge']
+/**
+ * Bridges seen in Bungee's answers. Informational — a starting point for anyone who wants to restrict
+ * the set, never a filter applied on your behalf.
+ */
+export const KNOWN_BRIDGES: readonly BridgeName[] = ['across', 'cctp', 'gnosis-native-bridge', 'symbiosis']
 
 export const BUNGEE_BASE_URL = 'https://public-backend.bungee.exchange'
 export const BUNGEE_API_PATH = '/api/v1/bungee'
