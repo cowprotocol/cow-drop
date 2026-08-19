@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 
 import { DEFAULT_CHAIN_ID, connect, onAccountsChanged, readAccount } from './lib/chain.js'
 import { TABS, parseRoute, routeHash } from './lib/route.js'
-import { useExternalRoute, useRoute } from './lib/useRoute.js'
+import { useExternalRoute, useRoute, writeHash } from './lib/useRoute.js'
 import { AboutTab } from './tabs/AboutTab.js'
 import { BridgeTab } from './tabs/BridgeTab.js'
 import { DropsTab } from './tabs/DropsTab.js'
@@ -47,8 +47,14 @@ export function App() {
    * Separate from `imported`, which flows the other way — Drops and the URL hand a recipe *to* the
    * builder, while this is the builder handing a finished one *on*. Sharing one slot would make
    * "fund this by bridging" overwrite the form it came from.
+   *
+   * Seeded from the URL for the same reason `imported` is: the recipe is the only way back to a
+   * funded address, so a refresh half-way through a bridge must not lose which drop was being funded.
    */
-  const [bridgeRecipe, setBridgeRecipe] = useState<DropRecipeJson | null>(null)
+  const [bridgeRecipe, setBridgeRecipe] = useState<DropRecipeJson | null>(() => {
+    const initial = parseRoute(window.location.hash)
+    return initial.tab === 'bridge' ? initial.recipe : null
+  })
   /** Mirrors of builder state: the chain to connect on, and the address the Drops list marks. */
   const [connectChainId, setConnectChainId] = useState(DEFAULT_CHAIN_ID)
   const [dropAddress, setDropAddress] = useState<Address | null>(null)
@@ -77,8 +83,25 @@ export function App() {
    * `#/recipes`, yields no recipe — and clearing on that would wipe a form the user is halfway through.
    */
   useExternalRoute((next) => {
-    if (next.recipe) setImported(next.recipe)
+    if (!next.recipe) return
+    // A `#/bridge/<recipe>` link is about the drop being funded, not about the form. It still reaches
+    // the builder as well, so "Change it" on the Bridge tab lands on the recipe you were funding
+    // rather than on an empty form.
+    if (next.tab === 'bridge') setBridgeRecipe(next.recipe)
+    setImported(next.recipe)
   })
+
+  /**
+   * Mirror the bridge recipe into the fragment, the same way the builder mirrors its own.
+   *
+   * Gated on the tab being on screen so it cannot rewrite another tab's fragment, and `replace` so it
+   * does not fill the back button. This is also what re-attaches the recipe after a bare `#/bridge`
+   * from the nav link, which carries no payload.
+   */
+  useEffect(() => {
+    if (route.tab !== 'bridge') return
+    writeHash(routeHash({ tab: 'bridge', recipe: bridgeRecipe }), 'replace')
+  }, [route.tab, bridgeRecipe])
 
   const onConnect = async () => {
     setError(null)

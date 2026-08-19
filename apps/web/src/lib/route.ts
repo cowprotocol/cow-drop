@@ -28,9 +28,19 @@ export const TABS: readonly { id: Tab; label: string }[] = [
 
 export interface Route {
   tab: Tab
-  /** The recipe the URL carries, or null. Only ever non-null on `recipes`. */
+  /** The recipe the URL carries, or null. Only ever non-null on a tab in `RECIPE_TABS`. */
   recipe: DropRecipeJson | null
 }
+
+/**
+ * The tabs whose fragment carries a recipe.
+ *
+ * Both of them work on one, and neither can reconstruct it from anywhere else — the recipe is the
+ * key, not a convenience, and a drop funded against a recipe nobody kept is unrecoverable. So the
+ * Bridge tab has to survive a refresh exactly as the builder does, and the fragment it already shares
+ * is the obvious place. Drops, About and SDK carry none because they need none.
+ */
+const RECIPE_TABS: ReadonlySet<Tab> = new Set<Tab>(['recipes', 'bridge'])
 
 const TABS_BY_ID: Record<string, Tab> = {
   recipes: 'recipes',
@@ -52,7 +62,8 @@ const TABS_BY_ID: Record<string, Tab> = {
  * |---|---|
  * | `#/recipes/<base64url>` | the builder, carrying a recipe |
  * | `#/recipes` | the builder, nothing in the URL yet |
- * | `#/bridge`, `#/drops`, `#/about`, `#/sdk` | those tabs, which never carry a recipe |
+ * | `#/bridge/<base64url>` | the bridge tab, carrying the recipe being funded |
+ * | `#/drops`, `#/about`, `#/sdk` | those tabs, which never carry a recipe |
  * | `#<base64url>` | **legacy** — every link shared before there were tabs |
  * | anything else | the builder, empty |
  *
@@ -78,19 +89,19 @@ export function parseRoute(hash: string): Route {
   // fragment somebody mistyped, and a blank page says it worse.
   if (!tab) return { tab: 'recipes', recipe: null }
 
-  // Only the Recipes tab reads a payload. The others carry none by decision, so a second segment on
-  // them is ignored rather than decoded.
-  return { tab, recipe: tab === 'recipes' && rest ? recipeFromHash(rest) : null }
+  // The other tabs carry no payload by decision, so a second segment on them is ignored rather than
+  // decoded.
+  return { tab, recipe: RECIPE_TABS.has(tab) && rest ? recipeFromHash(rest) : null }
 }
 
 /**
  * The inverse. Always includes the leading `#`, so the result can be compared against
  * `location.hash` directly — which is how the writer avoids rewriting an unchanged fragment.
  *
- * Never emits a recipe for a tab other than Recipes. That is the invariant behind `Route.recipe`
- * being documented as "only on recipes", and the reason switching tabs drops the payload from the URL.
+ * Never emits a recipe for a tab that does not carry one. That is the invariant behind
+ * `Route.recipe`, and the reason switching to Drops drops the payload from the URL.
  */
 export function routeHash(route: { tab: Tab; recipe?: DropRecipeJson | null }): string {
-  if (route.tab === 'recipes' && route.recipe) return `#/recipes/${recipeToHash(route.recipe)}`
+  if (RECIPE_TABS.has(route.tab) && route.recipe) return `#/${route.tab}/${recipeToHash(route.recipe)}`
   return `#/${route.tab}`
 }
