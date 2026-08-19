@@ -49,7 +49,7 @@ export const LATEST_GENERATION = 2
 
 /**
  * The latest generation's addresses.
- * Recorded from: chain 1, chain 100, chain 11155111.
+ * Recorded from: chain 1, chain 100, chain 11155111, chain 8453.
  */
 export const ADDRESSES = GENERATIONS[LATEST_GENERATION]!
 
