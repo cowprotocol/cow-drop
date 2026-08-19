@@ -27,16 +27,21 @@ at it.**
 At boot it prints its whole configuration, the payer and its balance, a summary of the state it
 loaded, and the URL of every route it serves — so a running keeper is auditable from its logs alone.
 
+Browsable API docs are at **<http://localhost:8787/v1/docs>** — Swagger UI over the keeper's own
+OpenAPI document.
+
 ```bash
 curl localhost:8787/v1/health         # payer, balance, budget left
 curl localhost:8787/v1/policy         # whether it is subsidising, before anyone commits
-curl localhost:8787/v1/openapi.json   # the whole surface, as OpenAPI 3.1
+open  localhost:8787/v1/docs          # Swagger UI
+curl  localhost:8787/v1/openapi.json  # the spec behind it
 ```
 
-`/v1/openapi.json` is paths and summaries only — enough to point Swagger UI, Redoc or
-[editor.swagger.io](https://editor.swagger.io) at it. No UI is bundled; request and response shapes
-live in [src/types.ts](src/types.ts), because hand-copying them into a spec produces one that lies as
-soon as a type changes.
+The spec is paths and summaries only. Request and response shapes live in [src/types.ts](src/types.ts),
+because hand-copying them into a spec produces one that lies as soon as a type changes.
+
+`/v1/docs` loads Swagger UI from a pinned CDN build rather than bundling `swagger-ui-dist`, so it is
+the one route that needs the internet — `/v1/openapi.json` is served locally and works offline.
 
 ## CLI
 

@@ -1,6 +1,7 @@
 import { DropChainId } from '@cowprotocol/cow-drop-sdk'
 import {
   OrderBookApi,
+  OrderBookApiError,
   SupportedChainId,
   getChainInfo,
   getWrappedTokenForChain,
@@ -109,6 +110,44 @@ export function getOrderBookApi(chainId: number): OrderBookApi {
   const api = new OrderBookApi({ chainId: chainId as SupportedChainId })
   orderBookApis.set(chainId, api)
   return api
+}
+
+/**
+ * A readable message out of an orderbook API failure.
+ *
+ * The SDK's `OrderBookApiError` builds its `message` from `response.statusText`, which browsers report
+ * as the empty string for every HTTP/2 response — and the CoW API is HTTP/2. So `error.message` is
+ * literally nothing, while the part worth reading (`{"errorType":"NoLiquidity","description":"no route
+ * found"}`) sits untouched on `body`. A failed quote rendered as a blank banner because of it.
+ *
+ * Anything that is not an API error is passed through, so callers can use this as their only
+ * error-to-string step.
+ */
+export function describeOrderBookError(cause: unknown): string {
+  if (!(cause instanceof OrderBookApiError)) {
+    return cause instanceof Error ? cause.message : String(cause)
+  }
+
+  const status = `HTTP ${cause.response.status}`
+  const detail = orderBookErrorDetail(cause.body) ?? cause.message.trim()
+  return detail ? `${status}: ${detail}` : status
+}
+
+/** The API answers errors as `{ errorType, description }`, but non-JSON responses come through as text. */
+function orderBookErrorDetail(body: unknown): string | undefined {
+  if (typeof body === 'string') return body.trim() || undefined
+  if (typeof body !== 'object' || body === null) return undefined
+
+  const { errorType, description } = body as { errorType?: unknown; description?: unknown }
+  const parts = [errorType, description].filter((part): part is string => typeof part === 'string' && part !== '')
+  return parts.length > 0 ? parts.join(': ') : undefined
+}
+
+/** The API's own name for the failure (`NoLiquidity`, `DuplicatedOrder`, …), when it gave one. */
+export function orderBookErrorType(cause: unknown): string | undefined {
+  if (!(cause instanceof OrderBookApiError)) return undefined
+  const { errorType } = (cause.body ?? {}) as { errorType?: unknown }
+  return typeof errorType === 'string' ? errorType : undefined
 }
 
 /** Only needed for the copy-pasteable curl; the SDK builds its own URLs internally. */

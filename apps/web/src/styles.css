@@ -709,6 +709,24 @@ button.danger:hover:not(:disabled) {
   color: var(--warn);
 }
 
+/*
+ * A whole section folded behind its own heading, for the ones that are escape hatches rather than steps
+ * everyone takes. The `h2` moves into the `summary`, so the section still reads as numbered prose when
+ * shut — the marker is the only thing that says there is more.
+ */
+.collapsed-section > summary {
+  margin: 0;
+}
+
+.collapsed-section > summary h2 {
+  display: inline;
+  margin: 0;
+}
+
+.collapsed-section[open] > summary {
+  margin-bottom: 0.9rem;
+}
+
 /* --- custom step builder -------------------------------------------------- */
 
 .step-builder {

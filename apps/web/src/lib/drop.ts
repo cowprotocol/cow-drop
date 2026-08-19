@@ -11,7 +11,13 @@ import {
 import type { OrderCreation } from '@cowprotocol/cow-sdk'
 import type { Address, Hex, TransactionReceipt } from 'viem'
 
-import { getOrderBookApi, getPublicClient, sendTransaction } from './chain.js'
+import {
+  describeOrderBookError,
+  getOrderBookApi,
+  getPublicClient,
+  orderBookErrorType,
+  sendTransaction,
+} from './chain.js'
 
 const ERC20_ABI = [
   { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'uint256' }] },
@@ -221,11 +227,13 @@ export async function postPlacedOrders(
       posted.push(await getOrderBookApi(chainId).sendOrder(toOrderBookPayload(order, drop) as OrderCreation))
     } catch (cause) {
       // A duplicate is a success: someone else already posted this order.
-      if (JSON.stringify(cause).includes('DuplicatedOrder')) {
+      if (orderBookErrorType(cause) === 'DuplicatedOrder') {
         posted.push(order.orderUid)
         continue
       }
-      throw cause
+      // Rewrapped because the SDK's own message for an API error is empty — see
+      // `describeOrderBookError`.
+      throw new Error(describeOrderBookError(cause), { cause })
     }
   }
 

@@ -143,7 +143,7 @@ export async function startKeeperService(options: KeeperServiceOptions): Promise
 
   logger.info(`up — HTTP on :${port}`)
   logger.info(`base url http://localhost:${port}/v1`)
-  logger.info(`openapi  http://localhost:${port}/v1/openapi.json`)
+  logger.info(`api docs http://localhost:${port}/v1/docs`)
   for (const route of ROUTES) {
     logger.info(`  ${route.method.padEnd(4)} ${route.path.padEnd(24)} ${route.summary}`)
   }

@@ -72,16 +72,24 @@ export interface RouteDoc {
   /** OpenAPI-style, so `{address}` rather than a regex. */
   path: string
   summary: string
+  /** What a 200 carries. Default `application/json`. */
+  produces?: string
 }
 
 export const ROUTES: readonly RouteDoc[] = [
   { method: 'GET', path: '/v1/health', summary: 'Liveness, payer balance, today\'s spend. 503 when the payer is below its floor.' },
   { method: 'GET', path: '/v1/policy', summary: 'The subsidy policy in force.' },
   { method: 'GET', path: '/v1/openapi.json', summary: 'This surface as an OpenAPI 3.1 document.' },
+  { method: 'GET', path: '/v1/docs', summary: 'Swagger UI over that document.', produces: 'text/html' },
   { method: 'POST', path: '/v1/drops', summary: 'Register a drop for the keeper to watch and pay for.' },
   { method: 'POST', path: '/v1/drops/unregister', summary: 'Stop watching a drop. Body carries the recipe, which is the proof.' },
   { method: 'GET', path: '/v1/drops/{address}', summary: 'One registered drop, with its last poll and simulation.' },
-  { method: 'GET', path: '/v1/events', summary: 'Server-sent event stream of registrations, activations and posted orders.' },
+  {
+    method: 'GET',
+    path: '/v1/events',
+    summary: 'Server-sent event stream of registrations, activations and posted orders.',
+    produces: 'text/event-stream',
+  },
 ]
 
 /**
@@ -104,7 +112,7 @@ export function openApiDocument(chainId: number, generation: number): unknown {
       [route.method.toLowerCase()]: {
         summary: route.summary,
         ...(parameters ? { parameters } : {}),
-        responses: { '200': { description: 'OK' } },
+        responses: { '200': { description: 'OK', content: { [route.produces ?? 'application/json']: {} } } },
       },
     }
   }
@@ -118,6 +126,56 @@ export function openApiDocument(chainId: number, generation: number): unknown {
     },
     paths,
   }
+}
+
+/**
+ * Swagger UI over `/v1/openapi.json`.
+ *
+ * The assets come from a pinned CDN build rather than a bundled `swagger-ui-dist`, because this
+ * package has no runtime dependencies beyond viem and the CoW SDK and an operator-facing docs page is
+ * not the thing to break that for. The trade is that this page — and only this page — needs the
+ * internet; `/v1/openapi.json` is served locally and works offline.
+ *
+ * The spec URL is derived from `location.pathname` rather than hardcoded, so the page works behind
+ * whatever host, port or subpath a proxy puts the keeper on. Derived rather than written as
+ * `./openapi.json` because the router strips trailing slashes and therefore also serves `/v1/docs/`,
+ * where a relative URL would resolve to `/v1/docs/openapi.json` and 404.
+ *
+ * Derived with string operations rather than a regex on purpose: this script is the body of a
+ * template literal, so TypeScript consumes `\/` before the browser ever sees it. A regex written the
+ * obvious way arrives as `//docs/?$/` — a line comment that silently deletes the call, which renders
+ * as a blank page with no error anywhere.
+ */
+const SWAGGER_UI_VERSION = '5.17.14'
+
+function docsPage(): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cow-drop keeper API</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@${SWAGGER_UI_VERSION}/swagger-ui.css" />
+    <style>
+      body { margin: 0 }
+      .swagger-ui .topbar { display: none }
+    </style>
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@${SWAGGER_UI_VERSION}/swagger-ui-bundle.js" crossorigin></script>
+    <script>
+      var path = location.pathname
+      if (path.charAt(path.length - 1) === '/') path = path.slice(0, -1)
+      window.ui = SwaggerUIBundle({
+        url: path.slice(0, path.lastIndexOf('/') + 1) + 'openapi.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+      })
+    </script>
+  </body>
+</html>
+`
 }
 
 /**
@@ -169,6 +227,11 @@ export function createKeeperServer(options: ServerOptions): Server {
     // Never `allow-credentials`: there is no auth on these routes, and it is invalid with `*`.
   }
 
+  function sendHtml(response: ServerResponse, status: number, body: string): void {
+    response.writeHead(status, { 'content-type': 'text/html; charset=utf-8' })
+    response.end(body)
+  }
+
   function send(response: ServerResponse, status: number, body: unknown): void {
     const payload = JSON.stringify(body)
     response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
@@ -195,6 +258,7 @@ export function createKeeperServer(options: ServerOptions): Server {
 
     if (request.method === 'GET' && path === '/v1/health') return health(response)
     if (request.method === 'GET' && path === '/v1/policy') return describePolicy(response)
+    if (request.method === 'GET' && path === '/v1/docs') return sendHtml(response, 200, docsPage())
     if (request.method === 'GET' && path === '/v1/openapi.json') {
       return send(response, 200, openApiDocument(deployment.chainId, deployment.generation))
     }

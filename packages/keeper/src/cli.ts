@@ -37,6 +37,8 @@ Options:
   --quiet                    Errors only.
   --help                     This.
 
+Browsable API docs are served at http://localhost:<port>/v1/docs once it is up.
+
 The hot key is read from a file or the environment, never from the command line: an argument is
 readable by every other process on the machine.
 `

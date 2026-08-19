@@ -35,6 +35,7 @@ GET  /v1/events?drop=0x…  -> SSE
 GET  /v1/health           -> payer, balance, budget left, counts
 GET  /v1/policy           -> whether it is subsidising, before anyone commits
 GET  /v1/openapi.json     -> this surface as an OpenAPI 3.1 document
+GET  /v1/docs             -> Swagger UI over that document
 ```
 
 The list above is generated at runtime from `ROUTES` in `src/server.ts`, which also feeds the boot

@@ -1,5 +1,6 @@
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { runInNewContext } from 'node:vm'
 import { compileRecipe } from '@cowprotocol/cow-drop-sdk'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -349,5 +350,63 @@ describe('ROUTES', () => {
       expect(response.status, `${route.method} ${path}`).not.toBe(404)
       await response.text()
     }
+  })
+})
+
+/**
+ * Runs the docs page's own inline script against a fake `location`, and reports the spec URL it asked
+ * Swagger UI for.
+ *
+ * The script is executed rather than pattern-matched because the failure this guards against is the
+ * script arriving *syntactically intact but semantically dead*: written with a regex, TypeScript
+ * consumes the backslashes inside the template literal and the browser receives `replace(//docs/?$/,`
+ * — a line comment that deletes the SwaggerUIBundle call. The HTML still contains every expected
+ * substring, the page still returns 200, and it renders blank. Only running it catches that.
+ */
+function specUrlAskedFor(html: string, pathname: string): string {
+  const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1]
+  if (!script) throw new Error('the docs page has no inline script')
+
+  let url: unknown
+  runInNewContext(script, {
+    location: { pathname },
+    window: {},
+    SwaggerUIBundle: (options: { url: string }) => {
+      url = options.url
+      return {}
+    },
+  })
+
+  if (typeof url !== 'string') throw new Error('the inline script never called SwaggerUIBundle')
+  return url
+}
+
+describe('GET /v1/docs', () => {
+  it('serves Swagger UI as html', async () => {
+    const { base } = await serve()
+
+    const response = await fetch(`${base}/v1/docs`)
+    const html = await response.text()
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(html).toContain('swagger-ui-bundle.js')
+  })
+
+  it('points Swagger UI at the sibling spec, with or without a trailing slash', async () => {
+    // The router strips trailing slashes, so `/v1/docs/` is served too — and a relative `openapi.json`
+    // would resolve to `/v1/docs/openapi.json` there and 404.
+    const { base } = await serve()
+    const html = await (await fetch(`${base}/v1/docs`)).text()
+
+    expect(specUrlAskedFor(html, '/v1/docs')).toBe('/v1/openapi.json')
+    expect(specUrlAskedFor(html, '/v1/docs/')).toBe('/v1/openapi.json')
+  })
+
+  it('survives being mounted under a proxy subpath', async () => {
+    const { base } = await serve()
+    const html = await (await fetch(`${base}/v1/docs`)).text()
+
+    expect(specUrlAskedFor(html, '/keeper/v1/docs')).toBe('/keeper/v1/openapi.json')
   })
 })

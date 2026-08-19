@@ -1,7 +1,7 @@
 import { OrderQuoteSideKindSell, SigningScheme, type OrderQuoteRequest } from '@cowprotocol/cow-sdk'
 import type { Address } from 'viem'
 
-import { getOrderBookApi } from './chain.js'
+import { describeOrderBookError, getOrderBookApi } from './chain.js'
 
 export interface MarketQuote {
   /** Human price, buy units per sell unit, as a decimal string ready for `limitPriceToFraction`. */
@@ -41,7 +41,13 @@ export async function quoteMarketPrice(params: {
     signingScheme: SigningScheme.PRESIGN,
   }
 
-  const { quote } = await getOrderBookApi(params.chainId).getQuote(request)
+  // `describeOrderBookError` rather than the raw failure: the SDK's message is empty for an API
+  // error, so an unwrapped rejection reaches the UI as a banner with nothing in it.
+  const { quote } = await getOrderBookApi(params.chainId)
+    .getQuote(request)
+    .catch((cause: unknown) => {
+      throw new Error(describeOrderBookError(cause), { cause })
+    })
 
   const sellAmount = BigInt(quote.sellAmount)
   const buyAmount = BigInt(quote.buyAmount)

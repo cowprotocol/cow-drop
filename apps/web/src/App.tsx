@@ -244,6 +244,11 @@ export function App() {
   const [referenceAmount, setReferenceAmount] = useState('100')
   const [quote, setQuote] = useState<MarketQuote | null>(null)
   const [quoting, setQuoting] = useState(false)
+  /**
+   * Beside the button rather than in the top banner. The banner is a screen away from the market-price
+   * box on a filled-in form, so a failed quote looked like a button that did nothing at all.
+   */
+  const [quoteError, setQuoteError] = useState<string | null>(null)
   /** Loaded from CoW's token list; the built-in list is the offline fallback. */
   const [tokens, setTokens] = useState<TokenInfo[]>(GNOSIS_TOKENS)
   const [walletChain, setWalletChain] = useState<number | null>(null)
@@ -419,7 +424,17 @@ export function App() {
   }, [compiled, form.chainId])
 
   useEffect(() => {
-    void fetchTokenList(form.chainId).then((loaded) => {
+    const chainId = form.chainId
+    let cancelled = false
+
+    void fetchTokenList(chainId).then((loaded) => {
+      // Two loads are in flight whenever the chain changes mid-fetch, and the slower one is not the
+      // older one: Gnosis pulls four lists where Sepolia pulls one. Without this guard the late answer
+      // wins, so the page settled with the network selector on one chain and the token pickers holding
+      // another chain's addresses — which is what a page load does, since the initial chain is the
+      // default and the wallet's chain arrives a tick later.
+      if (cancelled) return
+
       setTokens(loaded)
 
       // Token addresses are chain-specific, so the previous chain's selection is meaningless here.
@@ -431,11 +446,15 @@ export function App() {
         const known = (address: string) => loaded.some((t) => t.address.toLowerCase() === address.toLowerCase())
         if (known(previous.sellToken) && known(previous.buyToken)) return previous
 
-        const sell = findToken(loaded, wrappedNative(form.chainId)) ?? loaded[0]!
+        const sell = findToken(loaded, wrappedNative(chainId)) ?? loaded[0]!
         const buy = loaded.find((t) => t.address !== sell.address) ?? sell
         return { ...previous, sellToken: sell.address, buyToken: buy.address }
       })
     })
+
+    return () => {
+      cancelled = true
+    }
   }, [form.chainId])
 
   // Default to whatever network the wallet is already on, when we support it.
@@ -569,7 +588,7 @@ export function App() {
 
   const onQuote = async () => {
     setQuoting(true)
-    setError(null)
+    setQuoteError(null)
     setQuote(null)
     try {
       const decimals = sellToken?.decimals ?? 18
@@ -590,7 +609,7 @@ export function App() {
         }),
       )
     } catch (cause) {
-      setError(`Quote failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+      setQuoteError(`Quote failed: ${cause instanceof Error ? cause.message : String(cause)}`)
     } finally {
       setQuoting(false)
     }
@@ -848,6 +867,11 @@ export function App() {
               </>
             )}
           </div>
+          {quoteError && (
+            <p className="error" role="alert">
+              {quoteError}
+            </p>
+          )}
           <p className="hint">
             Only the <em>price</em> is used — a drop cannot know its amount in advance. The amount still
             matters: quote too little and the fee dominates, making the market look worse than it is.
@@ -1075,19 +1099,28 @@ export function App() {
                 />
               </section>
 
+              {/*
+                * Collapsed by default: an escape hatch for calls the recipe types do not cover, which is
+                * to say almost never — and open it costs a screenful of ABI fields between the rescue
+                * panel and the recipe file.
+                */}
               <section>
-                <h2>7 &middot; Add a custom step</h2>
-                <p className="hint">
-                  For calling something the recipe types do not cover. Every argument is a literal
-                  committed into the address, so it cannot depend on the amount that arrives.
-                </p>
-                <StepBuilder
-                  onAddStep={(step) => {
-                    setImported({ ...recipe, steps: [...recipe.steps, step] })
-                    setError(null)
-                  }}
-                  onError={setError}
-                />
+                <details className="collapsed-section">
+                  <summary>
+                    <h2>7 &middot; Add a custom step</h2>
+                  </summary>
+                  <p className="hint">
+                    For calling something the recipe types do not cover. Every argument is a literal
+                    committed into the address, so it cannot depend on the amount that arrives.
+                  </p>
+                  <StepBuilder
+                    onAddStep={(step) => {
+                      setImported({ ...recipe, steps: [...recipe.steps, step] })
+                      setError(null)
+                    }}
+                    onError={setError}
+                  />
+                </details>
               </section>
 
               <section>
