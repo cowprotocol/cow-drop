@@ -55,6 +55,7 @@ Registration, and `activated`.
 
 ```
 POST /v1/drops            { recipe, address } -> 201 { drop }, or 200 if already registered
+GET  /v1/drops?owner=0x…  -> every drop registered under one owner, newest first
 GET  /v1/drops/:address   -> the drop, its hints, and its activation history
 POST /v1/drops/unregister { recipe } -> 200, 409 while an activation is in flight
 GET  /v1/events?drop=0x…  -> SSE
@@ -122,6 +123,61 @@ tick has reconciled and the same request succeeds.
 
 What registration does cost is capacity: a recipe stored indefinitely and a line in every tick's poll
 set. Hence `--max-drops` and a body cap.
+
+## Listing by owner
+
+`GET /v1/drops?owner=…` requires the owner, and that is the design rather than an omission. Unfiltered
+this is a dump of every recipe the keeper holds — labels, token hints, current balances and activation
+history for everybody — which is an operator's view rather than a client's, and the cheapest possible way
+to make this process serialise its whole registry. `/v1/events` refuses an unfiltered stream for the same
+reason.
+
+A malformed owner is a **400**, not an empty 200: a typo and an empty registry must not read the same,
+because the page asking this exists to tell "you have nothing" from "we asked wrong". The chain is in the
+envelope because the *empty* answer is the only one carrying no drops to read it from, and that is
+exactly when a client has to say "this keeper has nothing for you" rather than "you have nothing".
+
+Retired drops are included, with no filter to exclude them. The drop nothing is watching is the one most
+worth seeing — it may be holding money — and a `?status=` filter defaulting to live would make the
+dangerous state the hidden one. `watching` already tells them apart.
+
+There is no pager. A keyset cursor over a store whose `all()` is a full scan is a pager for a query the
+store cannot serve efficiently anyway; instead the response is capped (`maxListed`, 200 by default, set
+where `maxDrops` is) and reports `total` and `truncated`, so a shortened list never lies about being
+complete. The cap keeps
+the **newest**, so a truncated list is still the half somebody is looking for. The day this is Postgres,
+`WHERE owner = $1` plus a real pager both become cheap — which is also why the owner filter lives in the
+handler rather than as a `DropStore` method: there is nothing to index yet, and an index maintained in
+both `memoryStore` and `fileStore` would be two implementations of `filter` to delete later.
+
+### A row is not an ownership claim
+
+The keeper compiled every recipe it holds and stored the record under the address that compilation
+derived, so a row is a consistent triple of address, recipe and owner — unlike `ownerOf` on a deployed
+shed, which reports whatever it was told. That is why listing this way is not the mistake
+[docs/DESIGN.md](../../docs/DESIGN.md) warns about.
+
+But **registration is open and `owner` is a field of the submitted recipe.** Anyone can put a row, with a
+label of their choosing, into anyone's listing. So a row means *"someone registered a recipe naming this
+address as owner"*, never *"you made this"*. The route summary says "registered under one owner" for that
+reason, and a client must never turn a row into an invitation to fund.
+
+### What it discloses
+
+The shape is `toWire`, unchanged and deliberately not a second shaper — two would drift, and the thinner
+one would become the one nobody updates. So this route can never expose more than `GET /v1/drops/{address}`
+already does: no `recipe`, no `setupData`, no `appDataDocuments`, no per-drop `fee`, no simulation state.
+
+Keeping `setupData` out is not only privacy. It is the activation authority, and a one-shot recipe with no
+minimum-balance guard can be burned by anyone who activates it at a bad moment — so publishing recipes
+keyed by owner would hand a scraper every such drop's burn button.
+
+What it does expose, for any address someone guesses: the label, `status`, the token hints, `everFunded`,
+`registeredAt`, the activation history, and `lastPoll` — which carries current balances. Per drop all of
+that was already reachable by anyone who knew the address. What the listing removes is the need to know
+the address first, so the genuinely new disclosure is the **aggregate**: everything one owner is waiting
+on, and how much is in each. Worth stating rather than glossing. Given activation is permissionless
+already and the whole design is public by nature, that is an accepted trade.
 
 ## Money
 
@@ -263,6 +319,11 @@ worth pinning.
 - **The keeper cannot hold the moment exclusively.** A user may hit Activate while it is mid-flight;
   the simulation immediately before the send is the narrowest window obtainable off-chain, and the
   residual cost is one reverted transaction's gas. Permissionless means permissionless.
+- **Listing by owner is a full scan, and nothing here is rate limited.** `GET /v1/drops?owner=…` walks
+  the whole registry per request, and registration is free with a caller-chosen owner — so one owner's
+  listing can be inflated deliberately. The response cap bounds what is serialised; nothing bounds the
+  scan. The mitigations that exist are `maxDrops`, that cap, and an ingress in front of this. Stated
+  rather than papered over with a limiter that isn't there.
 - **A stuck transaction is not fee-bumped.** Past `receiptTimeoutMs` the reservation is refunded and
   the drop goes back to watching, rather than replacing at the same nonce. That is the honest limit of
   a first version.

@@ -1,6 +1,8 @@
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import type { Address } from 'viem'
 
+import { configuredKeeperUrl } from './runtimeConfig'
+
 /**
  * Talking to a keeper.
  *
@@ -9,16 +11,16 @@ import type { Address } from 'viem'
  * recompiles `setupData` itself and refuses anything that does not derive the address it was given, so
  * the client cannot register a recipe for an address it does not own the preimage of.
  *
- * Optional by design. With no `VITE_KEEPER_URL` the app behaves exactly as it did before — local
+ * Optional by design. With no keeper configured the app behaves exactly as it did before — local
  * persistence only — because a keeper is an operational choice and the page has to be useful without
  * one.
  */
 
-/** The keeper this page talks to, or null when none is configured. */
+/** The keeper this page talks to, or null when none is configured. See `./runtimeConfig.ts`. */
 export function keeperUrl(): string | null {
-  const raw = import.meta.env.VITE_KEEPER_URL
-  if (typeof raw !== 'string' || raw.trim() === '') return null
-  return raw.trim().replace(/\/+$/, '')
+  const raw = configuredKeeperUrl()
+  if (raw === undefined) return null
+  return raw.replace(/\/+$/, '')
 }
 
 /**
@@ -138,4 +140,49 @@ export async function readKeeperDrop(address: Address): Promise<KeeperDrop | nul
   const body = await parse(response)
   if (!response.ok) fail(response, body)
   return (body as { drop: KeeperDrop }).drop
+}
+
+/**
+ * What the keeper holds for one owner.
+ *
+ * `chainId` is the keeper's, not the caller's: one keeper serves one chain while this browser's list
+ * spans all of them, so the answer has to say which chain it is answering for — especially the empty
+ * answer, which carries no drops to read it from.
+ */
+export interface KeeperDropList {
+  chainId: number
+  owner: Address
+  /** How many the keeper holds for this owner, which is not always `drops.length`. */
+  total: number
+  truncated: boolean
+  drops: KeeperDrop[]
+}
+
+/**
+ * Every drop the keeper has registered under `owner`, or null when no keeper is configured.
+ *
+ * Null and an empty `drops` are deliberately different: null means there was nobody to ask, `[]` means
+ * we asked and there is nothing. The page shows different sentences for those, so this must not flatten
+ * them — which is also why a 404 throws rather than returning null. A 404 here is a *router* miss: a
+ * keeper older than this page has no such route, and reporting that as "you own nothing" is a lie in
+ * the one direction that costs money.
+ *
+ * **A row is not proof of ownership.** `owner` is a field of a recipe anyone may register, so the
+ * keeper is reporting "someone registered a recipe naming this address", not "you made this". Callers
+ * must never turn a row into an invitation to fund. See `docs/DESIGN.md`.
+ */
+export async function listKeeperDrops(owner: Address): Promise<KeeperDropList | null> {
+  const base = keeperUrl()
+  if (!base) return null
+
+  const response = await fetch(`${base}/v1/drops?${new URLSearchParams({ owner }).toString()}`)
+  // Before `fail`, which would reach for MESSAGES['not-found'] — "the keeper has no record of this
+  // drop" — and say something actively wrong about a route that is simply absent.
+  if (response.status === 404) {
+    throw new Error('this keeper cannot list drops by owner — it is older than this page')
+  }
+
+  const body = await parse(response)
+  if (!response.ok) fail(response, body)
+  return body as KeeperDropList
 }

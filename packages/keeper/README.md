@@ -31,6 +31,7 @@ Browsable API docs are at **<http://localhost:8787/v1/docs>** — Swagger UI ove
 OpenAPI document.
 
 ```bash
+curl 'localhost:8787/v1/drops?owner=0x…'  # every drop registered under one owner
 curl localhost:8787/v1/health         # payer, balance, budget left
 curl localhost:8787/v1/policy         # whether it is subsidising, before anyone commits
 curl localhost:8787/v1/about          # the contracts behind the generation it serves

@@ -22,6 +22,8 @@ export interface ServerOptions {
   now?: () => number
   /** Registration is open, so it is bounded by capacity rather than by identity. */
   maxDrops?: number
+  /** How many drops one owner listing may carry. The rest are counted, never silently dropped. */
+  maxListed?: number
   maxBodyBytes?: number
   /** `*` by default. A specific list is echoed back per request, with `Vary: Origin`. */
   allowOrigin?: string
@@ -109,7 +111,23 @@ export interface RouteDoc {
   summary: string
   /** What a 200 carries. Default `application/json`. */
   produces?: string
+  /**
+   * OpenAPI parameter objects, for the routes that take input in the path or the query.
+   *
+   * Here rather than special-cased inside `openApiDocument`, because two methods now share
+   * `/v1/drops` and only one of them takes a parameter — a rule keyed on the path alone would
+   * describe the POST as taking an `owner` query.
+   */
+  parameters?: readonly Record<string, unknown>[]
 }
+
+/**
+ * One spelling of "an address", shared by the router's regex, the query check and the OpenAPI schema.
+ *
+ * Three copies of this drifting apart would mean the document promising something the router refuses.
+ */
+const ADDRESS_PATTERN = '^0x[0-9a-fA-F]{40}$'
+const ADDRESS = new RegExp(ADDRESS_PATTERN)
 
 export const ROUTES: readonly RouteDoc[] = [
   { method: 'GET', path: '/v1/health', summary: 'Liveness, payer balance, today\'s spend. 503 when the payer is below its floor.' },
@@ -117,9 +135,24 @@ export const ROUTES: readonly RouteDoc[] = [
   { method: 'GET', path: '/v1/about', summary: 'The chain, generation and contract addresses this keeper serves.' },
   { method: 'GET', path: '/v1/openapi.json', summary: 'This surface as an OpenAPI 3.1 document.' },
   { method: 'GET', path: '/v1/docs', summary: 'Swagger UI over that document.', produces: 'text/html' },
+  {
+    method: 'GET',
+    path: '/v1/drops',
+    summary: 'Every drop registered under one owner, newest first. `owner` is required; this is never a bulk dump.',
+    parameters: [
+      { name: 'owner', in: 'query', required: true, schema: { type: 'string', pattern: ADDRESS_PATTERN } },
+    ],
+  },
   { method: 'POST', path: '/v1/drops', summary: 'Register a drop for the keeper to watch and pay for.' },
   { method: 'POST', path: '/v1/drops/unregister', summary: 'Stop watching a drop. Body carries the recipe, which is the proof.' },
-  { method: 'GET', path: '/v1/drops/{address}', summary: 'One registered drop, with its last poll and simulation.' },
+  {
+    method: 'GET',
+    path: '/v1/drops/{address}',
+    summary: 'One registered drop, with its last poll and simulation.',
+    parameters: [
+      { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: ADDRESS_PATTERN } },
+    ],
+  },
   {
     method: 'GET',
     path: '/v1/events',
@@ -138,16 +171,13 @@ export const ROUTES: readonly RouteDoc[] = [
 export function openApiDocument(chainId: number, generation: number): unknown {
   const paths: Record<string, Record<string, unknown>> = {}
   for (const route of ROUTES) {
-    const parameters =
-      route.path === '/v1/drops/{address}'
-        ? [{ name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' } }]
-        : undefined
-
+    // Spread the existing path item rather than replacing it: `/v1/drops` carries both a GET and a
+    // POST, and overwriting would silently publish only whichever came last.
     paths[route.path] = {
       ...paths[route.path],
       [route.method.toLowerCase()]: {
         summary: route.summary,
-        ...(parameters ? { parameters } : {}),
+        ...(route.parameters ? { parameters: route.parameters } : {}),
         responses: { '200': { description: 'OK', content: { [route.produces ?? 'application/json']: {} } } },
       },
     }
@@ -237,6 +267,7 @@ export function createKeeperServer(options: ServerOptions): Server {
     submitter,
     now = Date.now,
     maxDrops = 10_000,
+    maxListed = 200,
     maxBodyBytes = 64 * 1024,
     allowOrigin = '*',
     keepaliveMs = 15_000,
@@ -309,6 +340,7 @@ export function createKeeperServer(options: ServerOptions): Server {
     if (request.method === 'GET' && path === '/v1/openapi.json') {
       return send(response, 200, openApiDocument(deployment.chainId, deployment.generation))
     }
+    if (request.method === 'GET' && path === '/v1/drops') return listByOwner(response, url)
     if (request.method === 'POST' && path === '/v1/drops') return register(request, response)
     if (request.method === 'POST' && path === '/v1/drops/unregister') return unregister(request, response)
     if (request.method === 'GET' && path === '/v1/events') return stream(request, response, url)
@@ -407,6 +439,67 @@ export function createKeeperServer(options: ServerOptions): Server {
         policy.mode === 'paying'
           ? undefined
           : policy.mode === 'all' && balance >= policy.minPayerBalanceWei && spend.totalWei < policy.dailyBudgetWei,
+    })
+  }
+
+  /**
+   * Every drop registered under one owner.
+   *
+   * `owner` is required, and that is the design rather than an omission: without it this is a dump of
+   * every recipe the keeper holds — labels, token hints, current balances and activation history for
+   * everybody — which is an operator's view rather than a client's, and the cheapest way to make this
+   * process scan its whole registry. `/v1/events` refuses an unfiltered stream for the same reason.
+   *
+   * ## What a row here means, and what it does not
+   *
+   * The keeper compiled every recipe it holds and stored the record under the address that compilation
+   * derived, so a row is a consistent triple of address, recipe and owner — unlike `ownerOf` on a
+   * deployed shed, which reports whatever it was told. That is why listing this way is not the mistake
+   * `docs/DESIGN.md` warns about.
+   *
+   * But registration is open and `owner` is a field of the *submitted* recipe, so a row still only
+   * means "someone registered a recipe naming this address as owner", never "you made this". Safe to
+   * show; not authorisation; never an invitation to fund.
+   *
+   * The shape is `toWire`, unchanged, so this can never expose more than `GET /v1/drops/{address}`
+   * already does. That matters more here, because this one is enumerable by guessing an address.
+   */
+  async function listByOwner(response: ServerResponse, url: URL): Promise<void> {
+    const asked = url.searchParams.get('owner')
+    if (!asked) {
+      send(response, 400, { error: 'invalid-request', message: 'an `owner` is required' })
+      return
+    }
+    if (!ADDRESS.test(asked)) {
+      // 400 rather than an empty 200: a typo and an empty registry must not read the same, because the
+      // page asking this exists to tell "you have nothing" from "we asked wrong".
+      send(response, 400, { error: 'invalid-request', message: '`owner` must be a 0x-prefixed 20-byte address' })
+      return
+    }
+
+    const owner = asked.toLowerCase() as Address
+    // Filtered here rather than in the store: `all` is one pass over a document already in memory, and
+    // `/v1/health` already does the same on every request. The day this store is Postgres, this filter
+    // is what moves down into a `byOwner` behind an index — whereas a hand-rolled index maintained in
+    // both `memoryStore` and `fileStore` would have to be deleted.
+    const mine = (await store.all(deployment.chainId)).filter((drop) => drop.owner === owner)
+
+    send(response, 200, {
+      // The chain is in the envelope because the *empty* answer carries no drops to read it from, and
+      // "this keeper has nothing for you" and "you have nothing" are different sentences.
+      chainId: deployment.chainId,
+      owner,
+      total: mine.length,
+      truncated: mine.length > maxListed,
+      // Newest first — a reading order, deliberately not the tick loop's oldest-poll-first. The
+      // tiebreak stops two registrations in the same millisecond swapping places between requests, and
+      // the cap keeps the newest, so a truncated list is still the half somebody is looking for.
+      // Retired drops stay in: the drop nothing is watching is the one most worth seeing, since it may
+      // be holding money. `watching` already tells them apart.
+      drops: mine
+        .sort((a, b) => b.registeredAt - a.registeredAt || a.address.localeCompare(b.address))
+        .slice(0, maxListed)
+        .map(toWire),
     })
   }
 

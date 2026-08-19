@@ -17,7 +17,9 @@ import type { Address } from 'viem'
  * calldata of the deploying transaction. That only helps after the fact.)
  *
  * So the recipe is saved at every point where a user might be about to fund an address, and the page
- * also keeps the current one in the URL so a bookmark or a reload is enough to get it back.
+ * also keeps the current one in the URL so a bookmark or a reload is enough to get it back — while the
+ * Recipes tab is the one showing; see `./route.ts`, which also explains why `recipeToHash`'s alphabet is
+ * now load-bearing for routing and not only for copy-paste.
  */
 
 const KEY = 'cow-drop:recipes:v1'
