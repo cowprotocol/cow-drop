@@ -17,7 +17,7 @@ since an argument is visible in `ps`.
 pnpm --filter @cowprotocol/cow-drop-keeper build
 pnpm --filter @cowprotocol/cow-drop-keeper test
 
-KEEPER_PRIVATE_KEY=0x<hot-key> node packages/keeper/dist/cli.js --rpc-url $RPC_URL
+KEEPER_PRIVATE_KEY=0x<hot-key> pnpm --filter @cowprotocol/cow-drop-keeper start --rpc-url $RPC_URL
 ```
 
 `--dry-run` decides and simulates everything without broadcasting; run it first. The default policy

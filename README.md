@@ -64,28 +64,28 @@ VITE_KEEPER_URL=http://localhost:8787 pnpm --filter @cowprotocol/cow-drop-web de
 
 Drop `VITE_KEEPER_URL` to hide the **Hand to keeper** button. `VITE_RPC_URL` overrides the RPC.
 
-### Watch tower
-
-Posts the discrete orders any contract places on-chain. Nothing privileged, no key.
-
-```bash
-node packages/watch-tower/dist/cli.js --rpc-url $RPC_URL
-```
-
-Add `--dry-run` to verify without posting, `--only-drops` to ignore other contracts' orders.
-
 ### Keeper
 
 Activates registered drops and pays the gas, so it needs a funded hot key. It runs its own watch
 tower in-process — **don't run both.**
 
 ```bash
-KEEPER_PRIVATE_KEY=0x<hot-key> node packages/keeper/dist/cli.js --rpc-url $RPC_URL
+KEEPER_PRIVATE_KEY=0x<hot-key> pnpm --filter @cowprotocol/cow-drop-keeper start --rpc-url $RPC_URL
 ```
 
 Add `--dry-run` to decide and simulate without broadcasting. `curl localhost:8787/v1/health` for the
 payer, its balance and the budget left. The default policy subsidises every owner up to a small daily
 budget — pass `--policy` before pointing anything public at it.
+
+### Watch tower
+
+Posts the discrete orders any contract places on-chain. Nothing privileged, no key.
+
+```bash
+pnpm --filter @cowprotocol/cow-drop-watch-tower start --rpc-url $RPC_URL
+```
+
+Add `--dry-run` to verify without posting, `--only-drops` to ignore other contracts' orders.
 
 ## Deploy contracts
 
