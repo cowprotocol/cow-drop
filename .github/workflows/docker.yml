@@ -1,0 +1,79 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    tags: [v*]
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      # One leg's failure should not hide the others: these three ship independently.
+      fail-fast: false
+      matrix:
+        package:
+          - packages/keeper
+          - packages/watch-tower
+          - apps/web
+    steps:
+      # No submodules: every image builds from the committed TypeScript and the SDK's committed
+      # `src/generated/`, so none of them needs the foundry toolchain or cow-shed's submodule tree.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Docker Buildx
+        id: setup-buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract package name
+        run: echo "PACKAGE_NAME=$(basename ${{ matrix.package }})" >> $GITHUB_ENV
+
+      # `latest` is not listed: with the default `latest=auto` flavor, metadata-action adds it for a
+      # non-prerelease semver tag and withholds it from `v1.0.0-rc.1` and from branch builds, which is
+      # exactly the policy we want. `sha-<commit>` is the tag to pin a deployment to.
+      - name: Image metadata for ${{ env.PACKAGE_NAME }}
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ env.PACKAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      - name: Build and push ${{ env.PACKAGE_NAME }}
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          # The repo root, not the package directory: all three depend on the SDK through the workspace.
+          context: .
+          file: ${{ matrix.package }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          builder: ${{ steps.setup-buildx.outputs.name }}
+          build-args: COMMIT_HASH=${{ github.sha }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha,scope=${{ env.PACKAGE_NAME }}
+          cache-to: type=gha,mode=max,scope=${{ env.PACKAGE_NAME }}
+
+      - uses: cowprotocol/autodeploy-action@73f1163f19a584cdc34e29aa84d630d7e6a45432 # v3
+        if: ${{ github.ref == 'refs/heads/main' }}
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ env.PACKAGE_NAME }}:main
+          url: ${{ secrets.AUTODEPLOY_URL }}
+          token: ${{ secrets.AUTODEPLOY_TOKEN }}
+          timeout: 600000

@@ -1,0 +1,28 @@
+# All three images build with the repo root as their context, so this is the one file that prunes it.
+# (A .dockerignore next to a Dockerfile is ignored by BuildKit unless it is named
+# <dockerfile>.dockerignore — keep the exclusions here.)
+
+.git
+.github
+.history
+.conductor
+.claude
+
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+.turbo
+
+# Foundry build output and local service state. The images need neither: the SDK's generated
+# constants are committed, and the state directory is a volume.
+contracts/out
+contracts/cache
+out
+
+.env
+.env.local
+*.local
+.DS_Store

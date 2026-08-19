@@ -1,0 +1,127 @@
+name: Release
+
+# Tagging is the whole release trigger, exactly as in cowprotocol/debug-tool: push `vX.Y.Z` and
+# everything downstream happens on its own. This workflow publishes the SDK to npm and opens the
+# GitHub release; `docker.yml` fires on the same tag and pushes the three images.
+#
+# The tag is the single source of truth for the version — the committed `packages/sdk/package.json`
+# version is only a placeholder for local installs, and is overwritten here before packing. That way
+# there is no second place to keep in sync, and no release that is off by a forgotten version bump.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# A `-rc`/`-beta` suffix makes it a prerelease: npm dist-tag `next` instead of `latest`, and the
+# GitHub release is marked prerelease. Re-running on an already-published version is a no-op.
+
+on:
+  push:
+    tags: [v*]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # npm provenance attestation
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          # cow-shed carries its own submodules (forge-std, solady, openzeppelin), needed by the
+          # forge build in the address-derivation check below.
+          submodules: recursive
+          # Full history, so the release notes can be generated against the previous tag.
+          fetch-depth: 0
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+          # Writes the ~/.npmrc that `npm publish` authenticates with, using NODE_AUTH_TOKEN below.
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve the version from the tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag '$GITHUB_REF_NAME' is not vMAJOR.MINOR.PATCH[-prerelease]"
+            exit 1
+          fi
+          # Anything with a prerelease suffix must not become the default `npm install` target.
+          case "$version" in
+            *-*) prerelease=true; npm_tag=next ;;
+            *) prerelease=false; npm_tag=latest ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $version (npm dist-tag: $npm_tag, prerelease: $prerelease)"
+
+      # The same gate ci.yml runs, repeated here against the exact commit being published. Every
+      # address in `src/generated/` feeds the CREATE2 preimage of every drop, so a stale committed copy
+      # means the SDK quotes addresses the contracts will never deploy to — and once that is on npm it
+      # is public, cached and unretractable. A tag can point at a commit main's CI never ran on.
+      - name: Generated constants match the contracts
+        run: |
+          forge build --root contracts
+          pnpm --filter @cowprotocol/cow-drop-sdk generate
+          git diff --exit-code -- packages/sdk/src/generated/
+
+      - name: Build and test the sdk
+        run: |
+          pnpm --filter @cowprotocol/cow-drop-sdk build
+          pnpm --filter @cowprotocol/cow-drop-sdk test
+
+      # The derivation the SDK is about to publish, checked against fixtures the compiled contract
+      # produces. Two implementations of one formula drift silently, and the failure mode is money
+      # sent to a stranded address.
+      - name: Derivation fixtures match the contracts
+        working-directory: contracts
+        run: |
+          forge script script/Fixtures.s.sol
+          git diff --exit-code -- deployments/derivation-fixtures.json
+
+      - name: Stamp the version and pack
+        working-directory: packages/sdk
+        run: |
+          npm pkg set version="${{ steps.version.outputs.version }}"
+          # `pnpm pack`, not `npm pack`: pnpm is what applies `publishConfig.exports`, which drops the
+          # `development` condition. Published, that condition would resolve to `src/index.ts` in any
+          # consumer whose bundler honours it — Vite does, in dev — and break their build.
+          pnpm pack --pack-destination ..
+          test -f "../cowprotocol-cow-drop-sdk-${{ steps.version.outputs.version }}.tgz"
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          # Idempotent: a re-run of a partly-failed release should not die on E403 "cannot publish over
+          # an existing version".
+          if npm view "@cowprotocol/cow-drop-sdk@$version" version >/dev/null 2>&1; then
+            echo "@cowprotocol/cow-drop-sdk@$version is already on npm — nothing to publish"
+            exit 0
+          fi
+          npm publish "packages/cowprotocol-cow-drop-sdk-$version.tgz" \
+            --access public \
+            --provenance \
+            --tag "${{ steps.version.outputs.npm_tag }}"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # --generate-notes gives the same "What's Changed" body debug-tool's releases carry. Skipped
+          # when the release already exists, which is the case when the tag was created from the UI.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists — leaving its notes alone"
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            ${{ steps.version.outputs.prerelease == 'true' && '--prerelease' || '' }}
