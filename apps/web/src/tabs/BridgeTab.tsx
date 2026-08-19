@@ -18,7 +18,7 @@ import {
 } from '../lib/bridge.js'
 import { blockExplorer, chainInfo, isUserRejection, onChainChanged, switchChain, walletChainId } from '../lib/chain.js'
 import { keeperUrl, readKeeperDrop, registerWithKeeper } from '../lib/keeper.js'
-import { markSentToKeeper, saveDrop } from '../lib/storage.js'
+import { markSentToKeeper, readBridgeForm, saveBridgeForm, saveDrop } from '../lib/storage.js'
 import { fetchTokenList, findToken, type TokenInfo } from '../lib/tokenList.js'
 
 /**
@@ -96,13 +96,23 @@ function Bridge({
 
   const destinationChainId = plan.ok ? plan.value.destinationChainId : null
 
+  /**
+   * What this browser was last setting up for *this* drop.
+   *
+   * Read once, during the first render, so the fields never flash a default before being corrected —
+   * and so the token-list effect below sees the restored token rather than racing it.
+   */
+  const [restored] = useState(() => (plan.ok ? readBridgeForm(plan.value.drop) : null))
+
   const [sourceChainId, setSourceChainId] = useState<number>(
-    () => BRIDGE_SOURCE_CHAINS.find((id) => id !== recipe.chainId) ?? 1,
+    () => restored?.sourceChainId ?? BRIDGE_SOURCE_CHAINS.find((id) => id !== recipe.chainId) ?? 1,
   )
   const [tokens, setTokens] = useState<TokenInfo[]>([])
-  const [sourceToken, setSourceToken] = useState<Address | null>(null)
-  const [amountText, setAmountText] = useState('')
-  const [onFailure, setOnFailure] = useState<OnFailure>('leave-at-drop')
+  const [sourceToken, setSourceToken] = useState<Address | null>(restored?.sourceToken ?? null)
+  const [amountText, setAmountText] = useState(restored?.amountText ?? '')
+  const [onFailure, setOnFailure] = useState<OnFailure>(
+    restored?.onFailure === 'refund-owner' ? 'refund-owner' : 'leave-at-drop',
+  )
 
   const [quote, setQuote] = useState<BridgeQuote | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -150,8 +160,12 @@ function Bridge({
     void fetchTokenList(sourceChainId).then((loaded) => {
       if (cancelled) return
       setTokens(loaded)
-      // Token addresses are chain-specific, so the previous chain's choice means nothing here.
-      setSourceToken(loaded[0]?.address ?? null)
+      // Token addresses are chain-specific, so a choice this chain does not have means nothing here —
+      // but one it *does* have is either the user's or their restored one, and must survive the load.
+      setSourceToken((current) => {
+        const known = current && loaded.some((token) => token.address.toLowerCase() === current.toLowerCase())
+        return known ? current : (loaded[0]?.address ?? null)
+      })
     })
     return () => {
       cancelled = true
@@ -201,6 +215,12 @@ function Bridge({
       cancelled = true
     }
   }, [sourceChainId, sourceToken, destinationChainId, plan])
+
+  /** Remember the choices, so a reload mid-setup does not start over. */
+  useEffect(() => {
+    if (!plan.ok || !sourceToken) return
+    saveBridgeForm(plan.value.drop, { sourceChainId, sourceToken, amountText, onFailure })
+  }, [plan, sourceChainId, sourceToken, amountText, onFailure])
 
   /** A quote is for one route, amount and destination. Any of them moving makes it stale. */
   useEffect(() => {

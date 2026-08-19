@@ -176,3 +176,46 @@ export function recipeFromHash(hash: string): DropRecipeJson | null {
     return null
   }
 }
+
+/**
+ * What was being set up on the Bridge tab, per drop.
+ *
+ * Separate from the recipe, and deliberately not in the URL. The recipe is the key to the money and
+ * belongs in a link; the source chain, token and amount are local intent — this browser's half-finished
+ * decision about how to fund one particular drop. Keyed by drop address so returning to a drop restores
+ * what you were doing for *it*, rather than leaking the last amount you typed onto an unrelated one.
+ *
+ * Best-effort throughout: nothing here is unrecoverable if it is lost, so a corrupt or full store reads
+ * as absent rather than throwing.
+ */
+const BRIDGE_KEY = 'cow-drop:bridge-form:v1'
+
+export interface SavedBridgeForm {
+  sourceChainId: number
+  sourceToken: Address
+  amountText: string
+  onFailure: string
+}
+
+export function readBridgeForm(drop: Address): SavedBridgeForm | null {
+  try {
+    const raw = localStorage.getItem(BRIDGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Record<string, SavedBridgeForm>
+    const saved = parsed[drop.toLowerCase()]
+    return saved && typeof saved.sourceChainId === 'number' ? saved : null
+  } catch {
+    return null
+  }
+}
+
+export function saveBridgeForm(drop: Address, form: SavedBridgeForm): void {
+  try {
+    const raw = localStorage.getItem(BRIDGE_KEY)
+    const parsed = raw ? (JSON.parse(raw) as Record<string, SavedBridgeForm>) : {}
+    parsed[drop.toLowerCase()] = form
+    localStorage.setItem(BRIDGE_KEY, JSON.stringify(parsed))
+  } catch {
+    // A full or disabled store costs a convenience, not a recipe. Nothing to report.
+  }
+}
