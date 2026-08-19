@@ -7,6 +7,8 @@ import type { KeeperChain, Submitter } from './chain.js'
 import type { EventBus } from './events.js'
 import { balancesDigest, pollTargets } from './hints.js'
 import { evaluatePolicy } from './policy.js'
+import type { PriceOracle } from './revenue.js'
+import { feeValueWei } from './revenue.js'
 import { classifyRevert } from './reverts.js'
 import { utcDay, type KeeperStore } from './store.js'
 import type { PolicyRefusal, RegisteredDrop, SubsidyPolicy } from './types.js'
@@ -18,6 +20,11 @@ export interface KeeperOptions {
   deployment: DropDeployment
   policy: SubsidyPolicy
   events: EventBus
+  /**
+   * Values a drop's promised fee in the chain's own currency. Required by `paying` mode, ignored
+   * by the others.
+   */
+  prices?: PriceOracle
   /** Injected, because the day a budget rolls over on is the thing most worth pinning in a test. */
   now?: () => number
   pollIntervalMs?: number
@@ -78,6 +85,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     deployment,
     policy,
     events,
+    prices,
     now = Date.now,
     pollIntervalMs = 12_000,
     resimulateIntervalMs = 5 * 60_000,
@@ -137,7 +145,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     const balances = await chain.getBalances(requests)
 
     // 4. Attribute the results, record them, and decide who is worth simulating.
-    const candidates: { drop: RegisteredDrop; digest: string }[] = []
+    const candidates: { drop: RegisteredDrop; digest: string; balances: Record<string, bigint> }[] = []
     let cursor = 0
 
     for (const drop of live) {
@@ -148,10 +156,13 @@ export function createKeeper(options: KeeperOptions): Keeper {
       const digest = balancesDigest(mine)
       const funded = mine.some((balance) => balance > 0n)
       const tokens: Record<Address, string> = {}
+      const byToken: Record<string, bigint> = {}
       let native = '0'
       targets.forEach((token, index) => {
-        if (token === null) native = String(mine[index] ?? 0n)
-        else tokens[token] = String(mine[index] ?? 0n)
+        const balance = mine[index] ?? 0n
+        if (token === null) native = String(balance)
+        else tokens[token] = String(balance)
+        byToken[token ?? 'native'] = balance
       })
 
       const firstMoney = funded && !drop.everFunded
@@ -166,12 +177,12 @@ export function createKeeper(options: KeeperOptions): Keeper {
         events.emit({ type: 'funded', chainId, drop: drop.address, owner: drop.owner, native, tokens })
       }
 
-      if (shouldSimulate(drop, digest, funded)) candidates.push({ drop, digest })
+      if (shouldSimulate(drop, digest, funded)) candidates.push({ drop, digest, balances: byToken })
     }
 
     // 5. Simulate, in staleness order, up to the cap.
-    for (const { drop, digest } of candidates.slice(0, maxSimulationsPerTick)) {
-      await consider(drop, digest, result)
+    for (const { drop, digest, balances } of candidates.slice(0, maxSimulationsPerTick)) {
+      await consider(drop, digest, balances, result)
     }
 
     return result
@@ -193,8 +204,19 @@ export function createKeeper(options: KeeperOptions): Keeper {
     return now() - last.at >= resimulateIntervalMs
   }
 
-  /** Simulate one drop, and if it passes, decide whether to pay for it. */
-  async function consider(drop: RegisteredDrop, digest: string, result: KeeperTickResult): Promise<void> {
+  /**
+   * Simulate one drop, and if it passes, decide whether to pay for it.
+   *
+   * `balances` is what *this tick* read, not what the record says. The record was loaded before the
+   * poll wrote to it, so reading `lastPoll` here would see the previous tick's numbers — or none at
+   * all on the first pass, which would price every fee at zero.
+   */
+  async function consider(
+    drop: RegisteredDrop,
+    digest: string,
+    balances: Record<string, bigint>,
+    result: KeeperTickResult,
+  ): Promise<void> {
     result.simulated++
 
     const call = buildActivateTx({ deployment, owner: drop.recipe.owner, setupData: drop.setupData })
@@ -234,10 +256,13 @@ export function createKeeper(options: KeeperOptions): Keeper {
     const gasLimit = (simulation.gas * BigInt(Math.round(gasBuffer * 1000))) / 1000n
     const day = utcDay(now())
     const spend = await store.spendOn(day)
+    const revenueWei = await priceFee(drop, balances)
 
     const verdict = evaluatePolicy({
       policy,
       owner: drop.owner,
+      fee: drop.fee,
+      revenueWei,
       gasLimit,
       maxFeePerGas: fees.maxFeePerGas,
       payerBalanceWei: await submitter.balance(),
@@ -488,6 +513,29 @@ export function createKeeper(options: KeeperOptions): Keeper {
       })
       logger.warn(`not paying for ${drop.address}: ${detail}`)
     }
+  }
+
+  /**
+   * What the drop's promised fee is worth right now, in wei.
+   *
+   * `undefined` means it could not be valued, which `paying` mode treats as a refusal rather than a
+   * zero: a token the order book will not price is one we cannot say is worth subsidising, not one we
+   * know is worthless.
+   *
+   * The volume is the balance this tick read. That is the sell amount only approximately — the order
+   * is sized at activation and the balance can move in between — which is exactly why
+   * `minRevenueRatio` sits above 1 rather than at it.
+   */
+  async function priceFee(drop: RegisteredDrop, balances: Record<string, bigint>): Promise<bigint | undefined> {
+    if (!drop.fee || !prices) return undefined
+
+    const sellAmount = balances[drop.fee.sellToken] ?? 0n
+    if (sellAmount === 0n) return 0n
+
+    const nativePrice = await prices.nativePrice(drop.fee.sellToken)
+    if (nativePrice === undefined) return undefined
+
+    return feeValueWei({ sellAmount, volumeBps: drop.fee.volumeBps, nativePrice })
   }
 
   function backoffUntil(drop: RegisteredDrop): number {

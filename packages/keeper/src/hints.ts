@@ -1,5 +1,5 @@
 import type { DropRecipeJson, DropStepJson } from '@cowprotocol/cow-drop-sdk'
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 
 import type { WatchHints } from './types.js'
 
@@ -138,4 +138,39 @@ export function balancesDigest(balances: readonly bigint[]): string {
 /** Whether the recipe's own step list can be read at all. Kept next to the union it switches on. */
 export function isKnownStep(step: DropStepJson): boolean {
   return step.type !== 'raw'
+}
+
+/** One order a recipe will place, and the appData hash it commits to. */
+export interface RecipeTrade {
+  sellToken: Address
+  /** The committed hash. The document behind it, if any, has to be supplied separately. */
+  appData: Hex
+}
+
+const ZERO_APP_DATA: Hex = `0x${'00'.repeat(32)}`
+
+/**
+ * The trades a recipe will place.
+ *
+ * Read off the typed step union rather than the decoder, so `sellToken` and `appData` come out
+ * exactly as the SDK will compile them. A step with no `appData` commits the zero hash, which is the
+ * "no document" case and can carry no fee.
+ */
+export function tradesOf(recipe: DropRecipeJson): RecipeTrade[] {
+  const trades: RecipeTrade[] = []
+
+  for (const step of recipe.steps) {
+    switch (step.type) {
+      case 'presignSellAll':
+      case 'presignSellAllAtOracle':
+      case 'twapFromBalance':
+      case 'stopLossFromBalance':
+        trades.push({ sellToken: lower(step.sellToken), appData: step.appData ?? ZERO_APP_DATA })
+        break
+      default:
+        break
+    }
+  }
+
+  return trades
 }

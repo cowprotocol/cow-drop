@@ -34,7 +34,8 @@ import {
 import { GNOSIS_TOKENS } from './lib/tokens.js'
 import { fetchTokenList, findToken, type TokenInfo } from './lib/tokenList.js'
 import { NetworkPicker } from './components/NetworkPicker.js'
-import { isSaved, recipeFromHash, recipeToHash, saveDrop } from './lib/storage.js'
+import { isSaved, markSentToKeeper, recipeFromHash, recipeToHash, saveDrop } from './lib/storage.js'
+import { keeperUrl, registerWithKeeper } from './lib/keeper.js'
 import { TokenPicker } from './components/TokenPicker.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
@@ -228,6 +229,14 @@ export function App() {
    */
   const [imported, setImported] = useState<DropRecipeJson | null>(() => recipeFromHash(window.location.hash))
   const [saved, setSaved] = useState(false)
+  /**
+   * Bumped whenever a drop is written, so the saved list re-reads.
+   *
+   * `SavedDrops` reads `localStorage` once on mount, so without this a drop saved after first paint
+   * stayed invisible until a reload — which matters most for the keeper flag, since the whole point is
+   * seeing it change.
+   */
+  const [savedRevision, setSavedRevision] = useState(0)
   /**
    * Quote state. Deliberately *not* part of FormState: the reference amount exists only to get a
    * price out of the API and must never leak into the recipe, since a drop cannot commit to an amount.
@@ -479,6 +488,40 @@ export function App() {
     if (!compiled.ok) return
     saveDrop({ address: compiled.value.address, recipe })
     setSaved(true)
+    setSavedRevision((n) => n + 1)
+  }
+
+  /**
+   * Hand the recipe to the keeper so it activates unattended.
+   *
+   * Saved locally first, and only flagged as sent once the keeper has answered — a flag written
+   * optimistically would claim the drop is watched when the POST failed.
+   */
+  const onRegisterKeeper = async () => {
+    if (!compiled.ok) return
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      saveDrop({ address: compiled.value.address, recipe })
+      const drop = await registerWithKeeper({ recipe, address: compiled.value.address })
+      markSentToKeeper({
+        address: compiled.value.address,
+        chainId: compiled.value.deployment.chainId,
+        url: keeperUrl() ?? '',
+      })
+      setSaved(true)
+      setSavedRevision((n) => n + 1)
+      setMessage(
+        drop.watching
+          ? `The keeper is watching ${drop.address}`
+          : `The keeper holds ${drop.address} but is not watching it (${drop.status})`,
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
   }
 
   const onActivate = async () => {
@@ -568,6 +611,7 @@ export function App() {
       </header>
 
       <SavedDrops
+        revision={savedRevision}
         currentAddress={compiled.ok ? compiled.value.address : null}
         onLoad={(loaded) => {
           setImported(loaded)
@@ -952,6 +996,11 @@ export function App() {
                   >
                     {busy ? 'Activating…' : 'Activate drop'}
                   </button>
+                  {keeperUrl() !== null && (
+                    <button onClick={() => void onRegisterKeeper()} disabled={busy}>
+                      Hand to keeper
+                    </button>
+                  )}
                   <a
                     href={`${cowExplorer(dropChainId)}/address/${compiled.value.address}`}
                     target="_blank"

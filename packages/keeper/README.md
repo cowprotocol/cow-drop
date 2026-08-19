@@ -66,6 +66,60 @@ set. Hence `--max-drops` and a body cap.
 
 ```json
 {
+  "mode": "paying",
+  "feeRecipient": "0xKeeper…",
+  "minFeeBps": 5,
+  "minRevenueRatio": 1.5,
+  "dailyBudgetWei": "250000000000000000"
+}
+```
+
+Three modes. `all` subsidises everyone, `allowlist` a fixed set of owners, and **`paying` anyone whose
+recipe pays the keeper more than the activation costs** — the only one whose limit is economic rather
+than administrative, and so the only one that safely scales to strangers.
+
+### `paying`
+
+A drop qualifies when its order carries a CoW `partnerFee` naming the keeper:
+
+```json
+{ "version": "1.4.0", "metadata": { "partnerFee": { "volumeBps": 10, "recipient": "0xKeeper…" } } }
+```
+
+That costs no gas and needs no contract of ours — it is the protocol's own mechanism, taken at
+settlement. The keeper values it with the order book's native price and refuses unless it clears the
+gas by `minRevenueRatio`.
+
+The document has to be supplied at registration, because **the chain carries only its hash**. So the
+keeper verifies rather than trusts: it hashes the exact bytes it was handed and compares to what the
+recipe committed to. A fee in a document nobody signed is not a promise. It hashes the string
+verbatim and never re-serialises — JSON has many spellings of one object and only the one that was
+hashed is the pre-image.
+
+Two deliberate narrowings:
+
+- **Only `volumeBps` counts.** A `surplusBps` fee is real income whose *guaranteed* value is zero — a
+  fill with no surplus pays nothing — and subsidising against income that may never arrive is the
+  thing this mode exists to stop.
+- **`minRevenueRatio` sits above 1.** The volume is the balance a poll saw, the order is sized at
+  activation, and the price moves in between. A fee that only just covers the gas covers nothing
+  after any of that.
+
+An unpriceable sell token is a refusal, not a zero: a token the order book will not price is one we
+cannot say is worth subsidising, not one we know is worthless.
+
+The documents are kept for a second job too — the order book rejects an appData hash it has never
+seen, so the watch tower needs them to post the order at all.
+
+**Confirm the price convention before turning this on with real money.** `feeValueWei` assumes CoW's
+native price converts atomic token units to wei, which the SDK's `{ price?: number }` type does not
+state. Run `--dry-run` first: it logs the estimated revenue beside the gas for every drop, so a wrong
+convention shows up as several orders of magnitude rather than as a subtle loss.
+
+### `all` and `allowlist`
+
+```json
+{
   "mode": "all",
   "denylist": [],
   "maxCostPerActivationWei": "10000000000000000",
@@ -84,11 +138,14 @@ Two things about this are worth reading twice.
 capped transaction at a time.
 
 **`perOwnerDailyBudgetWei` barely binds in `mode: "all"`.** `owner` is a field of a recipe anyone may
-submit, and minting a fresh one per registration is free. So in the default mode the only cap that
-really holds is `dailyBudgetWei` — set it to a number you would not mind losing daily. Simulation kills
-the cheap abuse (a drop that would revert costs nothing) but a valid, useless, repeatedly-registered
-drop can still drain a day's allowance. The per-owner cap earns its place in `allowlist` mode, where
-the owner set is fixed by configuration rather than by the caller.
+submit, and minting a fresh one per registration is free. So in `all` mode the only cap that really
+holds is `dailyBudgetWei` — set it to a number you would not mind losing daily. Simulation kills the
+cheap abuse (a drop that would revert costs nothing) but a valid, useless, repeatedly-registered drop
+can still drain a day's allowance. The per-owner cap earns its place in `allowlist` mode, where the
+owner set is fixed by configuration rather than by the caller.
+
+`paying` is the answer to that: an attacker draining the budget has to pay you more than they cost.
+The budgets stay in place underneath it as a backstop.
 
 The hot key is read from `--private-key-file` or `$KEEPER_PRIVATE_KEY`, never from argv — `--private-key`
 is rejected rather than ignored, because an argument is visible in `ps` to everything on the machine.

@@ -184,8 +184,22 @@ export function createKeeperServer(options: ServerOptions): Server {
       maxCostPerActivationWei: policy.maxCostPerActivationWei.toString(),
       dailyBudgetWei: policy.dailyBudgetWei.toString(),
       remainingTodayWei: max(policy.dailyBudgetWei - spend.totalWei, 0n).toString(),
-      // The honest answer to "will you pay for mine?" without knowing whose it is yet.
-      subsidising: policy.mode === 'all' && balance >= policy.minPayerBalanceWei && spend.totalWei < policy.dailyBudgetWei,
+      // What `paying` mode requires, stated up front. Without this the UI would have to offer
+      // "and it pays the gas" and only discover otherwise after the user had committed.
+      fee:
+        policy.mode === 'paying'
+          ? {
+              recipient: policy.feeRecipient ?? (await submitter.payer()),
+              minVolumeBps: policy.minFeeBps,
+              minRevenueRatio: policy.minRevenueRatio,
+            }
+          : undefined,
+      // The honest answer to "will you pay for mine?" without knowing whose it is yet. In `paying`
+      // mode that depends on the recipe, so the answer is "it depends" rather than a boolean.
+      subsidising:
+        policy.mode === 'paying'
+          ? undefined
+          : policy.mode === 'all' && balance >= policy.minPayerBalanceWei && spend.totalWei < policy.dailyBudgetWei,
     })
   }
 
@@ -193,7 +207,7 @@ export function createKeeperServer(options: ServerOptions): Server {
     const body = await readJson(request, response, maxBodyBytes)
     if (!body.ok) return
 
-    const input = body.value as { recipe?: DropRecipeJson; address?: Address }
+    const input = body.value as { recipe?: DropRecipeJson; address?: Address; appData?: string[] | string }
     if (!input.recipe || typeof input.recipe !== 'object') {
       send(response, 400, { error: 'invalid-request', message: 'a `recipe` is required' })
       return
@@ -202,10 +216,17 @@ export function createKeeperServer(options: ServerOptions): Server {
     const result = await registerDrop({
       recipe: input.recipe,
       address: input.address,
+      // One document or several — a recipe may place more than one order, and a client with only one
+      // should not have to wrap it.
+      appDataDocuments: input.appData === undefined ? [] : Array.isArray(input.appData) ? input.appData : [input.appData],
       store,
       deployment,
       maxDrops,
       now: now(),
+      // `paying` mode is the only one that asks the recipe for anything. The recipient defaults to the
+      // payer, so an operator does not have to keep two addresses in step.
+      requireFeeFor: policy.mode === 'paying' ? (policy.feeRecipient ?? (await submitter.payer())) : undefined,
+      minFeeBps: policy.minFeeBps,
     })
 
     if (result.ok) {
@@ -285,7 +306,10 @@ export function createKeeperServer(options: ServerOptions): Server {
     }
 
     const unsubscribe = events.subscribe(drops, (event) => writeEvent(response, event))
+    // `unref` so a quiet stream does not by itself keep the process alive — the server's own handle
+    // is what should decide that.
     const timer = setInterval(() => response.write(keepalive()), keepaliveMs)
+    timer.unref?.()
 
     const close = () => {
       clearInterval(timer)
@@ -351,6 +375,11 @@ function statusFor(error: string): number {
     case 'wrong-chain':
     case 'wrong-generation':
       return 422
+    case 'app-data-mismatch':
+      return 409
+    // Not 403: nothing is forbidden, the terms were simply not met. 402 says exactly that.
+    case 'no-fee':
+      return 402
     case 'at-capacity':
       return 429
     default:

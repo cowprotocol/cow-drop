@@ -17,6 +17,8 @@ export const DEFAULT_POLICY: SubsidyPolicy = {
   dailyBudgetWei: 25n * 10n ** 16n, // 0.25 native
   perOwnerDailyBudgetWei: 5n * 10n ** 16n, // 0.05 native
   minPayerBalanceWei: 2n * 10n ** 16n, // 0.02 native
+  minFeeBps: 1,
+  minRevenueRatio: 1.5,
 }
 
 /** Config comes in as JSON, so every wei field arrives as a string. Addresses are lowercased here. */
@@ -25,8 +27,13 @@ export function parsePolicy(raw: unknown): SubsidyPolicy {
   const input = raw as Record<string, unknown>
 
   const mode = input['mode'] ?? DEFAULT_POLICY.mode
-  if (mode !== 'all' && mode !== 'allowlist') {
-    throw new Error(`policy.mode must be "all" or "allowlist", got ${JSON.stringify(mode)}`)
+  if (mode !== 'all' && mode !== 'allowlist' && mode !== 'paying') {
+    throw new Error(`policy.mode must be "all", "allowlist" or "paying", got ${JSON.stringify(mode)}`)
+  }
+
+  const feeRecipient = input['feeRecipient']
+  if (feeRecipient !== undefined && (typeof feeRecipient !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(feeRecipient))) {
+    throw new Error('policy.feeRecipient must be an address')
   }
 
   return {
@@ -38,7 +45,20 @@ export function parsePolicy(raw: unknown): SubsidyPolicy {
     dailyBudgetWei: wei(input, 'dailyBudgetWei', DEFAULT_POLICY.dailyBudgetWei),
     perOwnerDailyBudgetWei: wei(input, 'perOwnerDailyBudgetWei', DEFAULT_POLICY.perOwnerDailyBudgetWei),
     minPayerBalanceWei: wei(input, 'minPayerBalanceWei', DEFAULT_POLICY.minPayerBalanceWei),
+    feeRecipient: feeRecipient === undefined ? undefined : (feeRecipient.toLowerCase() as Address),
+    minFeeBps: positive(input, 'minFeeBps', DEFAULT_POLICY.minFeeBps),
+    minRevenueRatio: positive(input, 'minRevenueRatio', DEFAULT_POLICY.minRevenueRatio),
   }
+}
+
+/** A plain positive number — bps and ratios are small, so a float is the honest type here. */
+function positive(input: Record<string, unknown>, field: string, fallback: number): number {
+  const value = input[field]
+  if (value === undefined) return fallback
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`policy.${field} must be a positive number`)
+  }
+  return value
 }
 
 function addresses(value: unknown, field: string): Address[] {
@@ -66,6 +86,15 @@ function wei(input: Record<string, unknown>, field: string, fallback: bigint): b
 export interface PolicyInput {
   policy: SubsidyPolicy
   owner: Address
+  /** The fee the recipe promises, verified at registration. Absent means it promises nothing. */
+  fee?: { volumeBps: number }
+  /**
+   * What that fee is worth right now, in wei.
+   *
+   * `undefined` means the sell token could not be priced — a refusal rather than a zero, because an
+   * unpriceable token is one we cannot say is worth subsidising, not one we know is worthless.
+   */
+  revenueWei?: bigint
   /** The simulated gas, already multiplied by the safety buffer. */
   gasLimit: bigint
   maxFeePerGas: bigint
@@ -96,6 +125,13 @@ export function evaluatePolicy(input: PolicyInput): PolicyVerdict {
 
   if (policy.mode === 'allowlist' && !policy.allowlist.includes(owner)) {
     return { allowed: false, reason: 'not-allowlisted', detail: `${owner} is not on the allowlist` }
+  }
+
+  // The economic gate, checked before the fee and budget caps so the refusal an operator sees is the
+  // interesting one: "this drop does not pay for itself", not "it is slightly over the cap".
+  if (policy.mode === 'paying') {
+    const refusal = payingRefusal(input, costWei)
+    if (refusal) return refusal
   }
 
   if (maxFeePerGas > policy.maxFeePerGasWei) {
@@ -145,6 +181,45 @@ export function evaluatePolicy(input: PolicyInput): PolicyVerdict {
   }
 
   return { allowed: true, costWei }
+}
+
+/**
+ * Whether a drop earns its own gas.
+ *
+ * Only `volumeBps` counts as revenue — see `feeFor`. A surplus-based fee is real income and its
+ * *guaranteed* value is zero, and subsidising against income that may never arrive is the thing this
+ * mode exists to stop.
+ */
+function payingRefusal(input: PolicyInput, costWei: bigint): PolicyVerdict | undefined {
+  const { policy, fee, revenueWei } = input
+
+  if (!fee) {
+    return { allowed: false, reason: 'no-fee', detail: 'the recipe promises the keeper nothing' }
+  }
+
+  if (fee.volumeBps < policy.minFeeBps) {
+    return {
+      allowed: false,
+      reason: 'fee-too-small',
+      detail: `${fee.volumeBps} bps is below the ${policy.minFeeBps} bps minimum`,
+    }
+  }
+
+  if (revenueWei === undefined) {
+    return { allowed: false, reason: 'unpriceable', detail: 'the order book would not price the sell token' }
+  }
+
+  // Scaled integer arithmetic: the ratio is a float and the amounts are wei.
+  const required = (costWei * BigInt(Math.round(policy.minRevenueRatio * 1000))) / 1000n
+  if (revenueWei < required) {
+    return {
+      allowed: false,
+      reason: 'revenue-below-gas',
+      detail: `a fee worth ${revenueWei} wei does not cover ${costWei} wei of gas at ${policy.minRevenueRatio}x`,
+    }
+  }
+
+  return undefined
 }
 
 /** When a day-scoped budget resets. */

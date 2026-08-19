@@ -7,6 +7,9 @@ pnpm dev      # http://localhost:5173
 pnpm build
 ```
 
+Optional: `VITE_KEEPER_URL` points the page at a [keeper](../../packages/keeper/README.md); without it
+the **Hand to keeper** button is hidden and the page behaves exactly as before, local persistence only.
+
 Optional: `VITE_RPC_URL` to use your own RPC for the default chain instead of the public one. Handy for
 pointing the page at a local fork with the stack deployed:
 
@@ -111,6 +114,29 @@ takes over.
 | `src/lib/tokenLogo.ts` | The logo fallback cascade, mirroring cowswap's `getTokenLogoUrls`. |
 | `src/lib/tokens.ts` | Offline fallback list (symbols and decimals verified on-chain). |
 | `src/components/` | Address panel with QR, the decoded step table, the custom-step builder, the rescue panel, and the JSON import/export. |
+
+## Handing a drop to a keeper
+
+With `VITE_KEEPER_URL` set, the status panel gains **Hand to keeper**: it POSTs the recipe to
+`/v1/drops`, and the keeper recompiles `setupData` itself and refuses anything that does not derive the
+address given — so the page cannot register a recipe for an address it does not hold the preimage of.
+The call is idempotent, so a retry after a timeout is safe.
+
+Saved drops then carry a tag, and it is deliberately **not** the local flag rendered as fact. The
+browser only knows what it *sent*; the keeper's own state is the truth, and its `--state` defaults to
+memory only, so a restart can lose every registration. The list asks the keeper on open and shows four
+distinct answers:
+
+| tag | meaning |
+|---|---|
+| `local only` | never sent to a keeper |
+| `keeper watching` | the keeper holds it and is polling |
+| `keeper holds, not watching` | held but retired — the recipe is kept, nothing is polling |
+| `sent, keeper has no record` | **we sent it and the keeper does not have it.** The one that needs acting on |
+| `sent, keeper unreachable` | the keeper is down; unknown rather than bad |
+
+The last two are separate on purpose: a keeper that is down and a keeper that has forgotten call for
+opposite reactions.
 
 ## Never lose a recipe
 

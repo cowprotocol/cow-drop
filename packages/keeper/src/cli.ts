@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
+import { pathToFileURL } from 'node:url'
 import { privateKeyToAccount } from 'viem/accounts'
 
 import { DEFAULT_POLICY, parsePolicy } from './policy.js'
@@ -166,7 +167,18 @@ async function chainIdFromRpc(rpcUrl: string): Promise<number> {
   return Number(BigInt(body.result))
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error))
-  process.exitCode = 1
-})
+/**
+ * Only run when this file *is* the program.
+ *
+ * `cli.test.ts` imports `parseArgs` and `loadPrivateKey` from here, and a bare `main()` at module
+ * scope would run the whole keeper on import — failing for want of an RPC url and, worse, setting
+ * `process.exitCode` so a passing test run still exits non-zero.
+ */
+const entryPoint = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
+
+if (entryPoint) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exitCode = 1
+  })
+}

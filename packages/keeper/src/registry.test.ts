@@ -3,6 +3,7 @@ import type { Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 
 import { CHAIN_ID, deployment, GENERATION, OWNER, recipeJson, WXDAI } from './fixtures.js'
+import { appDataHash } from './appData.js'
 import { registerDrop, unregisterDrop } from './registry.js'
 import { memoryStore } from './store.js'
 
@@ -18,6 +19,9 @@ async function register(overrides: Partial<Parameters<typeof registerDrop>[0]> =
     deployment: overrides.deployment ?? deployment(),
     maxDrops: overrides.maxDrops ?? MAX_DROPS,
     now: NOW,
+    appDataDocuments: overrides.appDataDocuments,
+    requireFeeFor: overrides.requireFeeFor,
+    minFeeBps: overrides.minFeeBps,
   })
 }
 
@@ -184,5 +188,89 @@ describe('unregisterDrop', () => {
     })
 
     expect(result).toEqual({ ok: false, error: 'not-found' })
+  })
+})
+
+describe('paying mode', () => {
+  const KEEPER = '0x00000000000000000000000000000000000cafe0' as const
+
+  function docWith(fee: unknown): string {
+    return JSON.stringify({ version: '1.4.0', appCode: 'cow-drop', metadata: { partnerFee: fee } })
+  }
+
+  /** A recipe whose trading step commits to `document`'s hash. */
+  function payingRecipe(document: string) {
+    return recipeJson({
+      steps: [
+        {
+          type: 'presignSellAll',
+          sellToken: WXDAI,
+          buyToken: '0x177127622c4A00F3d409B75571e12cB3c8973d3c',
+          limitPrice: { price: '45', sellDecimals: 18, buyDecimals: 18 },
+          validitySeconds: 1800,
+          appData: appDataHash(document),
+        },
+      ],
+    })
+  }
+
+  it('accepts a recipe whose appData promises the keeper a volume fee', async () => {
+    const document = docWith({ volumeBps: 10, recipient: KEEPER })
+    const result = await register({
+      recipe: payingRecipe(document),
+      appDataDocuments: [document],
+      requireFeeFor: KEEPER,
+      minFeeBps: 5,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.drop.fee).toMatchObject({ volumeBps: 10, recipient: KEEPER, sellToken: WXDAI.toLowerCase() })
+    // Kept so the watch tower can upload it — the order book rejects a hash it has never seen.
+    expect(result.drop.appDataDocuments?.[appDataHash(document)]).toBe(document)
+  })
+
+  it('refuses a recipe that promises the keeper nothing', async () => {
+    const result = await register({ requireFeeFor: KEEPER, minFeeBps: 5 })
+
+    expect(result).toMatchObject({ ok: false, error: 'no-fee', recipient: KEEPER })
+  })
+
+  it('refuses a fee below the minimum', async () => {
+    const document = docWith({ volumeBps: 1, recipient: KEEPER })
+    const result = await register({
+      recipe: payingRecipe(document),
+      appDataDocuments: [document],
+      requireFeeFor: KEEPER,
+      minFeeBps: 5,
+    })
+
+    expect(result).toMatchObject({ ok: false, error: 'no-fee' })
+  })
+
+  it('refuses a document the recipe did not commit to', async () => {
+    // A fee in a document nobody signed is not a promise — the recipe commits to a hash, and only
+    // the document behind that hash counts.
+    const committed = docWith({ volumeBps: 10, recipient: KEEPER })
+    const forged = docWith({ volumeBps: 500, recipient: KEEPER })
+
+    const result = await register({
+      recipe: payingRecipe(committed),
+      appDataDocuments: [forged],
+      requireFeeFor: KEEPER,
+    })
+
+    expect(result).toMatchObject({ ok: false, error: 'app-data-mismatch', supplied: appDataHash(forged) })
+  })
+
+  it('takes the documents without a fee requirement, for the watch tower to upload', async () => {
+    // Even in `all` mode the order book needs the document, so it is stored regardless.
+    const document = docWith({ volumeBps: 10, recipient: KEEPER })
+    const result = await register({ recipe: payingRecipe(document), appDataDocuments: [document] })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.drop.fee).toBeUndefined()
+    expect(result.drop.appDataDocuments?.[appDataHash(document)]).toBe(document)
   })
 })

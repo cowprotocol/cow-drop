@@ -1,3 +1,4 @@
+import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { compileRecipe } from '@cowprotocol/cow-drop-sdk'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -8,8 +9,16 @@ import { DEFAULT_POLICY } from './policy.js'
 import { createKeeperServer, type ServerOptions } from './server.js'
 import { memoryStore } from './store.js'
 
-const servers: { close: () => void }[] = []
-afterEach(() => servers.forEach((server) => server.close()))
+const servers: Server[] = []
+afterEach(() => {
+  // Same reason `service.close()` does it: an open SSE stream never ends, so `close()` alone would
+  // leave the socket and its keepalive behind and leak into the next test.
+  for (const server of servers) {
+    server.closeAllConnections()
+    server.close()
+  }
+  servers.length = 0
+})
 
 async function serve(overrides: Partial<ServerOptions> = {}) {
   const store = overrides.store ?? memoryStore()

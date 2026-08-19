@@ -2,7 +2,7 @@ import { compileRecipe } from '@cowprotocol/cow-drop-sdk'
 import { describe, expect, it } from 'vitest'
 
 import { createEventBus, type KeeperEvent } from './events.js'
-import { CHAIN_ID, deployment, fakeChain, fakeSubmitter, manualClock, recipeJson, registered } from './fixtures.js'
+import { CHAIN_ID, deployment, fakeChain, fakeSubmitter, manualClock, recipeJson, registered, WXDAI } from './fixtures.js'
 import { createKeeper, type KeeperOptions } from './keeper.js'
 import { DEFAULT_POLICY } from './policy.js'
 import { memoryStore, utcDay } from './store.js'
@@ -321,5 +321,84 @@ describe('createKeeper', () => {
     const h = harness()
     await h.keeper.tick()
     expect((await h.store.get(CHAIN_ID, h.drop.address))?.address).toBe(compileRecipe(recipeJson()).address.toLowerCase())
+  })
+})
+
+describe('paying mode', () => {
+  const KEEPER = '0x00000000000000000000000000000000000cafe0' as const
+  const paying = { mode: 'paying' as const, minFeeBps: 5, minRevenueRatio: 1.5 }
+
+  /** A drop that promises the keeper 10 bps of the WXDAI it sells. */
+  function withFee(volumeBps = 10) {
+    return registered({
+      fee: { volumeBps, recipient: KEEPER, appData: `0x${'ab'.repeat(32)}`, sellToken: WXDAI.toLowerCase() as never },
+    })
+  }
+
+  function prices(nativePrice: number | undefined) {
+    return { nativePrice: async () => nativePrice }
+  }
+
+  it('activates a drop whose fee comfortably covers the gas', async () => {
+    const h = harness({
+      drop: withFee(),
+      policy: paying,
+      options: { prices: prices(1e9) },
+    })
+
+    await h.keeper.tick()
+
+    expect(h.submitter.broadcasts).toBe(1)
+  })
+
+  it('refuses a drop that promises nothing, where "all" would have paid', async () => {
+    // The hole this mode closes.
+    const h = harness({ policy: paying, options: { prices: prices(1e9) } })
+
+    await h.keeper.tick()
+
+    expect(h.submitter.broadcasts).toBe(0)
+    expect(h.events.find((e) => e.type === 'blocked')).toMatchObject({ reason: 'no-fee' })
+  })
+
+  it('refuses a fee that does not cover the gas', async () => {
+    // A real promise, worth less than it costs to collect: 10 bps of 1000 units of a token worth
+    // 1e-6 wei each is ~1e9 wei, against ~3.75e14 wei of gas.
+    const h = harness({ drop: withFee(), policy: paying, options: { prices: prices(1e-6) } })
+
+    await h.keeper.tick()
+
+    expect(h.submitter.broadcasts).toBe(0)
+    expect(h.events.find((e) => e.type === 'blocked')).toMatchObject({ reason: 'revenue-below-gas' })
+  })
+
+  it('refuses a token the order book will not price, rather than assuming it is worthless', async () => {
+    const h = harness({ drop: withFee(), policy: paying, options: { prices: prices(undefined) } })
+
+    await h.keeper.tick()
+
+    expect(h.events.find((e) => e.type === 'blocked')).toMatchObject({ reason: 'unpriceable' })
+  })
+
+  it('prices the fee against the balance that actually arrived', async () => {
+    // Ten times the money means ten times the fee, which is what makes the gate scale.
+    const small = harness({
+      drop: withFee(),
+      policy: paying,
+      chain: fakeChain({ balances: [10n ** 18n] }),
+      options: { prices: prices(1e-6) },
+    })
+    await small.keeper.tick()
+    expect(small.submitter.broadcasts).toBe(0)
+
+    // A million times the money, same price, same fee rate — and now it pays for itself.
+    const large = harness({
+      drop: withFee(),
+      policy: paying,
+      chain: fakeChain({ balances: [10n ** 24n] }),
+      options: { prices: prices(1e-6) },
+    })
+    await large.keeper.tick()
+    expect(large.submitter.broadcasts).toBe(1)
   })
 })

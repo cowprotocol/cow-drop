@@ -31,6 +31,14 @@ export type PolicyRefusal =
   | 'daily-budget-exhausted'
   | 'owner-budget-exhausted'
   | 'payer-balance-low'
+  /** `paying` mode: the recipe promises the keeper nothing. */
+  | 'no-fee'
+  /** It promises something, but less than `minFeeBps`. */
+  | 'fee-too-small'
+  /** The order book would not price the sell token, so the fee cannot be valued. */
+  | 'unpriceable'
+  /** The fee is real and does not cover the gas by `minRevenueRatio`. */
+  | 'revenue-below-gas'
 
 /**
  * What the recipe suggests is worth polling.
@@ -136,6 +144,19 @@ export interface RegisteredDrop {
   /** The last refusal, so `blocked` is emitted on a change of reason rather than every tick. */
   blockedReason?: PolicyRefusal
   blockedUntil?: number
+  /**
+   * The fee this recipe promises the keeper, verified against the committed `appData` hash when it
+   * was registered. Absent means the recipe promises nothing.
+   */
+  fee?: { volumeBps: number; recipient: Address; appData: Hex; sellToken: Address }
+  /**
+   * The appData documents behind the recipe's committed hashes, keyed by hash.
+   *
+   * Held for two jobs at once: verifying the fee, and giving the watch tower something to upload —
+   * the order book rejects an appData hash it has never seen, so an order with a custom document
+   * cannot be posted without it.
+   */
+  appDataDocuments?: Record<Hex, string>
   pending?: PendingActivation
   /** Newest last. */
   activations: ActivationRecord[]
@@ -154,7 +175,16 @@ export interface RegisteredDrop {
  * fixed by configuration rather than by the caller.
  */
 export interface SubsidyPolicy {
-  mode: 'all' | 'allowlist'
+  /**
+   * Who gets subsidised.
+   *
+   * - `all` — everyone, bounded only by the budgets. The permissive demo posture.
+   * - `allowlist` — a fixed set of owners, chosen by configuration rather than by the caller.
+   * - `paying` — anyone whose recipe pays the keeper more than the activation costs. The only mode
+   *   whose limit is economic rather than administrative, and so the only one that scales to
+   *   strangers without an attacker being able to spend your budget on nothing.
+   */
+  mode: 'all' | 'allowlist' | 'paying'
   /** Paid for in `allowlist` mode. Lowercased at load. Ignored in `all`. */
   allowlist: Address[]
   /** Never paid for, in either mode. Checked first. */
@@ -172,6 +202,20 @@ export interface SubsidyPolicy {
   perOwnerDailyBudgetWei: bigint
   /** Stop sending below this, so the key can be topped up before a run is left half-finished. */
   minPayerBalanceWei: bigint
+
+  // --- `paying` mode ----------------------------------------------------------------------------
+
+  /** The address a recipe's `partnerFee` must name. Defaults to the keeper's own payer. */
+  feeRecipient?: Address
+  /** Refuse a fee below this, so dust promises do not qualify. */
+  minFeeBps: number
+  /**
+   * How many times the gas the fee must be worth.
+   *
+   * Above 1 because an estimate is an estimate: the sell amount can shrink before the order fills,
+   * the price can move, and a fee that only just covers the gas covers nothing after either.
+   */
+  minRevenueRatio: number
 }
 
 export type PolicyVerdict =

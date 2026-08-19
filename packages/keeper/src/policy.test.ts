@@ -13,6 +13,8 @@ const GWEI = 10n ** 9n
 function evaluate(overrides: {
   policy?: Partial<SubsidyPolicy>
   owner?: Address
+  fee?: { volumeBps: number }
+  revenueWei?: bigint
   gasLimit?: bigint
   maxFeePerGas?: bigint
   payerBalanceWei?: bigint
@@ -23,6 +25,8 @@ function evaluate(overrides: {
   return evaluatePolicy({
     policy: { ...DEFAULT_POLICY, ...overrides.policy },
     owner: overrides.owner ?? OWNER,
+    fee: overrides.fee,
+    revenueWei: overrides.revenueWei,
     gasLimit: overrides.gasLimit ?? 300_000n,
     maxFeePerGas: overrides.maxFeePerGas ?? GWEI,
     payerBalanceWei: overrides.payerBalanceWei ?? 10n ** 18n,
@@ -166,5 +170,70 @@ describe('nextUtcMidnight', () => {
   it('is the following day at 00:00 UTC', () => {
     expect(nextUtcMidnight(Date.UTC(2026, 0, 15, 0, 0, 0))).toBe(Date.UTC(2026, 0, 16))
     expect(nextUtcMidnight(Date.UTC(2026, 11, 31, 23, 59, 59))).toBe(Date.UTC(2027, 0, 1))
+  })
+})
+
+describe('paying mode', () => {
+  const FEE = { volumeBps: 10 }
+  const paying = { mode: 'paying' as const, minFeeBps: 5, minRevenueRatio: 1.5 }
+  const cost = 300_000n * GWEI
+
+  it('pays when the fee is worth comfortably more than the gas', () => {
+    expect(evaluate({ policy: paying, fee: FEE, revenueWei: cost * 2n }).allowed).toBe(true)
+  })
+
+  it('refuses a recipe that promises nothing', () => {
+    // The hole this mode closes: in `all` mode this drop would be subsidised for free.
+    expect(evaluate({ policy: paying, revenueWei: cost * 100n })).toMatchObject({
+      allowed: false,
+      reason: 'no-fee',
+    })
+  })
+
+  it('refuses a fee below the minimum, however valuable', () => {
+    expect(evaluate({ policy: paying, fee: { volumeBps: 1 }, revenueWei: cost * 100n })).toMatchObject({
+      allowed: false,
+      reason: 'fee-too-small',
+    })
+  })
+
+  it('refuses a token the order book will not price', () => {
+    // Undefined is "we cannot say it is worth subsidising", not "it is worth nothing".
+    expect(evaluate({ policy: paying, fee: FEE, revenueWei: undefined })).toMatchObject({
+      allowed: false,
+      reason: 'unpriceable',
+    })
+  })
+
+  it('refuses revenue that only just covers the gas', () => {
+    // The ratio sits above 1 because the amount can shrink and the price can move before the fill.
+    expect(evaluate({ policy: paying, fee: FEE, revenueWei: cost })).toMatchObject({
+      allowed: false,
+      reason: 'revenue-below-gas',
+    })
+    expect(evaluate({ policy: paying, fee: FEE, revenueWei: (cost * 3n) / 2n }).allowed).toBe(true)
+  })
+
+  it('reports paying its own way before it reports being over a cap', () => {
+    // An operator reading the log wants "this drop does not pay for itself", not "slightly over".
+    const result = evaluate({
+      policy: { ...paying, maxCostPerActivationWei: 1n },
+      fee: FEE,
+      revenueWei: 0n,
+    })
+
+    expect(result).toMatchObject({ reason: 'revenue-below-gas' })
+  })
+
+  it('still lets the denylist refuse a paying drop', () => {
+    expect(
+      evaluate({ policy: { ...paying, denylist: [OWNER] }, fee: FEE, revenueWei: cost * 100n }),
+    ).toMatchObject({ reason: 'denylisted' })
+  })
+
+  it('leaves the budgets in place as a backstop', () => {
+    expect(
+      evaluate({ policy: { ...paying, dailyBudgetWei: 0n }, fee: FEE, revenueWei: cost * 100n }),
+    ).toMatchObject({ reason: 'daily-budget-exhausted' })
   })
 })

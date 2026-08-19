@@ -27,8 +27,26 @@ export interface SavedDrop {
   chainId: number
   label: string
   recipe: DropRecipeJson
-  /** Unix ms, so the list can show the newest first. */
+  /**
+   * Unix ms of the **first** save — when this drop came into existence, as far as this browser knows.
+   *
+   * Preserved across re-saves on purpose. A recipe is re-saved every time the user copies the address,
+   * downloads the file or activates, so a single `Date.now()` would drift forward and the list would
+   * report "created" times that are really "last touched" ones. That is invisible at day resolution and
+   * obvious once the time is shown.
+   */
   savedAt: number
+  /** Unix ms of the most recent save. Absent on records written before this field existed. */
+  updatedAt?: number
+  /**
+   * That this browser handed the recipe to a keeper, and to which one.
+   *
+   * A record of what *we did*, not of what is true now. The keeper's own state is the truth, and its
+   * `--state` defaults to memory only — so a restart can drop every registration while this flag still
+   * says otherwise. Treat it as "we sent this" and confirm against the keeper before telling anyone it
+   * is being watched; see `readKeeperDrop`.
+   */
+  keeper?: { url: string; registeredAt: number }
 }
 
 function read(): SavedDrop[] {
@@ -52,18 +70,26 @@ function write(drops: SavedDrop[]): void {
   }
 }
 
+/** Most recently touched first — which is not the same as most recently created. */
 export function listDrops(): SavedDrop[] {
-  return read().sort((a, b) => b.savedAt - a.savedAt)
+  return read().sort((a, b) => (b.updatedAt ?? b.savedAt) - (a.updatedAt ?? a.savedAt))
 }
 
 /** Save a recipe, replacing any earlier entry for the same drop. Returns the stored record. */
 export function saveDrop(params: { address: Address; recipe: DropRecipeJson }): SavedDrop {
+  const now = Date.now()
+  const existing = read().find(
+    (drop) => drop.address.toLowerCase() === params.address.toLowerCase() && drop.chainId === params.recipe.chainId,
+  )
+
   const record: SavedDrop = {
     address: params.address,
     chainId: params.recipe.chainId,
     label: params.recipe.label,
     recipe: params.recipe,
-    savedAt: Date.now(),
+    // Kept from the earlier entry, so re-saving does not rewrite when the drop was created.
+    savedAt: existing?.savedAt ?? now,
+    updatedAt: now,
   }
 
   const others = read().filter(
@@ -77,6 +103,34 @@ export function forgetDrop(address: Address, chainId: number): void {
   write(
     read().filter((drop) => !(drop.address.toLowerCase() === address.toLowerCase() && drop.chainId === chainId)),
   )
+}
+
+/**
+ * Record that the recipe was handed to a keeper. No-op for an address this browser has not saved,
+ * since the flag belongs to a saved record rather than standing alone.
+ */
+export function markSentToKeeper(params: { address: Address; chainId: number; url: string }): void {
+  const drops = read()
+  const index = drops.findIndex(
+    (drop) => drop.address.toLowerCase() === params.address.toLowerCase() && drop.chainId === params.chainId,
+  )
+  if (index === -1) return
+
+  drops[index] = { ...drops[index]!, keeper: { url: params.url, registeredAt: Date.now() } }
+  write(drops)
+}
+
+/** Forget that it was sent, after unregistering. */
+export function clearSentToKeeper(address: Address, chainId: number): void {
+  const drops = read()
+  const index = drops.findIndex(
+    (drop) => drop.address.toLowerCase() === address.toLowerCase() && drop.chainId === chainId,
+  )
+  if (index === -1) return
+
+  const { keeper: _dropped, ...rest } = drops[index]!
+  drops[index] = rest
+  write(drops)
 }
 
 export function isSaved(address: Address, chainId: number): boolean {

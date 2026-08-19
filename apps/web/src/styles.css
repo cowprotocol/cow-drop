@@ -744,3 +744,28 @@ details.saved > summary {
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+
+/*
+ * Whether a saved drop was handed to a keeper. Deliberately a plain tag rather than a colour-coded
+ * badge: the only state that warrants alarm is "we sent it and the keeper has no record", because that
+ * is the one where nobody is watching a drop the user believes is handled.
+ */
+.keeper-tag {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  width: fit-content;
+}
+
+.keeper-tag.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.keeper-tag.muted {
+  opacity: 0.55;
+}

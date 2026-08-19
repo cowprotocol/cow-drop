@@ -1,7 +1,8 @@
 import { compileRecipe, type DropDeployment, type DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 
-import { deriveHints, HINTS_VERSION } from './hints.js'
+import { feeFor, isProblem, matchDocuments } from './appData.js'
+import { deriveHints, HINTS_VERSION, tradesOf } from './hints.js'
 import { DropConflict, type DropStore } from './store.js'
 import type { RegisteredDrop } from './types.js'
 
@@ -13,6 +14,10 @@ export type RegistrationError =
   | { error: 'wrong-generation'; supplied: number; expected: number }
   | { error: 'conflict'; message: string }
   | { error: 'at-capacity'; maxDrops: number }
+  /** A document was supplied that hashes to nothing the recipe committed to. */
+  | { error: 'app-data-mismatch'; supplied: Hex; committed: Hex[] }
+  /** `paying` mode, and the recipe promises this keeper nothing it can count on. */
+  | { error: 'no-fee'; recipient: Address; detail: string }
 
 export type RegistrationResult =
   | { ok: true; created: boolean; drop: RegisteredDrop }
@@ -27,10 +32,21 @@ export interface RegisterInput {
    * it; the UI always sends it.
    */
   address?: Address
+  /**
+   * The full appData documents behind the recipe's committed hashes.
+   *
+   * The chain carries only the hash, so nothing can recover these from the recipe. Needed for two
+   * jobs at once: reading the partner fee, and giving the watch tower something to upload, since
+   * the order book rejects an appData hash it has never seen.
+   */
+  appDataDocuments?: string[]
   store: DropStore
   deployment: DropDeployment
   maxDrops: number
   now: number
+  /** `paying` mode: a drop must promise this address a volume fee, or it is refused. */
+  requireFeeFor?: Address
+  minFeeBps?: number
 }
 
 /**
@@ -100,6 +116,38 @@ export async function registerDrop(input: RegisterInput): Promise<RegistrationRe
     return { ok: false, error: 'at-capacity', maxDrops }
   }
 
+  const trades = tradesOf(recipe)
+  const { matched, unmatched } = matchDocuments(
+    trades.map((trade) => trade.appData),
+    input.appDataDocuments ?? [],
+  )
+
+  const stray = unmatched[0]
+  if (stray) {
+    return {
+      ok: false,
+      error: 'app-data-mismatch',
+      supplied: stray.hash,
+      committed: trades.map((trade) => trade.appData),
+    }
+  }
+
+  const fee = input.requireFeeFor
+    ? findFee(trades, matched, input.requireFeeFor, input.minFeeBps ?? 0)
+    : undefined
+
+  if (input.requireFeeFor && !fee) {
+    return {
+      ok: false,
+      error: 'no-fee',
+      recipient: input.requireFeeFor,
+      detail:
+        trades.length === 0
+          ? 'the recipe places no order, so it can carry no partner fee'
+          : `no appData document carries a volumeBps partner fee of at least ${input.minFeeBps ?? 0} bps for ${input.requireFeeFor}`,
+    }
+  }
+
   const drop: RegisteredDrop = {
     address: derived,
     chainId: deployment.chainId,
@@ -117,6 +165,8 @@ export async function registerDrop(input: RegisterInput): Promise<RegistrationRe
     registeredAt: now,
     updatedAt: now,
     everFunded: false,
+    fee,
+    appDataDocuments: Object.keys(matched).length > 0 ? matched : undefined,
     activations: [],
     backoff: { failures: 0, nextAttemptAt: 0 },
   }
@@ -165,4 +215,33 @@ export async function unregisterDrop(input: {
   )
 
   return updated ? { ok: true } : { ok: false, error: 'not-found' }
+}
+
+/**
+ * The first trade whose appData promises `recipient` a volume fee.
+ *
+ * Only `volumeBps` counts — a surplus-based fee is real income whose *guaranteed* value is zero, and
+ * subsidising against income that may never arrive is what `paying` mode exists to stop.
+ */
+function findFee(
+  trades: readonly { sellToken: Address; appData: Hex }[],
+  documents: Record<Hex, string>,
+  recipient: Address,
+  minFeeBps: number,
+): RegisteredDrop['fee'] {
+  for (const trade of trades) {
+    const document = documents[trade.appData]
+    if (!document) continue
+
+    const found = feeFor(document, trade.appData, recipient)
+    if (isProblem(found) || found.volumeBps < minFeeBps) continue
+
+    return {
+      volumeBps: found.volumeBps,
+      recipient: found.recipient,
+      appData: trade.appData,
+      sellToken: trade.sellToken,
+    }
+  }
+  return undefined
 }
