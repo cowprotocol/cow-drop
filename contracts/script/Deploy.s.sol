@@ -31,7 +31,7 @@ import {DropConfig} from "./DropConfig.sol";
 ///      `DropExecutor`. On a chain where they do not exist yet they land at the same addresses.
 ///
 ///      Usage:
-///        forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --verify
+///        forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --verify --private-key $PK
 contract DeployScript is Script {
     bytes32 internal constant SALT = bytes32(0);
 
