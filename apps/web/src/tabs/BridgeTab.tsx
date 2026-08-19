@@ -11,6 +11,7 @@ import {
   planFrom,
   quoteBridge,
   readBridgeAllowance,
+  readTokenBalance,
   sendBridge,
   type BridgePlan,
 } from '../lib/bridge.js'
@@ -118,6 +119,8 @@ function Bridge({
   const [bridgeHash, setBridgeHash] = useState<Hex | null>(null)
   const [keeperState, setKeeperState] = useState<KeeperState>('unknown')
   const [walletChain, setWalletChain] = useState<number | null>(null)
+  /** null while unread — an unreadable balance must not read as zero. */
+  const [balance, setBalance] = useState<bigint | null>(null)
 
   const decimals = findToken(tokens, sourceToken ?? '')?.decimals ?? 18
 
@@ -151,6 +154,25 @@ function Bridge({
       cancelled = true
     }
   }, [sourceChainId])
+
+  /**
+   * The balance of the token about to be bridged.
+   *
+   * Deliberately not gated on the wallet being on the source chain: this reads through the public RPC,
+   * and making it wait for a network switch would hide the one number you need in order to decide
+   * whether to switch at all.
+   */
+  useEffect(() => {
+    if (!sourceToken) return
+    let cancelled = false
+    setBalance(null)
+    void readTokenBalance({ chainId: sourceChainId, token: sourceToken, owner: account }).then((held) => {
+      if (!cancelled) setBalance(held)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [sourceChainId, sourceToken, account])
 
   /** A quote is for one route, amount and destination. Any of them moving makes it stale. */
   useEffect(() => {
@@ -203,6 +225,8 @@ function Bridge({
   const { compiled, drop, deliveredToken } = plan.value
   const destinationChain = destinationChainId as number
   const wrongNetwork = walletChain !== null && walletChain !== sourceChainId
+  const symbol = findToken(tokens, sourceToken ?? '')?.symbol ?? ''
+  const overBalance = amount !== null && balance !== null && amount > balance
   const needsApproval =
     quote?.approval != null && allowance !== null && allowance < quote.approval.amount
 
@@ -355,6 +379,43 @@ function Bridge({
           disabled={busy}
         />
       </label>
+      <p className="hint">
+        {balance === null ? (
+          'Balance unavailable — this chain\u2019s public RPC did not answer. You can still enter an amount.'
+        ) : (
+          <>
+            Balance {formatUnits(balance, decimals)} {symbol}
+            {balance > 0n && (
+              <>
+                {' · '}
+                <button
+                  className="link"
+                  onClick={() => setAmountText(formatUnits(balance, decimals))}
+                  disabled={busy}
+                >
+                  Max
+                </button>
+              </>
+            )}
+          </>
+        )}
+      </p>
+      {overBalance && <p className="error">That is more than you hold on {chainName(sourceChainId)}.</p>}
+
+      {/*
+        Here rather than only beside the send button. The source chain is chosen just above, and the
+        switch is a precondition of everything below it — finding that out at the last step means
+        going back up to understand why.
+      */}
+      {wrongNetwork && (
+        <p className="hint">
+          Your wallet is on {chainName(walletChain as number)}, so the bridge transaction cannot be
+          sent yet.{' '}
+          <button className="link" onClick={() => void switchChain(sourceChainId)}>
+            Switch to {chainName(sourceChainId)}
+          </button>
+        </p>
+      )}
 
       <h3>3 · If the recipe will not run</h3>
       <p className="hint">
@@ -385,7 +446,7 @@ function Bridge({
       ))}
 
       <h3>4 · Route</h3>
-      <button onClick={onQuote} disabled={!amount || !sourceToken || quoting || busy}>
+      <button onClick={onQuote} disabled={!amount || !sourceToken || overBalance || quoting || busy}>
         {quoting ? 'Getting a quote…' : quote ? 'Re-quote' : 'Get a quote'}
       </button>
 
@@ -421,13 +482,6 @@ function Bridge({
 
       <h3>5 · Send it</h3>
       <KeeperNote state={keeperState} chainId={destinationChain} />
-
-      {wrongNetwork && (
-        <p>
-          Your wallet is on {chainName(walletChain as number)}.{' '}
-          <button onClick={() => void switchChain(sourceChainId)}>Switch to {chainName(sourceChainId)}</button>
-        </p>
-      )}
 
       {needsApproval && (
         <button onClick={() => void onApprove()} disabled={busy || wrongNetwork}>

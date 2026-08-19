@@ -136,6 +136,31 @@ export async function readBridgeAllowance(params: {
   }
 }
 
+/**
+ * The account's balance of the token it is about to bridge.
+ *
+ * Read through the public RPC, so it does not need the wallet on the source chain — the network only
+ * has to match to *send*. Returns null when it cannot be read: a source chain needs no cow-drop
+ * deployment and may be served by an endpoint this app has no override for, and an unreadable balance
+ * should show as unknown rather than as zero.
+ */
+export async function readTokenBalance(params: {
+  chainId: number
+  token: Address
+  owner: Address
+}): Promise<bigint | null> {
+  try {
+    return await getPublicClient(params.chainId).readContract({
+      address: params.token,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [params.owner],
+    })
+  } catch {
+    return null
+  }
+}
+
 /** Approve exactly what this bridge asked for, rather than an unlimited allowance. */
 export async function approveBridge(params: {
   account: Address
