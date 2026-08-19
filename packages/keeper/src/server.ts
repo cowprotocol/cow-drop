@@ -60,6 +60,67 @@ function toWire(drop: RegisteredDrop) {
 }
 
 /**
+ * The HTTP surface, described once.
+ *
+ * Kept immediately above the router that serves it so the two are edited together, and given a real
+ * consumer — `GET /v1/openapi.json` is generated from this list, and so is the boot banner. A route
+ * added to the router and not to this table is therefore undocumented in two visible places rather
+ * than silently absent from one.
+ */
+export interface RouteDoc {
+  method: 'GET' | 'POST'
+  /** OpenAPI-style, so `{address}` rather than a regex. */
+  path: string
+  summary: string
+}
+
+export const ROUTES: readonly RouteDoc[] = [
+  { method: 'GET', path: '/v1/health', summary: 'Liveness, payer balance, today\'s spend. 503 when the payer is below its floor.' },
+  { method: 'GET', path: '/v1/policy', summary: 'The subsidy policy in force.' },
+  { method: 'GET', path: '/v1/openapi.json', summary: 'This surface as an OpenAPI 3.1 document.' },
+  { method: 'POST', path: '/v1/drops', summary: 'Register a drop for the keeper to watch and pay for.' },
+  { method: 'POST', path: '/v1/drops/unregister', summary: 'Stop watching a drop. Body carries the recipe, which is the proof.' },
+  { method: 'GET', path: '/v1/drops/{address}', summary: 'One registered drop, with its last poll and simulation.' },
+  { method: 'GET', path: '/v1/events', summary: 'Server-sent event stream of registrations, activations and posted orders.' },
+]
+
+/**
+ * A minimal OpenAPI 3.1 document, built from `ROUTES`.
+ *
+ * Paths and summaries only, with no request or response schemas: those live in `types.ts` and
+ * hand-copying them here would produce a document that lies as soon as one changes. This is enough to
+ * point Swagger UI, Redoc or `curl` at the surface and see what exists.
+ */
+export function openApiDocument(chainId: number, generation: number): unknown {
+  const paths: Record<string, Record<string, unknown>> = {}
+  for (const route of ROUTES) {
+    const parameters =
+      route.path === '/v1/drops/{address}'
+        ? [{ name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' } }]
+        : undefined
+
+    paths[route.path] = {
+      ...paths[route.path],
+      [route.method.toLowerCase()]: {
+        summary: route.summary,
+        ...(parameters ? { parameters } : {}),
+        responses: { '200': { description: 'OK' } },
+      },
+    }
+  }
+
+  return {
+    openapi: '3.1.0',
+    info: {
+      title: 'cow-drop keeper',
+      version: '0.0.0',
+      description: `Watches registered drops on chain ${chainId} (generation ${generation}), activates them when the recipe would succeed, and pays the gas.`,
+    },
+    paths,
+  }
+}
+
+/**
  * The keeper's HTTP surface.
  *
  * `node:http` rather than a framework: five routes and an event stream is not a framework's worth of
@@ -134,6 +195,9 @@ export function createKeeperServer(options: ServerOptions): Server {
 
     if (request.method === 'GET' && path === '/v1/health') return health(response)
     if (request.method === 'GET' && path === '/v1/policy') return describePolicy(response)
+    if (request.method === 'GET' && path === '/v1/openapi.json') {
+      return send(response, 200, openApiDocument(deployment.chainId, deployment.generation))
+    }
     if (request.method === 'POST' && path === '/v1/drops') return register(request, response)
     if (request.method === 'POST' && path === '/v1/drops/unregister') return unregister(request, response)
     if (request.method === 'GET' && path === '/v1/events') return stream(request, response, url)

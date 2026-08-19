@@ -1,5 +1,5 @@
 import { ORDER_PLACEMENT_TOPIC, DROP_EXECUTOR_ABI } from '@cowprotocol/cow-drop-sdk'
-import { encodeEventTopics, type Address, type Hex, type PublicClient } from 'viem'
+import { encodeEventTopics, formatLog, numberToHex, type Address, type Hex, type PublicClient } from 'viem'
 
 /** A log, reduced to the fields the scanner reads. */
 export interface RawLog {
@@ -43,7 +43,24 @@ const SETTLEMENT_ABI = [
 export function viemChainReader(client: PublicClient): ChainReader {
   return {
     getBlockNumber: () => client.getBlockNumber(),
-    getLogs: (filter) => client.getLogs(filter as never) as unknown as Promise<RawLog[]>,
+    // `eth_getLogs` directly rather than `client.getLogs`, which takes an `event` and derives the
+    // topics itself: it has no `topics` parameter at all, so handing it one sent `topics: []` and the
+    // node returned every log in the range for the scanner to reject as undecodable. A bare topic0 and
+    // no address filter is the whole point of the scan, so this is the request to make.
+    getLogs: async ({ address, topics, fromBlock, toBlock }) => {
+      const logs = await client.request({
+        method: 'eth_getLogs',
+        params: [
+          {
+            ...(address ? { address } : {}),
+            topics: topics as never,
+            fromBlock: numberToHex(fromBlock),
+            toBlock: numberToHex(toBlock),
+          },
+        ],
+      })
+      return logs.map((log) => formatLog(log)) as unknown as RawLog[]
+    },
     isPreSigned: async (settlement, orderUid) =>
       (await client.readContract({
         address: settlement,

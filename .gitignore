@@ -14,7 +14,7 @@ contracts/cache/
 contracts/broadcast/**/dry-run/
 
 # keeper and watch tower state: registry, spend ledger, block cursors
-/out/
+out/
 
 # env
 .env

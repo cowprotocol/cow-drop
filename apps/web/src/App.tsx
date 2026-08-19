@@ -266,6 +266,16 @@ export function App() {
   const [probeError, setProbeError] = useState<string | null>(null)
   /** Bumped by the retry button to re-run the probe after clearing its cached answer. */
   const [probeAttempt, setProbeAttempt] = useState(0)
+  /**
+   * Whether the guards panel is expanded.
+   *
+   * Collapsed to start: three fields that most drops leave blank, sitting between the parameters and
+   * the address. Seeded from the initial form rather than hard-coded shut, so a starting state that
+   * *does* carry a guard still shows it — a hidden guard is a hidden reason the address moved.
+   */
+  const [guardsOpen, setGuardsOpen] = useState(
+    () => INITIAL.minAmount !== '' || INITIAL.notBefore !== '' || INITIAL.notAfter !== '',
+  )
 
   const recipe = useMemo(() => imported ?? toRecipe(form, tokens), [imported, form, tokens])
 
@@ -301,6 +311,9 @@ export function App() {
    */
   const feedsMissing =
     form.recipeKind === 'stoploss' && !(isAddress(form.sellOracle) && isAddress(form.buyOracle))
+
+  /** Counted for the collapsed summary, so a set guard is never silently folded away. */
+  const guardsSet = [form.minAmount, form.notBefore, form.notAfter].filter((value) => value !== '').length
 
   /**
    * What is wrong with the owner *field*, as opposed to with the recipe.
@@ -808,8 +821,48 @@ export function App() {
           </fieldset>
         )}
 
-        <fieldset className="subsection">
-          <legend>Guards (optional)</legend>
+        {/*
+          * Its own box, above the guards: this is a tool for filling in the limit price, so it belongs
+          * next to the parameters that set the price rather than after the optional panels.
+          */}
+        <fieldset className="subsection quote">
+          <legend>Market price</legend>
+          <label>
+            Reference amount (for the quote only, never part of the recipe)
+            <input value={referenceAmount} onChange={(event) => setReferenceAmount(event.target.value)} />
+          </label>
+          <div className="actions">
+            <button onClick={() => void onQuote()} disabled={quoting}>
+              {quoting ? 'Quoting…' : 'Get market price'}
+            </button>
+            {quote && (
+              <>
+                <span className="quote-price">
+                  market <strong>{quote.price}</strong> {buyToken?.symbol ?? ''} per {sellToken?.symbol ?? ''}
+                </span>
+                {[0.5, 1, 5].map((slippage) => (
+                  <button key={slippage} onClick={() => set('limitPrice', applySlippage(quote.price, slippage))}>
+                    −{slippage}%
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+          <p className="hint">
+            Only the <em>price</em> is used — a drop cannot know its amount in advance. The amount still
+            matters: quote too little and the fee dominates, making the market look worse than it is.
+          </p>
+        </fieldset>
+
+        <details
+          className="subsection guards"
+          open={guardsOpen}
+          onToggle={(event) => setGuardsOpen(event.currentTarget.open)}
+        >
+          <summary>
+            Guards (optional)
+            {guardsSet > 0 && <span className="guard-count"> — {guardsSet} set</span>}
+          </summary>
           <div className="grid">
             <label>
               Minimum amount before activating
@@ -841,41 +894,17 @@ export function App() {
             Guards <em>refuse</em> rather than trigger — nothing watches for one to turn true — and they
             are part of the address, so adding one moves it.
           </p>
-          {form.recipeKind !== 'swap' && !form.minAmount && (
-            <p className="hint warn-note">
-              This recipe is one-shot. Without a minimum, anyone can activate on the first wei and the
-              order gets sized from a part-delivered balance — what a bridge paying in tranches does.
-            </p>
-          )}
-        </fieldset>
-        <div className="quote">
-          <label>
-            Reference amount (for the quote only, never part of the recipe)
-            <input value={referenceAmount} onChange={(event) => setReferenceAmount(event.target.value)} />
-          </label>
-          <div className="actions">
-            <button onClick={() => void onQuote()} disabled={quoting}>
-              {quoting ? 'Quoting…' : 'Get market price'}
-            </button>
-            {quote && (
-              <>
-                <span className="quote-price">
-                  market <strong>{quote.price}</strong> {buyToken?.symbol ?? ''} per {sellToken?.symbol ?? ''}
-                </span>
-                {[0.5, 1, 5].map((slippage) => (
-                  <button key={slippage} onClick={() => set('limitPrice', applySlippage(quote.price, slippage))}>
-                    −{slippage}%
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
-          <p className="hint">
-            Only the <em>price</em> is used — a drop cannot know its amount in advance. The amount still
-            matters: quote too little and the fee dominates, making the market look worse than it is.
+        </details>
+        {/*
+          * Outside the collapsed panel on purpose: a warning nobody can see is not a warning, and this
+          * one is about the guard the user has *not* set.
+          */}
+        {form.recipeKind !== 'swap' && !form.minAmount && (
+          <p className="hint warn-note">
+            This recipe is one-shot. Without a minimum, anyone can activate on the first wei and the order
+            gets sized from a part-delivered balance — what a bridge paying in tranches does.
           </p>
-        </div>
-
+        )}
         <p className="hint">
           Bought tokens go to the <strong>receiver</strong>, defaulting to the owner; the zero address
           leaves them in the drop. It cannot default to the drop itself — that address is derived from

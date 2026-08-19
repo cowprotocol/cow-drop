@@ -9,7 +9,7 @@ import {
   type Logger,
 } from '@cowprotocol/cow-drop-watch-tower'
 import type { Server } from 'node:http'
-import type { PublicClient } from 'viem'
+import { formatEther, type Address, type PublicClient } from 'viem'
 import type { PrivateKeyAccount } from 'viem/accounts'
 
 import { keeperClient, viemKeeperChain, viemSubmitter } from './chain.js'
@@ -18,9 +18,9 @@ import { createKeeper } from './keeper.js'
 import { forwardOrderResults } from './orders.js'
 import { DEFAULT_POLICY } from './policy.js'
 import { orderBookPrices } from './revenue.js'
-import { createKeeperServer } from './server.js'
-import { fileStore, memoryStore, type KeeperStore } from './store.js'
-import type { SubsidyPolicy } from './types.js'
+import { createKeeperServer, ROUTES } from './server.js'
+import { fileStore, memoryStore, utcDay, type KeeperStore } from './store.js'
+import type { DropStatus, SubsidyPolicy } from './types.js'
 
 export interface KeeperServiceOptions {
   rpcUrl: string
@@ -38,6 +38,14 @@ export interface KeeperServiceOptions {
   dryRun?: boolean
   env?: 'prod' | 'staging'
   logger?: Logger
+  /**
+   * Warn at boot when the payer holds less than this.
+   *
+   * Advisory and distinct from `policy.minPayerBalanceWei`, which is a hard floor the spend gate
+   * refuses to cross. This one is the earlier signal: still able to pay, but not for long. Default
+   * 0.1 native.
+   */
+  minBalanceWarnWei?: bigint
   client?: PublicClient
   store?: KeeperStore
 }
@@ -71,6 +79,7 @@ export async function startKeeperService(options: KeeperServiceOptions): Promise
     dryRun = false,
     env = 'prod',
     logger = silentLogger,
+    minBalanceWarnWei = 10n ** 17n, // 0.1 native
   } = options
 
   const deployment = getDeployment(chainId, generation)
@@ -131,7 +140,16 @@ export async function startKeeperService(options: KeeperServiceOptions): Promise
   })
 
   await new Promise<void>((resolve) => server.listen(port, resolve))
+
   logger.info(`up — HTTP on :${port}`)
+  logger.info(`base url http://localhost:${port}/v1`)
+  logger.info(`openapi  http://localhost:${port}/v1/openapi.json`)
+  for (const route of ROUTES) {
+    logger.info(`  ${route.method.padEnd(4)} ${route.path.padEnd(24)} ${route.summary}`)
+  }
+
+  await reportPayerBalance({ submitter, policy, minBalanceWarnWei, logger })
+  await reportState({ store, chainId, policy, logger })
 
   return {
     server,
@@ -144,4 +162,96 @@ export async function startKeeperService(options: KeeperServiceOptions): Promise
         server.close(() => resolve())
       }),
   }
+}
+
+/**
+ * The payer and what it holds, and a warning while there is still time to act on it.
+ *
+ * Two thresholds, because they mean different things: below `minPayerBalanceWei` the spend gate
+ * refuses outright and the keeper is already inert, and that is an error. Below the advisory
+ * watermark it still works, and that is a warning.
+ *
+ * A failed read is not fatal. The balance is re-read every tick and on `/v1/health`, so an RPC that
+ * is briefly unreachable at boot should cost a log line rather than the process.
+ */
+async function reportPayerBalance({
+  submitter,
+  policy,
+  minBalanceWarnWei,
+  logger,
+}: {
+  submitter: { payer(): Promise<Address>; balance(): Promise<bigint> }
+  policy: SubsidyPolicy
+  minBalanceWarnWei: bigint
+  logger: Logger
+}): Promise<void> {
+  const payer = await submitter.payer()
+
+  let balance: bigint
+  try {
+    balance = await submitter.balance()
+  } catch (error) {
+    logger.warn(`could not read the balance of ${payer}: ${error instanceof Error ? error.message : String(error)}`)
+    return
+  }
+
+  logger.info(`payer ${payer} holds ${formatEther(balance)} native`)
+
+  if (balance === 0n) {
+    logger.error(`payer ${payer} is empty — it can pay for nothing until it is funded`)
+  } else if (balance < policy.minPayerBalanceWei) {
+    logger.error(
+      `payer balance ${formatEther(balance)} is below the policy floor of ` +
+        `${formatEther(policy.minPayerBalanceWei)} — every activation will be refused as payer-balance-low`,
+    )
+  } else if (balance < minBalanceWarnWei) {
+    logger.warn(
+      `payer balance ${formatEther(balance)} is below the ${formatEther(minBalanceWarnWei)} warning ` +
+        `threshold — top it up, or raise $KEEPER_MIN_BALANCE if this is expected`,
+    )
+  }
+}
+
+/**
+ * What was on disk, in one or two lines.
+ *
+ * Worth saying because the state file is the process's whole memory: it decides what gets watched and
+ * how much of today's budget is already gone. Booting against the wrong file, or against one a
+ * previous run left mid-activation, is invisible otherwise.
+ */
+async function reportState({
+  store,
+  chainId,
+  policy,
+  logger,
+}: {
+  store: KeeperStore
+  chainId: number
+  policy: SubsidyPolicy
+  logger: Logger
+}): Promise<void> {
+  const drops = await store.all(chainId)
+  const spend = await store.spendOn(utcDay(Date.now()))
+
+  if (drops.length === 0) {
+    logger.info('state: no drops registered yet')
+  } else {
+    const counts = new Map<DropStatus, number>()
+    for (const drop of drops) counts.set(drop.status, (counts.get(drop.status) ?? 0) + 1)
+    const byStatus = [...counts.entries()].map(([status, count]) => `${count} ${status}`).join(', ')
+
+    logger.info(`state: ${drops.length} drop(s) — ${byStatus}`)
+
+    // Called out separately: a record left in `activating` is a transaction a previous run committed
+    // to and never reconciled, and nothing will re-simulate or re-send it. It needs an operator.
+    const pending = drops.filter((drop) => drop.status === 'activating')
+    for (const drop of pending) {
+      logger.warn(`${drop.address} was left activating by an earlier run (tx ${drop.pending?.ref ?? 'unknown'})`)
+    }
+  }
+
+  logger.info(
+    `spent ${formatEther(spend.totalWei)} of ${formatEther(policy.dailyBudgetWei)} native today ` +
+      `across ${spend.byOwner.size} owner(s)`,
+  )
 }

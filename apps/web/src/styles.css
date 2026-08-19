@@ -426,11 +426,13 @@ details.terminal > summary {
   font-weight: 600;
 }
 
-/* Quote row: sits with the limit price it informs. */
-.quote {
-  margin-top: 0.9rem;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--border);
+/*
+ * Quote box: its own `.subsection`, sitting with the limit price it informs. The border comes from
+ * `.subsection`; the width cap is so the reference amount reads as the small number it is, rather than
+ * stretching the full box like the address fields above it.
+ */
+.quote > label {
+  max-width: 18rem;
 }
 
 .quote-price {
@@ -762,12 +764,33 @@ button.danger:hover:not(:disabled) {
   margin-top: 1rem;
 }
 
-.subsection legend {
+.subsection legend,
+details.subsection > summary {
   padding: 0 0.4rem;
   color: var(--muted);
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+/*
+ * Guards fold away by default — three fields most drops leave blank, and they were pushing the address
+ * off the screen. The count in the summary is what keeps folding them safe: a guard is part of the
+ * address, so one hidden behind a closed panel would look like the address moved on its own.
+ */
+details.subsection > summary {
+  margin: 0;
+  padding-left: 0;
+}
+
+details.subsection[open] > summary {
+  margin-bottom: 0.85rem;
+}
+
+details.subsection > summary .guard-count {
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 /*

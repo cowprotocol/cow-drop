@@ -24,10 +24,19 @@ KEEPER_PRIVATE_KEY=0x<hot-key> pnpm --filter @cowprotocol/cow-drop-keeper start 
 subsidises every owner up to a small daily budget — **pass `--policy` before pointing anything public
 at it.**
 
+At boot it prints its whole configuration, the payer and its balance, a summary of the state it
+loaded, and the URL of every route it serves — so a running keeper is auditable from its logs alone.
+
 ```bash
-curl localhost:8787/v1/health    # payer, balance, budget left
-curl localhost:8787/v1/policy    # whether it is subsidising, before anyone commits
+curl localhost:8787/v1/health         # payer, balance, budget left
+curl localhost:8787/v1/policy         # whether it is subsidising, before anyone commits
+curl localhost:8787/v1/openapi.json   # the whole surface, as OpenAPI 3.1
 ```
+
+`/v1/openapi.json` is paths and summaries only — enough to point Swagger UI, Redoc or
+[editor.swagger.io](https://editor.swagger.io) at it. No UI is bundled; request and response shapes
+live in [src/types.ts](src/types.ts), because hand-copying them into a spec produces one that lies as
+soon as a type changes.
 
 ## CLI
 
@@ -42,10 +51,15 @@ curl localhost:8787/v1/policy    # whether it is subsidising, before anyone comm
 --port <n>                 HTTP port. Default 8787.
 --allow-origin <origins>   CORS origins, comma separated. Default *.
 --poll <seconds>           Seconds between passes. Default 12.
+--min-balance <native>     Warn at boot below this balance. Defaults to $KEEPER_MIN_BALANCE, else 0.1.
 --env <prod|staging>       Which order book to post to. Default prod.
 --dry-run                  Decide and simulate everything, broadcast nothing.
 --quiet                    Errors only.
 ```
+
+`--min-balance` is advisory: it warns while the keeper can still pay. The hard floor is the policy's
+`minPayerBalanceWei` (default 0.02 native), below which every activation is refused outright — the
+boot banner reports that case as an error rather than a warning.
 
 ## Docs
 

@@ -34,7 +34,12 @@ POST /v1/drops/unregister { recipe } -> 200
 GET  /v1/events?drop=0x…  -> SSE
 GET  /v1/health           -> payer, balance, budget left, counts
 GET  /v1/policy           -> whether it is subsidising, before anyone commits
+GET  /v1/openapi.json     -> this surface as an OpenAPI 3.1 document
 ```
+
+The list above is generated at runtime from `ROUTES` in `src/server.ts`, which also feeds the boot
+banner. `src/server.test.ts` walks it and asserts every entry answers something other than 404, so the
+table cannot drift into advertising a route the router does not serve.
 
 The client sends the address it derived and the server compares it to its own. **A mismatch is a 409
 naming both.** That is the point of the endpoint: it catches SDK-version skew, whose failure is

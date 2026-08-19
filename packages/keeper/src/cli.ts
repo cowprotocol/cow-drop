@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
+import { formatEther, parseEther } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
 import { DEFAULT_POLICY, parsePolicy } from './policy.js'
@@ -30,6 +31,7 @@ Options:
   --port <n>                 HTTP port. Default 8787.
   --allow-origin <origins>   CORS origins, comma separated. Default *.
   --poll <seconds>           Seconds between passes. Default 12.
+  --min-balance <native>     Warn at boot below this balance. Defaults to $KEEPER_MIN_BALANCE, else 0.1.
   --env <prod|staging>       Which order book to post to. Default prod.
   --dry-run                  Decide and simulate everything, broadcast nothing.
   --quiet                    Errors only.
@@ -138,6 +140,7 @@ async function main(): Promise<void> {
   const port = num(args, 'port') ?? 8787
   const pollSeconds = num(args, 'poll') ?? 12
   const dryRun = args['dry-run'] === true
+  const minBalanceWarnWei = parseEther(str(args, 'min-balance') ?? process.env['KEEPER_MIN_BALANCE'] ?? '0.1')
 
   // The whole configuration, at boot, before the first RPC call that can hang.
   //
@@ -153,6 +156,7 @@ async function main(): Promise<void> {
       `${policy.perOwnerDailyBudgetWei > 0n ? `, ${policy.perOwnerDailyBudgetWei} wei/day per owner` : ''}`,
   )
   logger.info(`polling every ${pollSeconds}s`)
+  logger.info(`warning below ${formatEther(minBalanceWarnWei)} native`)
   if (policy.mode === 'all') {
     // Said out loud, because the default is the risky one: `owner` comes from the submitted recipe,
     // so per-owner caps do not bind and the daily budget is the only thing that does.
@@ -176,6 +180,7 @@ async function main(): Promise<void> {
     pollIntervalMs: pollSeconds * 1000,
     dryRun,
     env: str(args, 'env') === 'staging' ? 'staging' : 'prod',
+    minBalanceWarnWei,
     logger,
   })
 

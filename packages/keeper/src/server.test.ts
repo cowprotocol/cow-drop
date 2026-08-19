@@ -4,9 +4,9 @@ import { compileRecipe } from '@cowprotocol/cow-drop-sdk'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createEventBus } from './events.js'
-import { CHAIN_ID, deployment, fakeSubmitter, recipeJson } from './fixtures.js'
+import { CHAIN_ID, deployment, fakeSubmitter, recipeJson, registered } from './fixtures.js'
 import { DEFAULT_POLICY } from './policy.js'
-import { createKeeperServer, type ServerOptions } from './server.js'
+import { createKeeperServer, openApiDocument, ROUTES, type ServerOptions } from './server.js'
 import { memoryStore } from './store.js'
 
 const servers: Server[] = []
@@ -303,3 +303,51 @@ async function readUntil(
   }
   return text
 }
+
+describe('GET /v1/openapi.json', () => {
+  it('describes every documented route', async () => {
+    const { base } = await serve()
+
+    const document = await json(await fetch(`${base}/v1/openapi.json`))
+
+    expect(document.openapi).toBe('3.1.0')
+    for (const route of ROUTES) {
+      expect(document.paths[route.path]?.[route.method.toLowerCase()]?.summary).toBe(route.summary)
+    }
+  })
+
+  it('declares the address path parameter', async () => {
+    // Without it the document says `/v1/drops/{address}` takes no input, which is worse than silence:
+    // a generated client would emit a request to the literal path.
+    const document = openApiDocument(100, 2) as any
+
+    expect(document.paths['/v1/drops/{address}'].get.parameters).toEqual([
+      { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' } },
+    ])
+  })
+})
+
+describe('ROUTES', () => {
+  it('lists only routes the router actually serves', async () => {
+    // The table feeds both the OpenAPI document and the boot banner, and it is maintained by hand.
+    // This is what stops it drifting into advertising a route that 404s. A documented route may answer
+    // 400 or 503 here — what it must never do is claim not to exist.
+    //
+    // Seeded with a real drop because `GET /v1/drops/<address>` answers 404 for an address it does not
+    // hold, which is a missing *record* rather than a missing route. Only a registered address
+    // distinguishes the two.
+    const drop = registered()
+    const { base } = await serve({ store: memoryStore([drop]) })
+
+    for (const route of ROUTES) {
+      const path = route.path.replace('{address}', drop.address)
+      const response = await fetch(`${base}${path}`, {
+        method: route.method,
+        ...(route.method === 'POST' ? { headers: { 'content-type': 'application/json' }, body: '{}' } : {}),
+      })
+
+      expect(response.status, `${route.method} ${path}`).not.toBe(404)
+      await response.text()
+    }
+  })
+})
