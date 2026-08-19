@@ -104,6 +104,7 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
     [deployment.stopLossSteps.toLowerCase(), 'StopLossSteps'],
   ])
 
+  /** Each call named where the SDK recognises it, and flagged where it does not. */
   const steps = recipe.calls.map((call, index): DescribedStep => {
     const contract = byAddress.get(call.target.toLowerCase())
     const warnings: string[] = []

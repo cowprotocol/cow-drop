@@ -106,6 +106,7 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
   }
 }
 
+/** Addresses are compared as lowercase strings throughout, so normalise on the way in. */
 function lower(address: Address): Address {
   return address.toLowerCase() as Address
 }
@@ -121,6 +122,28 @@ function minOf(current: number | null, next: number): number {
 }
 
 /** Every `(token | native)` balance worth reading for a drop. */
+/**
+ * Steps that hand the drop to ComposableCoW rather than signing one order here.
+ *
+ * `twapFromBalance` splits the balance into parts CoW's watch tower posts as they come due;
+ * `stopLossFromBalance` registers an order that waits on an oracle. Either way the order this keeper
+ * can see — `OrderPlacement` — is never emitted, so there is no uid, no `validTo`, and no way to tell
+ * a finished schedule from a running one.
+ */
+const SELF_DRIVING_STEPS = new Set<DropStepJson['type']>(['twapFromBalance', 'stopLossFromBalance'])
+
+/**
+ * Whether activating this recipe leaves behind a conditional order the keeper cannot see the end of.
+ *
+ * The reason a reusable drop is not always re-armed after it activates. A TWAP's balance *falls as its
+ * parts fill*, so no balance-watching gate can hold it — activating again would register a second TWAP
+ * over what the first has left. Such a drop is parked in `activated`; every other reusable recipe signs
+ * a discrete order with a deadline this keeper can read, and goes back to watching.
+ */
+export function selfDriving(recipe: DropRecipeJson): boolean {
+  return recipe.steps.some((step) => SELF_DRIVING_STEPS.has(step.type))
+}
+
 export function pollTargets(hints: WatchHints): (Address | null)[] {
   return [...(hints.native || hints.blind ? [null] : []), ...hints.tokens]
 }

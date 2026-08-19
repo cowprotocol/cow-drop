@@ -57,6 +57,7 @@ function parseArgs(argv: string[]): Args {
   return args
 }
 
+/** A flag's string value, or undefined. Present-but-valueless is an error, not an empty string. */
 function str(args: Args, name: string): string | undefined {
   const value = args[name]
   if (value === undefined) return undefined
@@ -64,6 +65,7 @@ function str(args: Args, name: string): string | undefined {
   return value
 }
 
+/** A flag's numeric value, or undefined. */
 function num(args: Args, name: string): number | undefined {
   const value = str(args, name)
   if (value === undefined) return undefined
@@ -72,6 +74,7 @@ function num(args: Args, name: string): number | undefined {
   return parsed
 }
 
+/** Resolve the configuration and scan until a signal stops it. */
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
 
@@ -95,7 +98,7 @@ async function main(): Promise<void> {
   const statePath = str(args, 'state') ?? defaultCursorPath(resolvedChainId)
   const fromBlock = str(args, 'from-block')
 
-  const logger = createLogger({ name: 'watch-tower', quiet: args['quiet'] === true })
+  const logger = createLogger({ name: 'watch-tower', chainId: resolvedChainId, quiet: args['quiet'] === true })
 
   const confirmations = num(args, 'confirmations') ?? 2
   const pollSeconds = num(args, 'poll') ?? 15
@@ -104,7 +107,7 @@ async function main(): Promise<void> {
   // Said at boot, in full, before anything can fail. Every one of these is a decision that silently
   // changes what the process does, and the alternative to printing them is an operator inferring the
   // configuration from the absence of orders half an hour later.
-  logger.info(`starting — chain ${resolvedChainId}, generation ${deployment.generation}`)
+  logger.info(`starting — generation ${deployment.generation}`)
   logger.info(`executor ${deployment.executor}, settlement ${deployment.settlement}`)
   logger.info(`cursor ${statePath}, resuming from ${fromBlock ?? 'the stored cursor, else latest'}`)
   logger.info(

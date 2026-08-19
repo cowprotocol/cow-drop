@@ -33,6 +33,10 @@ export function limitPriceToFraction(price: string, sellDecimals: number, buyDec
   return { numerator, denominator }
 }
 
+/**
+ * Greatest common divisor, so the price is stored in its smallest terms rather than as two huge
+ * powers of ten.
+ */
 function gcd(a: bigint, b: bigint): bigint {
   while (b !== 0n) {
     ;[a, b] = [b, a % b]

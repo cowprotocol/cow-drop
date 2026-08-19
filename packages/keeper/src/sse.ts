@@ -40,6 +40,7 @@ export function retryAfter(ms: number): string {
   return `retry: ${ms}\n\n`
 }
 
+/** Write one bus event to a stream, using its sequence number as the SSE id. */
 export function writeEvent(response: ServerResponse, event: KeeperEvent): void {
   response.write(frame({ id: event.seq, name: event.type, data: event }))
 }

@@ -50,8 +50,13 @@ const MESSAGES: Record<string, string> = {
   'wrong-chain': 'this keeper watches a different chain',
   'wrong-generation': 'this keeper was built for a different contract generation',
   'at-capacity': 'the keeper is full and is not taking new drops',
+  // Unregister only. Worth its own sentence because it is temporary and self-clearing: the keeper has
+  // already paid for a transaction and will not abandon it unreconciled.
+  activating: 'the keeper is activating this drop right now — try again in a few seconds',
+  'not-found': 'the keeper has no record of this drop',
 }
 
+/** The body as JSON, or undefined. An error response is not guaranteed to carry one. */
 async function parse(response: Response): Promise<unknown> {
   try {
     return await response.json()
@@ -60,6 +65,10 @@ async function parse(response: Response): Promise<unknown> {
   }
 }
 
+/**
+ * Turn a keeper refusal into something worth showing a user: the sentence for a known error code,
+ * the server's own message otherwise.
+ */
 function fail(response: Response, body: unknown): never {
   const error = (body as { error?: string } | undefined)?.error
   const message = (body as { message?: string } | undefined)?.message
@@ -92,7 +101,13 @@ export async function registerWithKeeper(params: {
   return (body as { drop: KeeperDrop }).drop
 }
 
-/** Ask the keeper to stop watching. The recipe is required, so only someone holding it can do this. */
+/**
+ * Ask the keeper to stop watching.
+ *
+ * The recipe is required, so only someone holding it can do this — the same bar the drop itself sets,
+ * and the reason no subscription secret is needed. Reversible: handing the same recipe back to
+ * `POST /v1/drops` resumes the record rather than reporting it as held-but-idle.
+ */
 export async function unregisterFromKeeper(recipe: DropRecipeJson): Promise<void> {
   const base = keeperUrl()
   if (!base) throw new Error('no keeper is configured (VITE_KEEPER_URL)')

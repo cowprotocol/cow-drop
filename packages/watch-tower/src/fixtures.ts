@@ -32,6 +32,7 @@ export interface OrderLogOptions {
   sellAmount?: bigint
 }
 
+/** A `CowOrderPlaced` log, with whatever fields a test cares about and defaults for the rest. */
 export function orderPlacementLog(options: OrderLogOptions): RawLog {
   const {
     drop,

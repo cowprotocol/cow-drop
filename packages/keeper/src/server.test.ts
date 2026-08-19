@@ -151,6 +151,64 @@ describe('POST /v1/drops/unregister', () => {
     const { base } = await serve()
     expect((await post(base, '/v1/drops/unregister', {})).status).toBe(400)
   })
+
+  it('409s while an activation is in flight, and leaves the drop reconcilable', async () => {
+    // Retiring here would abandon a transaction the keeper has already paid for. 409 rather than 400:
+    // the request is well formed and succeeds on its own once the next tick reconciles the receipt.
+    const { base, store } = await serve()
+    const recipe = recipeJson()
+    await post(base, '/v1/drops', { recipe })
+    const address = compileRecipe(recipe).address.toLowerCase() as `0x${string}`
+    const ref = `0x${'ab'.repeat(32)}` as const
+    await store.update(CHAIN_ID, address, (current) => ({
+      ...current,
+      status: 'activating',
+      pending: {
+        ref,
+        nonce: 1,
+        gasLimit: '300000',
+        maxFeePerGas: '2000000000',
+        reservedWei: '600000000000000',
+        sentAt: 0,
+        sentAtBlock: '100',
+        replacements: 0,
+      },
+    }))
+
+    const response = await post(base, '/v1/drops/unregister', { recipe })
+
+    expect(response.status).toBe(409)
+    expect(await json(response)).toMatchObject({ error: 'activating', ref })
+    expect((await store.get(CHAIN_ID, address))?.status).toBe('activating')
+  })
+
+  it('emits the same retired event the keeper emits itself', async () => {
+    // An operator watching the stream should not have to guess why a drop stopped being polled.
+    const { base, events } = await serve()
+    const recipe = recipeJson()
+    await post(base, '/v1/drops', { recipe })
+
+    const seen: unknown[] = []
+    events.subscribe([compileRecipe(recipe).address.toLowerCase() as `0x${string}`], (event) => seen.push(event))
+    await post(base, '/v1/drops/unregister', { recipe })
+
+    expect(seen).toEqual([expect.objectContaining({ type: 'retired', reason: 'unregistered' })])
+  })
+
+  it('resumes watching when the same recipe is registered again', async () => {
+    // End to end, because this is the pair the UI's toggle presses: stop, then start.
+    const { base, store } = await serve()
+    const recipe = recipeJson()
+    await post(base, '/v1/drops', { recipe })
+    await post(base, '/v1/drops/unregister', { recipe })
+
+    const response = await post(base, '/v1/drops', { recipe })
+
+    // 200, not 201: the same record resumed, so capacity is not taken twice.
+    expect(response.status).toBe(200)
+    expect((await json(response)).drop).toMatchObject({ status: 'watching', watching: true })
+    expect(await store.active(CHAIN_ID)).toHaveLength(1)
+  })
 })
 
 describe('GET /v1/drops/:address', () => {

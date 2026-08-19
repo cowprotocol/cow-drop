@@ -2,7 +2,7 @@ import { compileRecipe, getDeployment } from '@cowprotocol/cow-drop-sdk'
 import type { Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 
-import { CHAIN_ID, deployment, GENERATION, OWNER, recipeJson, WXDAI } from './fixtures.js'
+import { CHAIN_ID, deployment, GENERATION, OWNER, recipeJson, twapRecipeJson, WXDAI } from './fixtures.js'
 import { appDataHash } from './appData.js'
 import { registerDrop, unregisterDrop } from './registry.js'
 import { memoryStore } from './store.js'
@@ -169,7 +169,11 @@ describe('unregisterDrop', () => {
     const recipe = recipeJson()
     await register({ store, recipe })
 
-    expect(await unregisterDrop({ recipe, store, deployment: deployment(), now: NOW })).toEqual({ ok: true })
+    const result = await unregisterDrop({ recipe, store, deployment: deployment(), now: NOW })
+    expect(result.ok).toBe(true)
+    // The retired record comes back, because the HTTP layer emits an event about it and should not have
+    // to recompile the recipe to learn which address it just wrote to.
+    if (result.ok) expect(result.drop.address).toBe(compileRecipe(recipe).address.toLowerCase())
 
     const stored = await store.get(CHAIN_ID, compileRecipe(recipe).address)
     expect(stored?.status).toBe('retired')
@@ -188,6 +192,187 @@ describe('unregisterDrop', () => {
     })
 
     expect(result).toEqual({ ok: false, error: 'not-found' })
+  })
+
+  it('refuses while an activation is in flight, naming the transaction', async () => {
+    // Retiring here would abandon a transaction already paid for: `store.active()` skips retired drops,
+    // so nothing would ever reconcile the receipt, and the reserved spend would never be trued up.
+    const store = memoryStore()
+    const recipe = recipeJson()
+    await register({ store, recipe })
+    const address = compileRecipe(recipe).address.toLowerCase() as Address
+
+    const ref = `0x${'ab'.repeat(32)}` as const
+    await store.update(CHAIN_ID, address, (current) => ({
+      ...current,
+      status: 'activating',
+      pending: {
+        ref,
+        nonce: 7,
+        gasLimit: '300000',
+        maxFeePerGas: '2000000000',
+        reservedWei: '600000000000000',
+        sentAt: NOW,
+        sentAtBlock: '100',
+        replacements: 0,
+      },
+    }))
+
+    const result = await unregisterDrop({ recipe, store, deployment: deployment(), now: NOW })
+
+    expect(result).toEqual({ ok: false, error: 'activating', ref })
+    // Still watched, and still reconcilable — refusing is what keeps it that way.
+    expect((await store.get(CHAIN_ID, address))?.status).toBe('activating')
+    expect(await store.active(CHAIN_ID)).toHaveLength(1)
+  })
+})
+
+describe('registering a drop that was unregistered', () => {
+  it('resumes watching it', async () => {
+    // The other half of the toggle. Without this, "stop watching" is a one-way door that answers 200:
+    // the record stays retired and the repeat registration returns it untouched.
+    const store = memoryStore()
+    const recipe = recipeJson()
+    await register({ store, recipe })
+    await unregisterDrop({ recipe, store, deployment: deployment(), now: NOW })
+
+    const again = await register({ store, recipe })
+
+    expect(again.ok).toBe(true)
+    if (!again.ok) return
+    // Not `created`: it is the same record, resumed. A 201 would claim capacity was taken twice.
+    expect(again.created).toBe(false)
+    expect(again.drop.status).toBe('watching')
+    expect(again.drop.retiredReason).toBeUndefined()
+
+    const stored = await store.get(CHAIN_ID, compileRecipe(recipe).address)
+    expect(stored?.status).toBe('watching')
+    expect(stored?.retiredReason).toBeUndefined()
+    expect(await store.active(CHAIN_ID)).toHaveLength(1)
+  })
+
+  it('keeps the history and the backoff it earned', async () => {
+    // A revive must not be a way to clear a backoff: that would let anyone holding a recipe ask the
+    // keeper to retry a reverting drop as fast as it likes.
+    const store = memoryStore()
+    const recipe = recipeJson()
+    await register({ store, recipe })
+    const address = compileRecipe(recipe).address.toLowerCase() as Address
+
+    await store.update(CHAIN_ID, address, (current) => ({
+      ...current,
+      everFunded: true,
+      backoff: { failures: 3, nextAttemptAt: NOW + 60_000 },
+      activations: [{ ref: `0x${'cd'.repeat(32)}`, status: 'reverted', at: NOW }],
+    }))
+    await unregisterDrop({ recipe, store, deployment: deployment(), now: NOW })
+
+    await register({ store, recipe })
+
+    const stored = await store.get(CHAIN_ID, address)
+    expect(stored?.backoff).toEqual({ failures: 3, nextAttemptAt: NOW + 60_000 })
+    expect(stored?.activations).toHaveLength(1)
+    expect(stored?.everFunded).toBe(true)
+  })
+
+  it('comes back parked when its activation left a conditional order behind', async () => {
+    // The TWAP case, and the reason this is not simply `status: 'watching'`. A TWAP drop holds its sell
+    // balance for the whole schedule and spends it as the parts fill, so no balance-watching gate can
+    // hold it: handing it back to the simulator would register a second TWAP over the remaining balance
+    // or restart the schedule of the first. Nothing off-chain can tell a finished schedule from a
+    // running one, so it stays out of the simulator's set entirely.
+    const store = memoryStore()
+    const recipe = twapRecipeJson()
+    await register({ store, recipe })
+    const address = compileRecipe(recipe).address.toLowerCase() as Address
+    await store.update(CHAIN_ID, address, (current) => ({
+      ...current,
+      status: 'activated',
+      everFunded: true,
+      activations: [{ ref: `0x${'ef'.repeat(32)}`, status: 'confirmed', at: NOW, blockNumber: '1001' }],
+    }))
+    await unregisterDrop({ recipe, store, deployment: deployment(), now: NOW })
+
+    const again = await register({ store, recipe })
+
+    expect(again.ok).toBe(true)
+    if (!again.ok) return
+    expect(again.drop.status).toBe('activated')
+    expect(again.drop.retiredReason).toBeUndefined()
+    // Back in the registry — a reload of the page can see it again — but not in the simulator's set.
+    const stored = await store.get(CHAIN_ID, address)
+    expect(stored?.status).toBe('activated')
+    expect(await store.active(CHAIN_ID)).toHaveLength(1)
+  })
+
+  it('comes back armed when its activation signed a discrete order', async () => {
+    // The other half. A `presignSellAll` drop's commitment ends at a deadline the keeper can read, so
+    // parking it would make a reusable deposit address one that fires exactly once.
+    const store = memoryStore()
+    const recipe = recipeJson({ once: false })
+    await register({ store, recipe })
+    const address = compileRecipe(recipe).address.toLowerCase() as Address
+    await store.update(CHAIN_ID, address, (current) => ({
+      ...current,
+      status: 'activated',
+      everFunded: true,
+      activations: [{ ref: `0x${'ef'.repeat(32)}`, status: 'confirmed', at: NOW, blockNumber: '1001' }],
+    }))
+    await unregisterDrop({ recipe, store, deployment: deployment(), now: NOW })
+
+    const again = await register({ store, recipe })
+
+    expect(again.ok).toBe(true)
+    if (!again.ok) return
+    expect(again.drop.status).toBe('watching')
+  })
+
+  it('will not launder a spent `once` drop back into a live one', async () => {
+    // Unregistering a drop that is already retired must not rewrite `once-consumed` into
+    // `unregistered`, because only `unregistered` revives. Otherwise this pair is a resurrection
+    // ritual for a drop the keeper had permanently given up on.
+    const store = memoryStore()
+    const recipe = recipeJson({ once: true })
+    await register({ store, recipe })
+    const address = compileRecipe(recipe).address.toLowerCase() as Address
+    await store.update(CHAIN_ID, address, (current) => ({
+      ...current,
+      status: 'retired',
+      retiredReason: 'once-consumed',
+      activations: [{ ref: `0x${'ef'.repeat(32)}`, status: 'confirmed', at: NOW }],
+    }))
+
+    // Answers ok — there is nothing left to stop — but changes nothing.
+    expect((await unregisterDrop({ recipe, store, deployment: deployment(), now: NOW })).ok).toBe(true)
+    expect((await store.get(CHAIN_ID, address))?.retiredReason).toBe('once-consumed')
+
+    const again = await register({ store, recipe })
+
+    expect(again.ok).toBe(true)
+    if (!again.ok) return
+    expect(again.drop.status).toBe('retired')
+    expect(await store.active(CHAIN_ID)).toEqual([])
+  })
+
+  it('does not resurrect a drop retired for a reason of its own', async () => {
+    // `once-consumed` cannot fire twice, so watching it again is polling for something that cannot
+    // happen. Only a stop the recipe holder chose is undone.
+    const store = memoryStore()
+    const recipe = recipeJson()
+    await register({ store, recipe })
+    const address = compileRecipe(recipe).address.toLowerCase() as Address
+    await store.update(CHAIN_ID, address, (current) => ({
+      ...current,
+      status: 'retired',
+      retiredReason: 'once-consumed',
+    }))
+
+    const again = await register({ store, recipe })
+
+    expect(again.ok).toBe(true)
+    if (!again.ok) return
+    expect(again.drop.status).toBe('retired')
+    expect(await store.active(CHAIN_ID)).toEqual([])
   })
 })
 

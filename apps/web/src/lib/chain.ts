@@ -91,6 +91,7 @@ export function viemChain(chainId: number): Chain {
 
 const publicClients = new Map<number, PublicClient>()
 
+/** A read client per chain, made once and reused — every panel on the page reads through it. */
 export function getPublicClient(chainId: number): PublicClient {
   const existing = publicClients.get(chainId)
   if (existing) return existing
@@ -202,10 +203,12 @@ const COW_EXPLORER_SLUGS: Record<number, string> = {
   [DropChainId.SEPOLIA]: '/sepolia',
 }
 
+/** The CoW Explorer base URL for a chain. */
 export function cowExplorer(chainId: number): string {
   return `https://explorer.cow.fi${COW_EXPLORER_SLUGS[chainId] ?? ''}`
 }
 
+/** The injected provider, or a message the user can act on. Every wallet call goes through here. */
 function injected(): EIP1193Provider {
   const provider = (window as unknown as { ethereum?: EIP1193Provider }).ethereum
   if (!provider) {
@@ -214,6 +217,7 @@ function injected(): EIP1193Provider {
   return provider
 }
 
+/** Whether there is a wallet at all, for the paths that must not throw when there is not. */
 function hasInjectedWallet(): boolean {
   return Boolean((window as unknown as { ethereum?: EIP1193Provider }).ethereum)
 }
@@ -232,12 +236,14 @@ export async function walletChainId(): Promise<number | null> {
 /** Thrown when the user declines a wallet prompt. Not an error worth shouting about. */
 export const USER_REJECTED = 4001
 
+/** The EIP-1193 error code, if the thrown thing carries one. */
 function errorCode(cause: unknown): number | undefined {
   return typeof cause === 'object' && cause !== null && 'code' in cause
     ? (cause as { code?: number }).code
     : undefined
 }
 
+/** Whether the user simply declined the prompt. */
 export function isUserRejection(cause: unknown): boolean {
   return errorCode(cause) === USER_REJECTED
 }
@@ -295,6 +301,7 @@ export function onChainChanged(listener: (chainId: number) => void): () => void 
     removeListener?: (event: string, handler: (value: unknown) => void) => void
   }
 
+  /** Wallets report the chain as a hex string; some report a number. */
   const handler = (value: unknown) => {
     const parsed = typeof value === 'string' ? Number.parseInt(value, 16) : Number(value)
     if (Number.isFinite(parsed)) listener(parsed)
@@ -327,6 +334,7 @@ export function onAccountsChanged(listener: (account: Address | null) => void): 
     removeListener?: (event: string, handler: (value: unknown) => void) => void
   }
 
+  /** An empty list means the wallet was locked, not that nothing changed. */
   const handler = (value: unknown) => {
     const accounts = Array.isArray(value) ? (value as Address[]) : []
     listener(accounts[0] ?? null)
@@ -353,6 +361,7 @@ export async function connect(chainId: number): Promise<Address> {
   return account
 }
 
+/** Send one transaction from the connected account. The caller has already built the calldata. */
 export async function sendTransaction(params: {
   chainId: number
   account: Address

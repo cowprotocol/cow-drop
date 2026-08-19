@@ -136,6 +136,10 @@ export function forgetChainReadiness(chainId: number): void {
   readinessProbes.delete(chainId)
 }
 
+/**
+ * Which of this generation's contracts are missing from a chain, read once per session and shared
+ * by every caller.
+ */
 export function probeChainReadiness(chainId: number): Promise<string[]> {
   const existing = readinessProbes.get(chainId)
   if (existing) return existing
@@ -156,6 +160,10 @@ export interface DropStatus {
   nativeBalance: bigint
 }
 
+/**
+ * Everything the drop panel shows about one address: whether it exists yet, what it is missing, and
+ * what has arrived. Read uncached, so Refresh means refresh.
+ */
 export async function readDropStatus(compiled: CompiledRecipe, sellToken: Address): Promise<DropStatus> {
   const client = getPublicClient(compiled.deployment.chainId)
   const [code, missing, balance, nativeBalance] = await Promise.all([

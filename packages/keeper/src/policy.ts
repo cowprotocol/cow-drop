@@ -61,6 +61,7 @@ function positive(input: Record<string, unknown>, field: string, fallback: numbe
   return value
 }
 
+/** A list of addresses, lowercased. Anything that is not one is a configuration error. */
 function addresses(value: unknown, field: string): Address[] {
   if (value === undefined) return []
   if (!Array.isArray(value)) throw new Error(`policy.${field} must be an array of addresses`)
@@ -72,6 +73,7 @@ function addresses(value: unknown, field: string): Address[] {
   })
 }
 
+/** A wei amount, as a decimal string. See below for why a JSON number will not do. */
 function wei(input: Record<string, unknown>, field: string, fallback: bigint): bigint {
   const value = input[field]
   if (value === undefined) return fallback

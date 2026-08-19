@@ -191,7 +191,9 @@ async function reportPayerBalance({
   try {
     balance = await submitter.balance()
   } catch (error) {
-    logger.warn(`could not read the balance of ${payer}: ${error instanceof Error ? error.message : String(error)}`)
+    logger.warn(
+      `could not read the balance of payer ${payer}: ${error instanceof Error ? error.message : String(error)}`,
+    )
     return
   }
 
@@ -246,7 +248,9 @@ async function reportState({
     // to and never reconciled, and nothing will re-simulate or re-send it. It needs an operator.
     const pending = drops.filter((drop) => drop.status === 'activating')
     for (const drop of pending) {
-      logger.warn(`${drop.address} was left activating by an earlier run (tx ${drop.pending?.ref ?? 'unknown'})`)
+      logger.warn(
+        `drop ${drop.address} was left activating by an earlier run (tx ${drop.pending?.ref ?? 'unknown'})`,
+      )
     }
   }
 

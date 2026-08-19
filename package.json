@@ -5,6 +5,9 @@
   "description": "Funding addresses with baked-in trading logic, built on cow-shed",
   "scripts": {
     "build": "pnpm -r build",
+    "dev:keeper": "pnpm --filter @cowprotocol/cow-drop-keeper dev",
+    "dev:watch-tower": "pnpm --filter @cowprotocol/cow-drop-watch-tower dev",
+    "dev:web": "pnpm --filter @cowprotocol/cow-drop-web dev",
     "test": "pnpm -r test",
     "test:contracts": "forge test --root contracts",
     "fmt:contracts": "forge fmt --root contracts"

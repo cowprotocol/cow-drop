@@ -2,7 +2,18 @@ import { compileRecipe } from '@cowprotocol/cow-drop-sdk'
 import { describe, expect, it } from 'vitest'
 
 import { createEventBus, type KeeperEvent } from './events.js'
-import { CHAIN_ID, deployment, fakeChain, fakeSubmitter, manualClock, recipeJson, registered, WXDAI } from './fixtures.js'
+import {
+  CHAIN_ID,
+  COW,
+  deployment,
+  fakeChain,
+  fakeSubmitter,
+  manualClock,
+  recipeJson,
+  registered,
+  twapRecipeJson,
+  WXDAI,
+} from './fixtures.js'
 import { createKeeper, type KeeperOptions } from './keeper.js'
 import { DEFAULT_POLICY } from './policy.js'
 import { memoryStore, utcDay } from './store.js'
@@ -181,7 +192,8 @@ describe('createKeeper', () => {
   })
 
   it('keeps watching a reusable drop after it activates', async () => {
-    // Running again on the next arrival is the entire point of a reusable deposit address.
+    // Running again on the next arrival is the entire point of a reusable deposit address. This used to
+    // land in `activated`, which the tick loop never looks at — so a refund could never wake it.
     const reusable = registered({ recipe: recipeJson({ once: false }) })
     const chain = fakeChain({ balances: FUNDED })
     const h = harness({ drop: reusable, chain })
@@ -190,7 +202,162 @@ describe('createKeeper', () => {
     chain.state.receipt = { status: 'success', blockNumber: 1001n, costWei: 1n }
     await h.keeper.tick()
 
-    expect((await h.store.get(CHAIN_ID, reusable.address))?.status).toBe('activated')
+    expect((await h.store.get(CHAIN_ID, reusable.address))?.status).toBe('watching')
+  })
+
+  it('does not activate a reusable drop again on the balance its last order is selling', async () => {
+    // The money does not leave at activation: the pre-signature is on chain but the order settles
+    // later, so the balance the order was sized against is still sitting there. Activating again on it
+    // signs a second order that the first one's fill makes unfillable, bought with the keeper's gas.
+    const reusable = registered({ recipe: recipeJson({ once: false }) })
+    const chain = fakeChain({ balances: FUNDED })
+    const h = harness({ drop: reusable, chain })
+
+    await h.keeper.tick()
+    chain.state.receipt = { status: 'success', blockNumber: 1001n, costWei: 1n }
+    await h.keeper.tick()
+    await h.keeper.tick()
+
+    expect(h.submitter.broadcasts).toBe(1)
+    expect((await h.store.get(CHAIN_ID, reusable.address))?.committedDigest).toBeDefined()
+  })
+
+  it('activates a reusable drop again as soon as the balance moves', async () => {
+    const reusable = registered({ recipe: recipeJson({ once: false }) })
+    const chain = fakeChain({ balances: FUNDED })
+    const h = harness({ drop: reusable, chain })
+
+    await h.keeper.tick()
+    chain.state.receipt = { status: 'success', blockNumber: 1001n, costWei: 1n }
+    await h.keeper.tick()
+
+    chain.state.balances = [2000n * 10n ** 18n]
+    await h.keeper.tick()
+
+    expect(h.submitter.broadcasts).toBe(2)
+  })
+
+  it('releases the commitment when the fill empties the drop', async () => {
+    // Why the commitment is a latch rather than a comparison: the fill is what frees the money, so the
+    // balance reaching zero has to release it. Otherwise a refund of exactly the last order's size would
+    // read as the balance already committed, and the drop would never fire again.
+    //
+    // Landing back on a balance this drop has already been simulated against still waits out
+    // `resimulateIntervalMs` — `shouldSimulate` compares digests by value, not by sequence. A refund of
+    // any other size activates at once, as the test above shows.
+    const reusable = registered({ recipe: recipeJson({ once: false }) })
+    const chain = fakeChain({ balances: FUNDED })
+    const h = harness({ drop: reusable, chain })
+
+    await h.keeper.tick()
+    chain.state.receipt = { status: 'success', blockNumber: 1001n, costWei: 1n }
+    await h.keeper.tick()
+
+    chain.state.balances = [0n]
+    await h.keeper.tick()
+    expect((await h.store.get(CHAIN_ID, reusable.address))?.committedDigest).toBeUndefined()
+
+    chain.state.balances = FUNDED
+    h.clock.advance(6 * 60_000)
+    await h.keeper.tick()
+
+    expect(h.submitter.broadcasts).toBe(2)
+  })
+
+  it('activates a reusable drop again once its order can no longer fill', async () => {
+    // The other half of the gate. An order that expires unfilled leaves the balance untouched, so
+    // nothing moves and the latch never opens — without a deadline the drop would be stuck for good.
+    const reusable = registered({ recipe: recipeJson({ once: false }) })
+    const chain = fakeChain({ balances: FUNDED })
+    const h = harness({ drop: reusable, chain })
+
+    await h.keeper.tick()
+    chain.state.receipt = { status: 'success', blockNumber: 1001n, costWei: 1n }
+    await h.keeper.tick()
+
+    // Past the 1800s the recipe commits to, on the same untouched balance.
+    h.clock.advance(1801 * 1000)
+    await h.keeper.tick()
+
+    expect(h.submitter.broadcasts).toBe(2)
+  })
+
+  it('reads the deadline from the posted order uid rather than the recipe', async () => {
+    // `validTo` is the last four bytes of the uid, and the uid is what the watch tower actually posted —
+    // so a drop whose order is already dead is released without waiting out the recipe's window.
+    const reusable = registered({ recipe: recipeJson({ once: false }) })
+    const chain = fakeChain({ balances: FUNDED })
+    const h = harness({ drop: reusable, chain })
+
+    await h.keeper.tick()
+    chain.state.receipt = { status: 'success', blockNumber: 1001n, costWei: 1n }
+    await h.keeper.tick()
+
+    // What `forwardOrderResults` writes when the watch tower posts: a uid whose validTo has passed.
+    const expired = Math.floor(h.clock.now() / 1000) - 1
+    await h.store.update(CHAIN_ID, reusable.address, (current) => ({
+      ...current,
+      activations: current.activations.map((activation) => ({
+        ...activation,
+        orderUids: [`0x${'11'.repeat(52)}${expired.toString(16).padStart(8, '0')}` as `0x${string}`],
+      })),
+    }))
+
+    // Enough for the re-simulation timer, but well inside the recipe's 1800s window.
+    h.clock.advance(6 * 60_000)
+    await h.keeper.tick()
+
+    expect(h.submitter.broadcasts).toBe(2)
+  })
+
+  it('reads a validity the recipe carried as a string', async () => {
+    // Recipe numbers are `number | string` — it is JSON a client wrote. Reading `"1800"` as no validity
+    // at all would fall back to the default window and release the commitment at the wrong moment.
+    const reusable = registered({
+      recipe: recipeJson({
+        once: false,
+        steps: [
+          {
+            type: 'presignSellAll',
+            sellToken: WXDAI,
+            buyToken: COW,
+            limitPrice: { price: '45', sellDecimals: 18, buyDecimals: 18 },
+            validitySeconds: '3600',
+          },
+        ],
+      }),
+    })
+    const chain = fakeChain({ balances: FUNDED })
+    const h = harness({ drop: reusable, chain })
+
+    await h.keeper.tick()
+    chain.state.receipt = { status: 'success', blockNumber: 1001n, costWei: 1n }
+    await h.keeper.tick()
+
+    // Past the 30-minute default, inside the hour the recipe actually committed to.
+    h.clock.advance(31 * 60_000)
+    await h.keeper.tick()
+
+    expect(h.submitter.broadcasts).toBe(1)
+  })
+
+  it('parks a drop whose activation registered a conditional order', async () => {
+    // A TWAP is self-driving and its balance falls as the parts fill, so no balance-watching gate can
+    // hold it. Activating again would register a second schedule over what the first has left.
+    const twap = registered({ recipe: twapRecipeJson() })
+    const chain = fakeChain({ balances: FUNDED })
+    const h = harness({ drop: twap, chain })
+
+    await h.keeper.tick()
+    chain.state.receipt = { status: 'success', blockNumber: 1001n, costWei: 1n }
+    await h.keeper.tick()
+
+    chain.state.balances = [750n * 10n ** 18n]
+    h.clock.advance(6 * 60_000)
+    await h.keeper.tick()
+
+    expect((await h.store.get(CHAIN_ID, twap.address))?.status).toBe('activated')
+    expect(h.submitter.broadcasts).toBe(1)
   })
 
   it('charges the gas but does not retire when the activation reverts on chain', async () => {

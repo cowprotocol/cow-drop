@@ -13,7 +13,15 @@ export type DropStatus =
   | 'watching'
   /** An activation is prepared or broadcast and not yet reconciled. */
   | 'activating'
-  /** At least one activation confirmed. Terminal only for a `once` recipe. */
+  /**
+   * Handed over to a conditional order and no longer polled.
+   *
+   * Only for a recipe that registers with ComposableCoW — see `selfDriving`. Those drops are driven by
+   * CoW's own watch tower over a balance that keeps moving, and nothing here can tell an exhausted
+   * schedule from a running one, so re-simulating would register a second schedule over the remainder
+   * of the first. A drop whose recipe signs discrete orders goes back to `watching` instead, gated by
+   * `committedDigest`.
+   */
   | 'activated'
   /** The policy or the budget refused to pay. Re-examined at `blockedUntil`. */
   | 'blocked'
@@ -141,6 +149,16 @@ export interface RegisteredDrop {
     balancesDigest: string
     revert?: string
   }
+  /**
+   * The balances that produced the last confirmed activation, while they are still committed to the
+   * order it signed.
+   *
+   * A reusable drop's money does not leave at activation: the pre-signature is on-chain but the order
+   * settles later, so the balance a `presignSellAll` was sized against is still sitting there. Set at
+   * reconciliation and released the moment a poll sees a different digest — a latch rather than a
+   * comparison, so that a refund of exactly the committed amount still counts as new money.
+   */
+  committedDigest?: string
   /** The last refusal, so `blocked` is emitted on a change of reason rather than every tick. */
   blockedReason?: PolicyRefusal
   blockedUntil?: number

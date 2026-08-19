@@ -49,6 +49,7 @@ export interface SavedDrop {
   keeper?: { url: string; registeredAt: number }
 }
 
+/** The saved drops, or none. A corrupt entry reads as empty rather than throwing. */
 function read(): SavedDrop[] {
   try {
     const raw = localStorage.getItem(KEY)
@@ -61,6 +62,7 @@ function read(): SavedDrop[] {
   }
 }
 
+/** Persist the list, best effort — see below for why a failure is swallowed. */
 function write(drops: SavedDrop[]): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(drops))
@@ -99,6 +101,7 @@ export function saveDrop(params: { address: Address; recipe: DropRecipeJson }): 
   return record
 }
 
+/** Remove one drop from this browser's list. */
 export function forgetDrop(address: Address, chainId: number): void {
   write(
     read().filter((drop) => !(drop.address.toLowerCase() === address.toLowerCase() && drop.chainId === chainId)),
@@ -133,6 +136,7 @@ export function clearSentToKeeper(address: Address, chainId: number): void {
   write(drops)
 }
 
+/** Whether this browser is already keeping this drop. */
 export function isSaved(address: Address, chainId: number): boolean {
   return read().some(
     (drop) => drop.address.toLowerCase() === address.toLowerCase() && drop.chainId === chainId,
@@ -152,6 +156,10 @@ export function recipeToHash(recipe: DropRecipeJson): string {
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
+/**
+ * A recipe back out of the fragment, or null for anything that is not one. The inverse of
+ * `recipeToHash`.
+ */
 export function recipeFromHash(hash: string): DropRecipeJson | null {
   const cleaned = hash.replace(/^#/, '').trim()
   if (!cleaned) return null

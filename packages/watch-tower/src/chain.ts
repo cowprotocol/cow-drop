@@ -40,6 +40,7 @@ const SETTLEMENT_ABI = [
   },
 ] as const
 
+/** The `ChainReader` the scanner needs, backed by a viem client. */
 export function viemChainReader(client: PublicClient): ChainReader {
   return {
     getBlockNumber: () => client.getBlockNumber(),

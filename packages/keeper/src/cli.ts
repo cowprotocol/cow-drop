@@ -62,6 +62,7 @@ export function parseArgs(argv: string[]): Args {
   return args
 }
 
+/** A flag's string value, or undefined. Present-but-valueless is an error, not an empty string. */
 function str(args: Args, name: string): string | undefined {
   const value = args[name]
   if (value === undefined) return undefined
@@ -69,6 +70,7 @@ function str(args: Args, name: string): string | undefined {
   return value
 }
 
+/** A flag's numeric value, or undefined. */
 function num(args: Args, name: string): number | undefined {
   const value = str(args, name)
   if (value === undefined) return undefined
@@ -116,6 +118,7 @@ export function resolvePaths(args: Args, chainId: number): { statePath: string; 
   }
 }
 
+/** Resolve the configuration, print it, and run the service until a signal stops it. */
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
 
@@ -132,10 +135,12 @@ async function main(): Promise<void> {
   const policyPath = str(args, 'policy')
   const policy = policyPath ? parsePolicy(JSON.parse(await readFile(policyPath, 'utf8'))) : DEFAULT_POLICY
 
-  const logger = createLogger({ name: 'keeper', quiet: args['quiet'] === true })
-
   const chainId = num(args, 'chain-id') ?? Number(process.env['CHAIN_ID'] ?? 0)
   const resolvedChainId = chainId || (await chainIdFromRpc(rpcUrl))
+
+  // After the chain is resolved, not before: every line this process prints carries the chain, and a
+  // boot banner logged under the wrong one is exactly the confusion the prefix exists to remove.
+  const logger = createLogger({ name: 'keeper', chainId: resolvedChainId, quiet: args['quiet'] === true })
 
   const { statePath, cursorPath } = resolvePaths(args, resolvedChainId)
 
@@ -149,8 +154,8 @@ async function main(): Promise<void> {
   // This process spends real money on behalf of whoever can reach it, and every line here changes how
   // much and for whom. Printing it is what makes a running keeper auditable from its logs alone
   // rather than from whichever shell invocation someone has since scrolled past.
-  logger.info(`starting — chain ${resolvedChainId}, generation ${num(args, 'generation') ?? 'latest'}`)
-  logger.info(`paying from ${account.address}`)
+  logger.info(`starting — generation ${num(args, 'generation') ?? 'latest'}`)
+  logger.info(`paying from payer ${account.address}`)
   logger.info(`state ${statePath}`)
   logger.info(`block cursor ${cursorPath}`)
   logger.info(
@@ -195,6 +200,7 @@ async function main(): Promise<void> {
   await service.close()
 }
 
+/** Ask the endpoint which chain it is, for when neither the flag nor the environment says. */
 async function chainIdFromRpc(rpcUrl: string): Promise<number> {
   const response = await fetch(rpcUrl, {
     method: 'POST',

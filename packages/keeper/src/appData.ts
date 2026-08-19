@@ -87,6 +87,7 @@ export function feeFor(document: string, committed: Hex, recipient: Address): Ve
   }
 }
 
+/** Narrows a verification result to the failure side. */
 export function isProblem(result: VerifiedFee | AppDataProblem): result is AppDataProblem {
   return 'error' in result
 }

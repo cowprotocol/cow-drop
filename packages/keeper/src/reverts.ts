@@ -97,6 +97,7 @@ export function classifyRevert(data: Hex | undefined, message: string): Activati
   return { name: 'unknown', class: 'waiting', detail: `${message} (${data.slice(0, 10)})` }
 }
 
+/** The reason out of a plain `revert("...")`, if that is what this is. */
 function decodeErrorString(data: Hex): string | undefined {
   try {
     const decoded = decodeErrorResult({
@@ -109,6 +110,7 @@ function decodeErrorString(data: Hex): string | undefined {
   }
 }
 
+/** A custom error rendered the way it is written in Solidity: `Name(arg, arg)`. */
 function formatArgs(name: string, args: readonly unknown[] | undefined): string {
   if (!args || args.length === 0) return name
   return `${name}(${args.map((arg) => String(arg)).join(', ')})`

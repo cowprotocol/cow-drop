@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Address } from 'viem'
 
+import { selfDriving } from './hints.js'
 import type { RegisteredDrop } from './types.js'
 
 /**
@@ -152,6 +153,21 @@ interface StoredFile {
 }
 
 /**
+ * Bring a record written by an older build into the current state machine.
+ *
+ * `activated` used to be written for *every* confirmed activation and is read by nothing — the tick
+ * loop polls `watching` alone — so a reusable drop that signed one discrete order was parked for good,
+ * neither retired nor watched. Releasing those is the whole of this. A self-driving recipe keeps its
+ * status, because for those `activated` still means what it says.
+ *
+ * No `committedDigest` is restored, which is right: whatever order parked the record has long expired.
+ */
+function revive(drop: RegisteredDrop): RegisteredDrop {
+  const parked = drop.status === 'activated'
+  return parked && !selfDriving(drop.recipe) ? { ...drop, status: 'watching' } : drop
+}
+
+/**
  * A store persisted as JSON.
  *
  * Two differences from `fileCursor`, both because of what this file holds. It carries **recipes** —
@@ -170,6 +186,7 @@ export function fileStore(path: string, chainId: number): KeeperStore {
   /** Serialises writes, so two concurrent mutations cannot both read-modify-write the same document. */
   let queue: Promise<unknown> = Promise.resolve()
 
+  /** The whole document, from the cache or from disk. A missing file is an empty registry, not an error. */
   async function read(): Promise<StoredFile> {
     if (cache) return cache
 
@@ -188,10 +205,11 @@ export function fileStore(path: string, chainId: number): KeeperStore {
     if (parsed.chainId !== chainId) {
       throw new Error(`${path} holds state for chain ${parsed.chainId}, not ${chainId}`)
     }
-    cache = { chainId, drops: parsed.drops ?? [], spend: parsed.spend ?? {} }
+    cache = { chainId, drops: (parsed.drops ?? []).map(revive), spend: parsed.spend ?? {} }
     return cache
   }
 
+  /** Replace the document on disk, and the cache with it. */
   async function write(next: StoredFile): Promise<void> {
     cache = next
     await mkdir(dirname(path), { recursive: true })

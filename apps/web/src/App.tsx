@@ -34,8 +34,16 @@ import {
 import { GNOSIS_TOKENS } from './lib/tokens.js'
 import { fetchTokenList, findToken, type TokenInfo } from './lib/tokenList.js'
 import { NetworkPicker } from './components/NetworkPicker.js'
-import { isSaved, listDrops, markSentToKeeper, recipeFromHash, recipeToHash, saveDrop } from './lib/storage.js'
-import { keeperUrl, readKeeperDrop, registerWithKeeper } from './lib/keeper.js'
+import {
+  clearSentToKeeper,
+  isSaved,
+  listDrops,
+  markSentToKeeper,
+  recipeFromHash,
+  recipeToHash,
+  saveDrop,
+} from './lib/storage.js'
+import { keeperUrl, readKeeperDrop, registerWithKeeper, unregisterFromKeeper } from './lib/keeper.js'
 import { TokenPicker } from './components/TokenPicker.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
@@ -609,6 +617,40 @@ export function App() {
     }
   }
 
+  /**
+   * Tell the keeper to stop watching.
+   *
+   * The recipe is the whole authorisation — the keeper recompiles it and checks it derives the address
+   * it is being asked about — so no token has to be stored anywhere for this to work.
+   *
+   * Nothing on-chain changes and nothing is lost: the drop keeps whatever it holds, activation stays
+   * permissionless, and handing the same recipe back resumes the keeper's watch. The only thing given
+   * up is the subsidy, which is why this needs no confirmation step.
+   *
+   * The local flag is cleared only after the keeper agrees. Clearing it first would leave the saved
+   * list saying "local only" about a drop still being watched — the one direction of this that is
+   * actually misleading, since it is the state that stops the user from asking again.
+   */
+  const onUnregisterKeeper = async () => {
+    if (!compiled.ok) return
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      await unregisterFromKeeper(recipe)
+      clearSentToKeeper(compiled.value.address, compiled.value.deployment.chainId)
+      setKeeperWatching(false)
+      setSavedRevision((n) => n + 1)
+      setMessage(
+        `The keeper has stopped watching ${compiled.value.address}. Nothing on-chain changed, and you can hand it back at any time.`,
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const onActivate = async () => {
     if (!account || !compiled.ok) return
     remember()
@@ -1107,22 +1149,25 @@ export function App() {
                   >
                     {busy ? 'Activating…' : 'Activate drop'}
                   </button>
-                  {keeperUrl() !== null && (
+                  {keeperUrl() !== null &&
                     /*
-                     * Disabled once the keeper confirms it is watching: the action is idempotent, so
-                     * pressing again is harmless, but a button that stays on offer reads as one that
-                     * has not been pressed — and there is no way back from here yet, so this says
-                     * what the state is rather than inviting a no-op. Not a toggle: telling the
-                     * keeper to stop is `POST /v1/drops/unregister`, which nothing on this page calls.
+                     * One button, both directions. It reads as state as much as an action: a "Hand to
+                     * keeper" that stays on offer after being pressed looks like a button that did
+                     * nothing, which is exactly how this behaved before.
+                     *
+                     * No confirmation on the stop side. It costs the subsidy and nothing else — the
+                     * drop keeps its funds, activation stays permissionless, and pressing the other
+                     * half of this button puts the keeper back on it.
                      */
-                    <button
-                      onClick={() => void onRegisterKeeper()}
-                      disabled={busy || keeperWatching === true}
-                      title={keeperWatching === true ? 'The keeper is already watching this drop' : undefined}
-                    >
-                      {keeperWatching === true ? 'Keeper watching' : 'Hand to keeper'}
-                    </button>
-                  )}
+                    (keeperWatching === true ? (
+                      <button onClick={() => void onUnregisterKeeper()} disabled={busy}>
+                        Stop keeper watching
+                      </button>
+                    ) : (
+                      <button onClick={() => void onRegisterKeeper()} disabled={busy}>
+                        Hand to keeper
+                      </button>
+                    ))}
                   <a
                     href={`${cowExplorer(dropChainId)}/address/${compiled.value.address}`}
                     target="_blank"
@@ -1150,11 +1195,19 @@ export function App() {
                   </li>
                   {keeperUrl() !== null && (
                     <li>
-                      <strong>Hand to keeper</strong> — have the keeper do that for you instead. It waits
-                      until the drop has a balance, then activates it unattended.
-                      {keeperWatching === true
-                        ? ' Already handed over: this keeper is watching the drop, and stopping it is not something this page can do yet.'
-                        : ''}
+                      {keeperWatching === true ? (
+                        <>
+                          <strong>Stop keeper watching</strong> — this keeper is watching the drop and will
+                          activate it once it has a balance. Stopping only ends that: the drop keeps
+                          whatever it holds, anyone can still activate it, and handing it back later
+                          resumes the watch.
+                        </>
+                      ) : (
+                        <>
+                          <strong>Hand to keeper</strong> — have the keeper do that for you instead. It waits
+                          until the drop has a balance, then activates it unattended.
+                        </>
+                      )}
                     </li>
                   )}
                 </ul>

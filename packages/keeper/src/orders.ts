@@ -67,6 +67,7 @@ export function forwardOrderResults(options: { store: KeeperStore; events: Event
   }
 }
 
+/** The most useful line out of an error: the order book's `errorType` when there is one. */
 function describe(error: unknown): string {
   if (error instanceof Error) return error.message
   const body = (error as { body?: { errorType?: string } })?.body

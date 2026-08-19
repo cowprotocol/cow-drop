@@ -152,6 +152,10 @@ export interface CompiledRecipe {
   deployment: DropDeployment
 }
 
+/**
+ * A limit price as an exact fraction, whether it was written as one or as a decimal with the two
+ * tokens' decimals.
+ */
 export function resolveLimitPrice(json: LimitPriceJson): LimitPriceFraction {
   if ('numerator' in json) {
     const numerator = BigInt(json.numerator)
@@ -224,6 +228,10 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
   }
 }
 
+/**
+ * One recipe step into the call that performs it. The switch is exhaustive over `DropStepJson`, so
+ * a new step type fails to compile here until it is handled.
+ */
 function compileStep(step: DropStepJson, deployment: DropDeployment) {
   switch (step.type) {
     case 'presignSellAll':

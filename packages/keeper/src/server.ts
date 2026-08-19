@@ -184,6 +184,7 @@ export function openApiDocument(chainId: number, generation: number): unknown {
  */
 const SWAGGER_UI_VERSION = '5.17.14'
 
+/** The Swagger UI page described above, as a single self-contained HTML document. */
 function docsPage(): string {
   return `<!doctype html>
 <html lang="en">
@@ -252,6 +253,7 @@ export function createKeeperServer(options: ServerOptions): Server {
     })
   })
 
+  /** Set the CORS response headers for a normal (non-preflight) request. */
   function cors(request: IncomingMessage, response: ServerResponse): void {
     const origin = request.headers.origin
     if (allowOrigin === '*') {
@@ -263,17 +265,25 @@ export function createKeeperServer(options: ServerOptions): Server {
     // Never `allow-credentials`: there is no auth on these routes, and it is invalid with `*`.
   }
 
+  /** Send an HTML response and end it. */
   function sendHtml(response: ServerResponse, status: number, body: string): void {
     response.writeHead(status, { 'content-type': 'text/html; charset=utf-8' })
     response.end(body)
   }
 
+  /** Send a JSON response and end it. */
   function send(response: ServerResponse, status: number, body: unknown): void {
     const payload = JSON.stringify(body)
     response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
     response.end(payload)
   }
 
+  /**
+   * The router. A trailing slash is stripped, so `/v1/docs/` and `/v1/docs` are the same route.
+   *
+   * Every route here should have a matching entry in `ROUTES`, which is what the OpenAPI document
+   * and the boot banner are generated from.
+   */
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     cors(request, response)
 
@@ -309,6 +319,10 @@ export function createKeeperServer(options: ServerOptions): Server {
     send(response, 404, { error: 'not-found' })
   }
 
+  /**
+   * Liveness plus the two numbers an operator actually watches: what the payer holds and what today
+   * has cost. 503 once the payer is below its floor, so a load balancer can act on it.
+   */
   async function health(response: ServerResponse): Promise<void> {
     const all = await store.all(deployment.chainId)
     const balance = await submitter.balance()
@@ -396,6 +410,13 @@ export function createKeeperServer(options: ServerOptions): Server {
     })
   }
 
+  /**
+   * Register a drop for the keeper to watch.
+   *
+   * Open to anyone, because registering someone else's drop grants nothing — activation is
+   * permissionless already. A repeat registration is a 200 rather than a conflict, so a client whose
+   * POST timed out can safely retry.
+   */
   async function register(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const body = await readJson(request, response, maxBodyBytes)
     if (!body.ok) return
@@ -431,7 +452,7 @@ export function createKeeperServer(options: ServerOptions): Server {
           owner: result.drop.owner,
           label: result.drop.label,
         })
-        logger.info(`registered ${result.drop.address} (${result.drop.label})`)
+        logger.info(`registered drop ${result.drop.address} (${result.drop.label})`)
       }
       // 200 on a repeat, not an error: a client whose POST timed out will retry, and it can only be
       // honestly told that retrying is safe if it is.
@@ -442,6 +463,12 @@ export function createKeeperServer(options: ServerOptions): Server {
     send(response, statusFor(result.error), result)
   }
 
+  /**
+   * Stop watching a drop.
+   *
+   * A POST with the recipe in the body rather than a DELETE: holding the recipe is the proof, and
+   * without it this would be a free way to strip someone else's gas subsidy.
+   */
   async function unregister(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const body = await readJson(request, response, maxBodyBytes)
     if (!body.ok) return
@@ -453,10 +480,31 @@ export function createKeeperServer(options: ServerOptions): Server {
     }
 
     const result = await unregisterDrop({ recipe: input.recipe, store, deployment, now: now() })
-    if (result.ok) send(response, 200, { ok: true })
-    else send(response, result.error === 'not-found' ? 404 : 400, result)
+    if (result.ok) {
+      // The same event the keeper emits when it retires a drop itself. An operator watching the stream
+      // should not have to guess why a drop stopped being polled.
+      events.emit({
+        type: 'retired',
+        chainId: result.drop.chainId,
+        drop: result.drop.address,
+        owner: result.drop.owner,
+        reason: 'unregistered',
+      })
+      logger.info(`unregistered drop ${result.drop.address} (${result.drop.label})`)
+      send(response, 200, { ok: true })
+      return
+    }
+
+    if (result.error === 'not-found') {
+      send(response, 404, result)
+      return
+    }
+    // 409, not 400: the request is well formed and will succeed on its own once the tick reconciles
+    // the transaction already in flight. See `unregisterDrop`.
+    send(response, result.error === 'activating' ? 409 : 400, result)
   }
 
+  /** One registered drop, as the UI sees it. */
   async function readDrop(response: ServerResponse, address: Address): Promise<void> {
     const drop = await store.get(deployment.chainId, address)
     if (!drop) {
@@ -504,6 +552,7 @@ export function createKeeperServer(options: ServerOptions): Server {
     const timer = setInterval(() => response.write(keepalive()), keepaliveMs)
     timer.unref?.()
 
+    /** Drop the keepalive timer and the subscription, whichever end hangs up first. */
     const close = () => {
       clearInterval(timer)
       unsubscribe()
@@ -512,6 +561,7 @@ export function createKeeperServer(options: ServerOptions): Server {
     response.on('error', close)
   }
 
+  /** The same CORS decision as `cors`, as a header object — SSE writes its head in one go. */
   function corsHeader(request: IncomingMessage): Record<string, string> {
     const origin = request.headers.origin
     if (allowOrigin === '*') return { 'access-control-allow-origin': '*' }
@@ -558,6 +608,7 @@ export function createKeeperServer(options: ServerOptions): Server {
   }
 }
 
+/** Map a registry refusal onto the status code that describes it most honestly. */
 function statusFor(error: string): number {
   switch (error) {
     case 'invalid-recipe':
@@ -580,6 +631,7 @@ function statusFor(error: string): number {
   }
 }
 
+/** `Math.max` for bigints. */
 function max(a: bigint, b: bigint): bigint {
   return a > b ? a : b
 }

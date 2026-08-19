@@ -91,6 +91,7 @@ function errorBody(error: unknown): { errorType?: string } | undefined {
   return typeof body === 'object' && body !== null ? (body as { errorType?: string }) : undefined
 }
 
+/** Somebody already posted this order — a success here, not a failure. */
 function isDuplicate(error: unknown): boolean {
   return errorBody(error)?.errorType === 'DuplicatedOrder'
 }

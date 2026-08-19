@@ -155,6 +155,7 @@ export async function scanForOrders(options: ScanOptions): Promise<DiscoveredOrd
   return verified
 }
 
+/** How an announced activation is matched to a placed order: same transaction, same drop. */
 function activationKey(transactionHash: Hex, drop: Address): string {
   return `${transactionHash.toLowerCase()}#${drop.toLowerCase()}`
 }

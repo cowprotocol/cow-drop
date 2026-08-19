@@ -1,11 +1,11 @@
-import { buildActivateTx, type DropDeployment } from '@cowprotocol/cow-drop-sdk'
+import { buildActivateTx, type DropDeployment, type DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
 import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
 import type { Address } from 'viem'
 
 import type { KeeperChain, Submitter } from './chain.js'
 import type { EventBus } from './events.js'
-import { balancesDigest, pollTargets } from './hints.js'
+import { balancesDigest, pollTargets, selfDriving } from './hints.js'
 import { evaluatePolicy } from './policy.js'
 import type { PriceOracle } from './revenue.js'
 import { feeValueWei } from './revenue.js'
@@ -101,6 +101,12 @@ export function createKeeper(options: KeeperOptions): Keeper {
   /** Belt to the store's braces: two ticks must never both act on one drop. */
   const inFlight = new Set<string>()
 
+  /**
+   * One pass over every active drop on this chain.
+   *
+   * The order matters: reconcile first (it frees budget and nonces), then retire the expired, then
+   * one batched balance read for everyone left, and only then simulate — capped, staleness first.
+   */
   async function tick(): Promise<KeeperTickResult> {
     const result: KeeperTickResult = {
       considered: 0,
@@ -170,6 +176,9 @@ export function createKeeper(options: KeeperOptions): Keeper {
         ...current,
         lastPoll: { at: now(), native, tokens },
         everFunded: current.everFunded || funded,
+        // A latch, not a comparison: any movement at all releases it, including the fill that empties
+        // the drop. That is what lets a refund of exactly the committed amount read as new money.
+        committedDigest: current.committedDigest === digest ? current.committedDigest : undefined,
         updatedAt: now(),
       }))
 
@@ -188,9 +197,21 @@ export function createKeeper(options: KeeperOptions): Keeper {
     return result
   }
 
+  /**
+   * Whether this drop is worth an `eth_call` this tick.
+   *
+   * This is the whole cost control: without it a funded-but-not-ready drop would be simulated every
+   * tick forever. Money moving is the main trigger; time is the fallback, and the only one a blind
+   * recipe has.
+   */
   function shouldSimulate(drop: RegisteredDrop, digest: string, funded: boolean): boolean {
     if (drop.backoff.nextAttemptAt > now()) return false
     if (drop.hints.notBefore !== null && now() < drop.hints.notBefore * 1000) return false
+    // Money already committed to a live order. `presignSellAll` sizes an order at whatever balance it
+    // finds, so activating again on the same funds signs a second order that the first one's fill makes
+    // unfillable — bought with the keeper's gas. Once that order can no longer fill the balance is free
+    // again, whether or not anything moved.
+    if (drop.committedDigest === digest && !lastOrderDead(drop)) return false
 
     const last = drop.lastSimulation
     // A blind recipe has nothing to watch, so time is the only trigger it has.
@@ -202,6 +223,33 @@ export function createKeeper(options: KeeperOptions): Keeper {
     if (!last) return true
     if (last.balancesDigest !== digest) return true
     return now() - last.at >= resimulateIntervalMs
+  }
+
+  /**
+   * Whether the order the last activation signed can no longer fill.
+   *
+   * `validTo` is the last four bytes of the uid, and `activations[].orderUids` already holds it — so
+   * the deadline costs no request and no new state. Before the watch tower has posted there is no uid
+   * to read, and the recipe's own validity window stands in; it is measured from the receipt rather
+   * than from the block the contract measured it in, which errs late, which is the safe direction for
+   * a gate that stops money being committed twice.
+   *
+   * Without this half, an order that expires unfilled would leave a drop holding an untouched balance
+   * that nothing releases — the latch only opens on movement, and nothing moved.
+   */
+  function lastOrderDead(drop: RegisteredDrop): boolean {
+    const activation = drop.activations.at(-1)
+    if (!activation) return true
+
+    // The latest deadline of the lot, not the last one recorded: a recipe with two presign steps posts
+    // two orders, and the commitment lasts as long as any of them can still fill.
+    const posted = (activation.orderUids ?? []).map((uid) => Number.parseInt(uid.slice(-8), 16) * 1000)
+    const deadline =
+      posted.length > 0
+        ? Math.max(...posted)
+        : activation.at + committedValiditySeconds(drop.recipe) * 1000
+
+    return now() >= deadline
   }
 
   /**
@@ -240,7 +288,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
         result.blocked++
       } else if (drop.lastSimulation?.revert !== revert.detail) {
         // Only log a *change* of reason, or a drop waiting on a time window fills the log.
-        logger.info(`${drop.address} not ready: ${revert.detail}`)
+        logger.info(`drop ${drop.address} not ready: ${revert.detail}`)
       }
       return
     }
@@ -289,6 +337,13 @@ export function createKeeper(options: KeeperOptions): Keeper {
     await send(drop, { call, gasLimit, ...fees, costWei: verdict.costWei }, result)
   }
 
+  /**
+   * Broadcast an activation and record it.
+   *
+   * Signs first so the hash exists before anything leaves the process, which is what makes the
+   * write-ahead ordering possible: record, debit the budget, then broadcast. A broadcast that throws
+   * refunds the debit and backs the drop off.
+   */
   async function send(
     drop: RegisteredDrop,
     plan: {
@@ -301,7 +356,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     result: KeeperTickResult,
   ): Promise<void> {
     if (dryRun) {
-      logger.info(`[dry run] would activate ${drop.address} for ~${plan.costWei} wei`)
+      logger.info(`[dry run] would activate drop ${drop.address} for ~${plan.costWei} wei`)
       return
     }
 
@@ -360,7 +415,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
           updatedAt: now(),
         }))
         events.emit({ type: 'activation-failed', chainId, drop: drop.address, owner: drop.owner, stage: 'send', detail })
-        logger.error(`could not broadcast for ${drop.address}: ${detail}`)
+        logger.error(`could not broadcast for drop ${drop.address}: ${detail}`)
         return
       }
 
@@ -373,7 +428,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
         hash: prepared.ref,
         estimatedCostWei: String(plan.costWei),
       })
-      logger.info(`activating ${drop.address} in ${prepared.ref}`)
+      logger.info(`activating drop ${drop.address} in tx ${prepared.ref}`)
     } finally {
       inFlight.delete(drop.address)
     }
@@ -393,12 +448,18 @@ export function createKeeper(options: KeeperOptions): Keeper {
 
       const confirmed = receipt.status === 'success'
       const once = drop.recipe.once === true
+      const parked = selfDriving(drop.recipe)
 
       await store.update(chainId, drop.address, (current) => ({
         ...current,
         // A reusable drop goes back to watching: running again on the next arrival is the point of it.
-        status: confirmed && once ? 'retired' : confirmed ? 'activated' : 'watching',
+        // Unless the activation registered a conditional order, which nothing here can see the end of.
+        status: confirmed && once ? 'retired' : confirmed && parked ? 'activated' : 'watching',
         retiredReason: confirmed && once ? 'once-consumed' : current.retiredReason,
+        // Those balances are committed to the order this activation signed, and they stay in the drop
+        // until a solver settles it. Recorded so the next tick does not sign a second order for the
+        // same money — see `shouldSimulate`.
+        committedDigest: confirmed && !once && !parked ? current.lastSimulation?.balancesDigest : undefined,
         pending: undefined,
         backoff: { failures: 0, nextAttemptAt: 0 },
         activations: [
@@ -475,6 +536,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     return true
   }
 
+  /** Take a drop out of the rotation for good — expired, consumed, or reverting terminally. */
   async function retire(drop: RegisteredDrop, reason: RegisteredDrop['retiredReason']): Promise<void> {
     await store.update(chainId, drop.address, (current) => ({
       ...current,
@@ -485,6 +547,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     events.emit({ type: 'retired', chainId, drop: drop.address, owner: drop.owner, reason: reason ?? 'expired' })
   }
 
+  /** Park a drop we could activate but will not pay for, and say why. */
   async function block(
     drop: RegisteredDrop,
     reason: PolicyRefusal,
@@ -511,7 +574,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
         detail,
         retryAt,
       })
-      logger.warn(`not paying for ${drop.address}: ${detail}`)
+      logger.warn(`not paying for drop ${drop.address}: ${detail}`)
     }
   }
 
@@ -538,6 +601,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     return feeValueWei({ sellAmount, volumeBps: drop.fee.volumeBps, nativePrice })
   }
 
+  /** Exponential backoff after a failed send, capped at ten minutes. */
   function backoffUntil(drop: RegisteredDrop): number {
     const failures = Math.min(drop.backoff.failures + 1, 8)
     return now() + Math.min(2 ** failures * 1000, 10 * 60_000)
@@ -571,6 +635,28 @@ export function createKeeper(options: KeeperOptions): Keeper {
   }
 }
 
+/** What the SDK's own templates default an order's lifetime to, and the fallback below with it. */
+const DEFAULT_ORDER_VALIDITY_SECONDS = 30 * 60
+
+/**
+ * The longest order lifetime the recipe commits to, in seconds.
+ *
+ * Only ever the fallback for `lastOrderDead`, and only until a uid exists to read the real deadline
+ * from. A recipe naming no validity has no presign step and therefore no order to wait out, so the
+ * default here bounds nothing more than how long such a drop stays gated after an activation whose
+ * order the watch tower never managed to post.
+ */
+function committedValiditySeconds(recipe: DropRecipeJson): number {
+  const committed = recipe.steps
+    // A recipe's numbers are `number | string` — it is JSON a client wrote, and a seconds figure that
+    // arrived as `"1800"` commits exactly as long as one that arrived as `1800`.
+    .map((step) => Number((step as { validitySeconds?: number | string }).validitySeconds))
+    .filter((seconds) => Number.isFinite(seconds) && seconds > 0)
+
+  return committed.length > 0 ? Math.max(...committed) : DEFAULT_ORDER_VALIDITY_SECONDS
+}
+
+/** A sleep that wakes early when the signal aborts, so shutdown does not wait out a poll interval. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   // Already aborted means the `abort` event has fired and will not fire again — without this the
   // loop would sit out a whole poll interval before noticing it had been asked to stop.
@@ -580,6 +666,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(finish, ms)
     signal?.addEventListener('abort', finish, { once: true })
 
+    /** Resolves once, whichever of the timer or the abort gets there first. */
     function finish() {
       clearTimeout(timer)
       signal?.removeEventListener('abort', finish)

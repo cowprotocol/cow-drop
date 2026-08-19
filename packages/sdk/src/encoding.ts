@@ -46,6 +46,7 @@ export function encodeLabel(label: string): Hex {
   return stringToHex(label, { size: 32 })
 }
 
+/** The inverse of `encodeLabel`, with the right padding trimmed back off. */
 export function decodeLabel(label: Hex): string {
   return hexToString(label, { size: 32 }).replace(/\0+$/, '')
 }
@@ -73,6 +74,7 @@ export function encodeRecipe(recipe: Recipe): Hex {
   ])
 }
 
+/** Read a recipe back out of the `setupData` its address commits to. The inverse of `encodeRecipe`. */
 export function decodeRecipe(setupData: Hex): Recipe {
   const [decoded] = decodeAbiParameters(RECIPE_ABI, setupData)
   return {

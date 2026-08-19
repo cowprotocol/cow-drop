@@ -25,12 +25,38 @@ last simulation is not simulated again until `resimulateIntervalMs`. Without tha
 ready drop costs an `eth_call` every tick forever. A recipe of nothing but `raw` steps has nothing to
 poll, so it is simulated on a timer instead — correctness is unaffected, only latency.
 
+## Activating twice is the thing to be careful about, not activating once
+
+A `once` recipe retires on its first confirmation and needs nothing more. Everything else is reusable —
+running again on the next arrival is the point of a deposit address — so the question is what stops it
+running again *too soon*.
+
+The money does not leave at activation. The pre-signature is on chain, the order is valid, and the
+balance `presignSellAll` sized it against is still sitting in the drop until a solver settles. Simulating
+on that balance passes, so without a gate the very next tick signs a second order for the same money —
+one the first order's fill makes unfillable, bought with the keeper's gas.
+
+So a confirmed activation records `committedDigest`: the balances it committed. `shouldSimulate` refuses
+while the polled digest still matches, and the commitment ends on whichever comes first:
+
+- **the balance moves** — a fill, a sweep, or a fresh arrival. Any of the three means the sizing is
+  stale, and a fill is what frees the money. This is a latch cleared on movement rather than a
+  comparison against the committed value, so a refund of exactly the last order's size still counts as
+  new money.
+- **the order can no longer fill** — `validTo`, read from the last four bytes of the uid the watch tower
+  posted onto the activation record. This is the half that matters when an order expires unfilled: the
+  balance never moved, so nothing else would ever release it. Before a uid exists the recipe's own
+  validity window stands in, measured from the receipt, which errs late.
+
+A recipe that registers a conditional order instead gets none of this — see `selfDriving` under
+Registration, and `activated`.
+
 ## Registration
 
 ```
 POST /v1/drops            { recipe, address } -> 201 { drop }, or 200 if already registered
 GET  /v1/drops/:address   -> the drop, its hints, and its activation history
-POST /v1/drops/unregister { recipe } -> 200
+POST /v1/drops/unregister { recipe } -> 200, 409 while an activation is in flight
 GET  /v1/events?drop=0x…  -> SSE
 GET  /v1/health           -> payer, balance, budget left, counts
 GET  /v1/policy           -> whether it is subsidising, before anyone commits
@@ -54,13 +80,45 @@ otherwise silent — the keeper would diligently watch an address nobody funded 
 the one they did. The client's address is an assertion to be checked, never an input.
 
 `POST` is idempotent, because a client whose request timed out will retry and can only honestly be
-told that retrying is safe if it is.
+told that retrying is safe if it is. Registering a recipe that was previously unregistered *resumes*
+that record rather than returning it as held-but-idle, so the pair is a pause the recipe holder can
+undo rather than a one-way door. Only `retiredReason: 'unregistered'` revives: every other reason is a
+fact about the drop — `once-consumed` cannot fire twice, `expired` is past its committed window,
+`terminal-revert` would revert again — and watching those is polling for something that cannot happen.
+For the same reason, unregistering a drop that is *already* retired changes nothing rather than
+rewriting its reason: only `unregistered` revives, so rewriting would make the pair a resurrection
+ritual.
+
+**A resume restores the state the stop interrupted, which is not always `watching`.** Whether a drop
+that has already activated comes back armed depends on what its activation left behind, and the rule is
+`selfDriving` — the same one `reconcile` applies. The status is derived from the activation history
+rather than remembered in a field that would go stale.
+
+A recipe that registers with ComposableCoW is parked in `activated`, which the tick loop never
+considers. For a TWAP, re-arming is expensive: the drop holds its sell balance for the whole schedule,
+and `twapFromBalance` reads that balance at activation and passes `t0 = 0`, so `createWithContext` seeds
+the start time from the current block. A second activation registers a second TWAP over the remaining
+balance, or re-seeds the cabinet and restarts the schedule over parts that already traded. And because
+the balance *falls as the parts fill*, no balance-watching gate can hold it — parking is the only
+answer available off-chain, since nothing here can tell a finished schedule from a running one.
+
+A recipe that signs discrete orders comes back `watching`, gated by `committedDigest` instead. Parking
+those was a bug: a reusable deposit address that fires exactly once is not reusable.
 
 **Registration is open; unregistration is not symmetric.** Registering someone's drop grants nothing —
 activation is permissionless already, the guards are committed into the address, and only the owner
 can sweep. Unregistering someone else's costs them their subsidy for free, so it goes through
 `POST /v1/drops/unregister` with the recipe in the body, which proves the caller holds the one thing
-that matters.
+that matters. No subscription token is issued for this and none is needed: a token would be another
+thing to store, lose on a restart and leak, and it would grant exactly what holding the recipe already
+proves.
+
+**Unregistering is refused while an activation is in flight** — a 409 naming the transaction. Retired
+drops are excluded from `store.active()`, and only active drops get their `pending` activation
+reconciled, so retiring mid-flight would abandon a transaction the keeper has already paid for: the
+reserved spend would never be trued up against the receipt and the activation would never reach the
+drop's history. The money is already committed, so the honest answer is to refuse; a second later the
+tick has reconciled and the same request succeeds.
 
 What registration does cost is capacity: a recipe stored indefinitely and a line in every tick's poll
 set. Hence `--max-drops` and a body cap.

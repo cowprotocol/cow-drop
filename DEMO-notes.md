@@ -7,8 +7,12 @@ VITE_KEEPER_URL=http://localhost:8787 pnpm --filter @cowprotocol/cow-drop-web de
 # Run keeper
 KEEPER_PRIVATE_KEY=$(pass cow/pks/cow-drop/keeper) pnpm --filter @cowprotocol/cow-drop-keeper start --rpc-url $RPC_URL
 
-# Run Watch Tower
+# Run Watch Tower (not needed for DEMO)
 pnpm --filter @cowprotocol/cow-drop-watch-tower start --rpc-url $RPC_URL --only-drops
+
+# Same two, restarting on every source edit (no rebuild needed)
+KEEPER_PRIVATE_KEY=$(pass cow/pks/cow-drop/keeper) pnpm dev:keeper --rpc-url $RPC_URL
+pnpm dev:watch-tower --rpc-url $RPC_URL --only-drops
 
 
 # Transfer

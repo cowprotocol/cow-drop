@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { CHAIN_ID, registered } from './fixtures.js'
+import { CHAIN_ID, recipeJson, registered, twapRecipeJson } from './fixtures.js'
 import { DropConflict, fileStore, memoryStore, utcDay, type KeeperStore } from './store.js'
 
 async function tempPath(name = 'keeper.json'): Promise<string> {
@@ -151,6 +151,27 @@ describe('fileStore', () => {
     const raw = JSON.parse(await readFile(path, 'utf8'))
     expect(raw.spend['2026-01-15']['0xaaa0000000000000000000000000000000000000']).toBe(huge.toString())
     expect((await fileStore(path, CHAIN_ID).spendOn('2026-01-15')).totalWei).toBe(huge)
+  })
+
+  it('un-parks a drop an older build left in `activated`', async () => {
+    // That status was written for every confirmed activation and is polled by nothing, so a reusable
+    // drop that fired once was stuck: neither retired nor watched, and no refund could wake it. The
+    // records are on disk already, so the release has to happen on the way in.
+    const path = await tempPath()
+    const drop = registered({ recipe: recipeJson({ once: false }) })
+    await fileStore(path, CHAIN_ID).put({ ...drop, status: 'activated' })
+
+    expect((await fileStore(path, CHAIN_ID).get(CHAIN_ID, drop.address))?.status).toBe('watching')
+  })
+
+  it('leaves a parked conditional-order drop parked', async () => {
+    // For a TWAP `activated` still means what it says: the schedule is running, its balance is falling
+    // as the parts fill, and re-simulating would register a second one over the remainder.
+    const path = await tempPath()
+    const drop = registered({ recipe: twapRecipeJson() })
+    await fileStore(path, CHAIN_ID).put({ ...drop, status: 'activated' })
+
+    expect((await fileStore(path, CHAIN_ID).get(CHAIN_ID, drop.address))?.status).toBe('activated')
   })
 
   it('refuses a state file written for another chain', async () => {

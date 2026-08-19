@@ -103,6 +103,12 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
   if (maxBlockRange < 1n) throw new Error('maxBlockRange must be at least 1')
   if (confirmations < 0) throw new Error('confirmations cannot be negative')
 
+  /**
+   * Scan one bounded range of blocks, post whatever was found, then advance the cursor.
+   *
+   * The cursor moves last, so a throw anywhere above re-scans the same range next pass. `undefined`
+   * means there was nothing new to look at yet.
+   */
   async function tick(): Promise<TickResult | undefined> {
     const head = await reader.getBlockNumber()
     const safeHead = head - BigInt(confirmations)
@@ -140,7 +146,7 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
       results.push(result)
       onResult?.(result)
 
-      const line = `${result.orderUid} owned by ${discovered.owner}`
+      const line = `order ${result.orderUid} owned by ${discovered.owner} (tx ${discovered.transactionHash})`
       if (result.status === 'rejected') logger.error(`order book rejected ${line}: ${describe(result.error)}`)
       else logger.info(`${result.status} ${line}`)
     }
@@ -155,6 +161,7 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
     return { fromBlock: start, toBlock: end, found: found.length, results, moreToScan: end < safeHead }
   }
 
+  /** Tick forever. A backlog is drained at full speed and only a caught-up pass sleeps. */
   async function run(signal?: AbortSignal): Promise<void> {
     logger.info(`watch tower scanning for placed orders${dryRun ? ' (dry run)' : ''}`)
 
@@ -177,11 +184,13 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
   return { tick, run }
 }
 
+/** An error as one printable line, whatever it was thrown as. */
 function describe(error: unknown): string {
   if (error instanceof Error) return error.message
   return typeof error === 'string' ? error : JSON.stringify(error)
 }
 
+/** A sleep that wakes early when the signal aborts, so shutdown does not wait out a poll interval. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   // Already aborted means the `abort` event has fired and will not fire again — without this the
   // loop would sit out a whole poll interval before noticing it had been asked to stop.
@@ -191,6 +200,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(finish, ms)
     signal?.addEventListener('abort', finish, { once: true })
 
+    /** Resolves once, whichever of the timer or the abort gets there first. */
     function finish() {
       clearTimeout(timer)
       signal?.removeEventListener('abort', finish)

@@ -2,7 +2,7 @@ import { compileRecipe, type DropDeployment, type DropRecipeJson } from '@cowpro
 import type { Address, Hex } from 'viem'
 
 import { feeFor, isProblem, matchDocuments } from './appData.js'
-import { deriveHints, HINTS_VERSION, tradesOf } from './hints.js'
+import { deriveHints, HINTS_VERSION, selfDriving, tradesOf } from './hints.js'
 import { DropConflict, type DropStore } from './store.js'
 import type { RegisteredDrop } from './types.js'
 
@@ -71,6 +71,11 @@ export interface RegisterInput {
  * guards are committed into the address, and only the owner can sweep. What it does cost is capacity —
  * a recipe stored forever and an entry in every tick's poll set — which is why `maxDrops` is here and
  * why there is no unauthenticated way to *un*register.
+ *
+ * ## Registering twice
+ *
+ * A repeat is a success, not a conflict, so a client whose POST timed out can retry. Where the record
+ * was retired by `unregisterDrop`, the repeat *resumes* it — see the revive branch below.
  */
 export async function registerDrop(input: RegisterInput): Promise<RegistrationResult> {
   const { recipe, store, deployment, maxDrops, now } = input
@@ -106,10 +111,68 @@ export async function registerDrop(input: RegisterInput): Promise<RegistrationRe
 
   const existing = await store.get(deployment.chainId, derived)
   if (existing) {
-    // Idempotent on purpose. A client whose POST timed out will retry, and it can only honestly be
-    // told that retrying is safe if it is.
-    if (existing.setupData === compiled.setupData) return { ok: true, created: false, drop: existing }
-    return { ok: false, error: 'conflict', message: `${derived} is registered with a different recipe` }
+    if (existing.setupData !== compiled.setupData) {
+      return { ok: false, error: 'conflict', message: `${derived} is registered with a different recipe` }
+    }
+
+    // A drop the recipe holder stopped is resumed rather than reported as held-but-idle. Without this
+    // the pair is asymmetric — unregistering works, registering again returns the retired record
+    // untouched — so "stop watching" in the UI would be a one-way door that answers 200.
+    //
+    // Only `unregistered` revives. Every other reason is a fact about the drop rather than a choice
+    // about the keeper: `once-consumed` cannot fire twice, `expired` is past its committed window,
+    // `terminal-revert` would revert again. Watching those is polling for something that cannot
+    // happen, so they keep the old behaviour of being returned as they are.
+    if (existing.status !== 'retired' || existing.retiredReason !== 'unregistered') {
+      // Idempotent on purpose. A client whose POST timed out will retry, and it can only honestly be
+      // told that retrying is safe if it is.
+      return { ok: true, created: false, drop: existing }
+    }
+
+    /**
+     * Resume the state the stop interrupted, which is **not** always `watching`.
+     *
+     * A confirmed activation leaves a reusable drop in `activated`, and the tick only ever considers
+     * `watching` — so `activated` is parked, deliberately. Resuming a drop that had already activated
+     * as `watching` would hand it back to the simulator, and for anything still holding a balance the
+     * simulation passes: the keeper would activate a second time.
+     *
+     * That is not a theoretical cost. A TWAP drop holds its sell balance for the whole schedule, and
+     * `twapFromBalance` reads that balance at activation and passes `t0 = 0`, which makes
+     * `createWithContext` seed the start time from the current block. So a second activation either
+     * registers a *second* TWAP over the remaining balance, or — if the parts happen to hash
+     * identically — re-seeds the cabinet and restarts the schedule over parts that already traded.
+     * Neither is recoverable by unregistering again.
+     *
+     * Derived from the history rather than remembered in a field, because that is the same rule
+     * `reconcile` applies, and a second field recording what the first one used to be is a thing that
+     * goes stale.
+     */
+    const activated = existing.activations.some((activation) => activation.status === 'confirmed')
+
+    // A `once` recipe that has confirmed is spent, whatever the stored reason says. Reachable only
+    // from a state file another version wrote, since `unregisterDrop` will not retire a drop twice —
+    // but resurrecting a burnt drop is expensive enough to be worth the two lines.
+    if (activated && existing.recipe.once === true) return { ok: true, created: false, drop: existing }
+
+    const resumed: RegisteredDrop = {
+      ...existing,
+      // Parked only if the activation left a conditional order behind. A drop that signed a discrete
+      // order resumes armed, gated by the deadline of the order it signed rather than by its status.
+      status: activated && selfDriving(existing.recipe) ? 'activated' : 'watching',
+      committedDigest: activated && !selfDriving(existing.recipe) ? existing.lastSimulation?.balancesDigest : undefined,
+      retiredReason: undefined,
+      updatedAt: now,
+      // `backoff` and `activations` carry over. The backoff is the record of activations that actually
+      // failed, and clearing it here would make unregister-then-register a way to ask the keeper to
+      // retry a reverting drop as fast as it likes.
+    }
+
+    if (await store.update(deployment.chainId, derived, () => resumed)) {
+      return { ok: true, created: false, drop: resumed }
+    }
+    // Only reachable if the record vanished between the read and the write — a retention sweep. Falling
+    // through registers it fresh, which is the right answer for a record that no longer exists.
   }
 
   if ((await store.count(deployment.chainId)) >= maxDrops) {
@@ -192,14 +255,25 @@ export async function registerDrop(input: RegisterInput): Promise<RegistrationRe
  * has. It is not authentication, and it is not meant to be; it is the same bar the drop itself sets.
  *
  * The record is retired rather than deleted: it holds the only server-side copy of `setupData`, and
- * retention removes it later.
+ * retention removes it later. `registerDrop` can bring it back — see the revive branch there — so
+ * this is a pause the recipe holder can undo, not a one-way door.
+ *
+ * ## Refused while an activation is in flight
+ *
+ * `store.active()` excludes retired drops, and reconciling a `pending` activation only happens for
+ * active ones. So retiring a drop mid-flight abandons a transaction the keeper has already paid for:
+ * the reserved spend is never trued up against the receipt, and the activation never reaches the
+ * drop's history. Since the money is already committed, the honest answer is to refuse and let the
+ * caller retry in a moment — a second or two later the tick has reconciled and this succeeds.
  */
 export async function unregisterDrop(input: {
   recipe: DropRecipeJson
   store: DropStore
   deployment: DropDeployment
   now: number
-}): Promise<{ ok: true } | { ok: false; error: 'not-found' | 'invalid-recipe' }> {
+}): Promise<
+  { ok: true; drop: RegisteredDrop } | { ok: false; error: 'not-found' | 'invalid-recipe' | 'activating'; ref?: Hex }
+> {
   let compiled
   try {
     compiled = compileRecipe(input.recipe)
@@ -208,13 +282,39 @@ export async function unregisterDrop(input: {
   }
 
   const address = compiled.address.toLowerCase() as Address
-  const updated = await input.store.update(input.deployment.chainId, address, (current) =>
-    current.setupData === compiled.setupData
-      ? { ...current, status: 'retired', retiredReason: 'unregistered', updatedAt: input.now }
-      : undefined,
-  )
 
-  return updated ? { ok: true } : { ok: false, error: 'not-found' }
+  /**
+   * Written by the mutator, because `update` only answers whether the record was there.
+   *
+   * `retired` is also what the caller needs back: the HTTP layer emits the same `retired` event the
+   * keeper emits when it retires a drop itself, and recompiling the recipe a second time to find the
+   * address it just wrote to would be the sort of duplication that goes stale.
+   */
+  let retired: RegisteredDrop | undefined
+  let inFlight: Hex | undefined
+
+  await input.store.update(input.deployment.chainId, address, (current) => {
+    if (current.setupData !== compiled.setupData) return undefined
+    if (current.pending) {
+      inFlight = current.pending.ref
+      return undefined
+    }
+    // Already retired: report success and change nothing. Overwriting the reason would rewrite a fact
+    // about the drop — `once-consumed`, `expired`, `terminal-revert` — into a choice about the keeper,
+    // and since only `unregistered` revives, that would turn this endpoint into a way to resurrect a
+    // drop the keeper had permanently given up on.
+    if (current.status === 'retired') {
+      retired = current
+      return undefined
+    }
+    retired = { ...current, status: 'retired', retiredReason: 'unregistered', updatedAt: input.now }
+    return retired
+  })
+
+  if (inFlight) return { ok: false, error: 'activating', ref: inFlight }
+  // `retired` rather than `updated`: an already-retired drop is a success that wrote nothing, so
+  // `update` reports no change while `retired` still names the record the caller asked about.
+  return retired ? { ok: true, drop: retired } : { ok: false, error: 'not-found' }
 }
 
 /**

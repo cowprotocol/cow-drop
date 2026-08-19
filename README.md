@@ -64,6 +64,9 @@ VITE_KEEPER_URL=http://localhost:8787 pnpm --filter @cowprotocol/cow-drop-web de
 
 Drop `VITE_KEEPER_URL` to hide the **Hand to keeper** button. `VITE_RPC_URL` overrides the RPC.
 
+Once a keeper is watching a drop, that button becomes **Stop keeper watching** — the recipe is the
+authorisation for both directions, and stopping is reversible.
+
 ### Keeper
 
 Activates registered drops and pays the gas, so it needs a funded hot key. It runs its own watch
@@ -86,6 +89,19 @@ pnpm --filter @cowprotocol/cow-drop-watch-tower start --rpc-url $RPC_URL
 ```
 
 Add `--dry-run` to verify without posting, `--only-drops` to ignore other contracts' orders.
+
+### Watching for changes
+
+`start` runs the compiled `dist`, so it neither picks up source edits nor needs a rebuild loop. Swap
+it for `dev` to run the TypeScript sources under `tsx watch`, restarting on every save:
+
+```bash
+pnpm dev:keeper --rpc-url $RPC_URL       # or: pnpm dev:watch-tower --rpc-url $RPC_URL
+```
+
+`dev` resolves the workspace packages through a `development` export condition that points at their
+`src`, so editing the SDK or the watch tower restarts the keeper too — no `pnpm build` in between.
+The UI's `dev` already does the same, via Vite.
 
 ## Deploy contracts
 

@@ -17,6 +17,7 @@ export const OWNER: Address = '0x00000000000000000000000000000000000a11ce'
 export const WXDAI: Address = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d'
 export const COW: Address = '0x177127622c4A00F3d409B75571e12cB3c8973d3c'
 
+/** The deployment every fixture here is compiled against. */
 export function deployment() {
   return getDeployment(CHAIN_ID, GENERATION)
 }
@@ -43,6 +44,29 @@ export function recipeJson(overrides: Partial<DropRecipeJson> = {}): DropRecipeJ
     ...overrides,
     steps,
   }
+}
+
+/**
+ * A recipe that hands the drop to ComposableCoW instead of signing an order here.
+ *
+ * The counterpart to the default: activating this leaves a schedule behind that this keeper cannot see
+ * the end of, which is the case `selfDriving` exists to park.
+ */
+export function twapRecipeJson(overrides: Partial<DropRecipeJson> = {}): DropRecipeJson {
+  return recipeJson({
+    once: false,
+    steps: [
+      {
+        type: 'twapFromBalance',
+        sellToken: WXDAI,
+        buyToken: COW,
+        parts: 4,
+        partDuration: 900,
+        limitPrice: { price: '45', sellDecimals: 18, buyDecimals: 18 },
+      },
+    ],
+    ...overrides,
+  })
 }
 
 /** A stored record for a recipe, as `registerDrop` would have written it. */
@@ -128,6 +152,7 @@ export function fakeChain(setup: {
   return { chain, calls, state }
 }
 
+/** A submitter that records what it was asked to do, and can be told to fail the next broadcast. */
 export function fakeSubmitter(calls: string[], balance = 10n ** 18n) {
   let broadcasts = 0
   let failNext: Error | undefined
