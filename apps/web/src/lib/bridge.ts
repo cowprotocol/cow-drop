@@ -81,6 +81,27 @@ export function planFrom(recipe: DropRecipeJson): BridgePlan {
   }
 }
 
+/**
+ * The tokens a bridge can actually deliver on the destination chain.
+ *
+ * Asked before quoting, because the enabled bridges reach far fewer pairs than the chain list
+ * suggests — Across and CCTP do not serve Gnosis at all, and the Gnosis native bridge only runs from
+ * Ethereum. Without this the first sign of an unreachable pair is an empty route list, which reads
+ * like a failure rather than like a pair that was never going to work.
+ */
+export async function deliverableTokens(params: {
+  sellChainId: number
+  sellToken: Address
+  buyChainId: number
+}): Promise<BridgeToken[] | null> {
+  try {
+    return await provider.getDeliverableTokens(params)
+  } catch {
+    // Advisory only. If Bungee will not answer this, quoting is still allowed to try.
+    return null
+  }
+}
+
 /** A route, priced, with the source transaction that starts it. */
 export async function quoteBridge(params: {
   plan: BridgePlan

@@ -1,4 +1,4 @@
-import type { BridgeQuote } from '@cowprotocol/cow-drop-bridging'
+import { SUPPORTED_BRIDGES, type BridgeQuote } from '@cowprotocol/cow-drop-bridging'
 import { ON_FAILURE, type DropRecipeJson, type OnFailure } from '@cowprotocol/cow-drop-sdk'
 import { formatUnits, parseUnits, type Address, type Hex } from 'viem'
 import { useEffect, useMemo, useState } from 'react'
@@ -8,6 +8,7 @@ import {
   BRIDGE_SOURCE_CHAINS,
   approveBridge,
   bridgeExplorerUrl,
+  deliverableTokens,
   planFrom,
   quoteBridge,
   readBridgeAllowance,
@@ -121,6 +122,8 @@ function Bridge({
   const [walletChain, setWalletChain] = useState<number | null>(null)
   /** null while unread — an unreadable balance must not read as zero. */
   const [balance, setBalance] = useState<bigint | null>(null)
+  /** true/false once Bungee has answered, null while unknown or unasked. */
+  const [reachable, setReachable] = useState<boolean | null>(null)
 
   const decimals = findToken(tokens, sourceToken ?? '')?.decimals ?? 18
 
@@ -173,6 +176,31 @@ function Bridge({
       cancelled = true
     }
   }, [sourceChainId, sourceToken, account])
+
+  /**
+   * Can this bridge deliver the token the recipe needs, on the chain the drop lives on?
+   *
+   * The chain list is far more permissive than the routes behind it, so this is asked up front rather
+   * than discovered as an empty route list after the user has picked an amount. Advisory: an
+   * unanswered lookup leaves this null and quoting still goes ahead.
+   */
+  useEffect(() => {
+    if (!sourceToken || destinationChainId === null) return
+    let cancelled = false
+    setReachable(null)
+    void deliverableTokens({
+      sellChainId: sourceChainId,
+      sellToken: sourceToken,
+      buyChainId: destinationChainId,
+    }).then((tokens) => {
+      if (cancelled || tokens === null) return
+      const wanted = plan.ok ? plan.value.deliveredToken.toLowerCase() : ''
+      setReachable(tokens.some((token) => token.address.toLowerCase() === wanted))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [sourceChainId, sourceToken, destinationChainId, plan])
 
   /** A quote is for one route, amount and destination. Any of them moving makes it stale. */
   useEffect(() => {
@@ -402,6 +430,14 @@ function Bridge({
       </p>
       {overBalance && <p className="error">That is more than you hold on {chainName(sourceChainId)}.</p>}
 
+      {reachable === false && (
+        <p className="error">
+          Bungee cannot deliver that token on {chainName(destinationChain)} from{' '}
+          {chainName(sourceChainId)}. Only {SUPPORTED_BRIDGES.join(', ')} are enabled here, and they do
+          not all serve every chain — try another source chain.
+        </p>
+      )}
+
       {/*
         Here rather than only beside the send button. The source chain is chosen just above, and the
         switch is a precondition of everything below it — finding that out at the last step means
@@ -550,7 +586,12 @@ function chainName(chainId: number): string {
 function describeBridgeError(cause: unknown): string {
   if (cause && typeof cause === 'object' && 'code' in cause) {
     const code = (cause as { code: unknown }).code
-    if (code === 'no-routes') return 'no bridge route for that pair and amount — try a different token or a larger amount'
+    // Bungee answering "no routes" is a successful response, not a failed one — say so, or the next
+    // move looks like "retry" when it is actually "pick a different chain or token".
+    if (code === 'no-routes') {
+      return `Bungee has no route for this pair and amount. It answered, with nothing to offer: only ${SUPPORTED_BRIDGES.join(', ')} are enabled here, and they do not all serve every chain. Try another source chain, another token, or a larger amount.`
+    }
+    if (code === 'quote-failed') return 'Bungee rejected the quote request — the pair or amount may be unsupported'
     if (code === 'build-failed') return 'the quote expired before it could be built — get a fresh one'
     if (code === 'unreachable') return 'the bridge API could not be reached'
   }
