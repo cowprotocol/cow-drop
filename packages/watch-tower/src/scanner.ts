@@ -1,4 +1,4 @@
-import { parseCowOrderPlaced, type DropDeployment, type PlacedOrder } from '@cowprotocol/cow-drop-sdk'
+import { parseOrderPlacement, type DropDeployment, type PlacedOrder } from '@cowprotocol/cow-drop-sdk'
 import { getAddress, type Address, type Hex } from 'viem'
 
 import { COW_ORDER_TOPIC, DROP_TRIGGERED_TOPIC, type ChainReader, type RawLog } from './chain.js'
@@ -8,14 +8,19 @@ export interface DiscoveredOrder {
   order: PlacedOrder
   /** Whoever emitted the log. The order's owner when it announced its own order, not otherwise. */
   emitter: Address
-  /** The order's owner, from inside the uid. This is the address that signed. */
+  /**
+   * The order's owner: the address that signed.
+   *
+   * Read from `sender` for a pre-signed order and from the signature for an ERC-1271 one — never from
+   * the emitter, which may be a helper announcing on the owner's behalf.
+   */
   owner: Address
   blockNumber: bigint
   transactionHash: Hex
   logIndex: number
 }
 
-/** Why a `CowOrderPlaced` log was not turned into an order. */
+/** Why an `OrderPlacement` log was not turned into an order. */
 export type SkipReason =
   /** The log carries this topic0 but does not decode as the event. */
   | 'undecodable'
@@ -32,7 +37,8 @@ export interface SkippedLog {
 
 export interface ScanOptions {
   reader: ChainReader
-  deployment: Pick<DropDeployment, 'executor' | 'settlement'>
+  /** `chainId` and `settlement` derive the domain separator each order's uid is computed against. */
+  deployment: Pick<DropDeployment, 'chainId' | 'executor' | 'settlement'>
   fromBlock: bigint
   /** Inclusive. */
   toBlock: bigint
@@ -58,20 +64,26 @@ export interface ScanOptions {
  *
  * ## Why there is no address filter
  *
- * Anything can emit `CowOrderPlaced`, and the interesting emitters cannot be enumerated anyway: a
+ * Anything can emit `OrderPlacement`, and the interesting emitters cannot be enumerated anyway: a
  * drop address is derived from a recipe only its author holds and does not exist on-chain until
- * somebody activates it. So the filter is the topic0 and nothing else, which is exactly why the
- * event is declared once in `contracts/src/lib/CowOrder.sol` instead of per step contract.
+ * somebody activates it. So the filter is the topic0 and nothing else.
+ *
+ * This is the one thing CoW's own indexer does not do — `CoWSwapOnchainOrdersContract` filters on a
+ * configured address list and asserts it is non-empty — and it is the reason a watch tower has to
+ * exist at all rather than the event being enough on its own.
  *
  * ## Which means the event proves nothing by itself
  *
  * A topic0 is not a permission — anyone can emit those 32 bytes over a fabricated order. The check
- * that settles it is `GPv2Settlement.preSignature(uid) != 0`: the uid carries the owner, so a
- * signature recorded against it is that owner's own commitment, whoever announced it. That is also
- * the fact the order book will check, so an order passing here is one it will accept.
+ * that settles it is `GPv2Settlement.preSignature(uid) != 0`, against a uid recomputed here from the
+ * order struct and the owner: a signature recorded against that uid is that owner's own commitment,
+ * whoever announced it. That is also the fact the order book will check, so an order passing here is
+ * one it will accept. Filtering by address would have been a proxy for this check; doing the check is
+ * what makes dropping the filter safe.
  *
  * It follows that **the emitter does not have to be the owner**, and deliberately so — a contract
- * that cannot delegatecall pre-signs its own order and has `CowOrderPoster.announce` emit for it.
+ * that cannot delegatecall pre-signs its own order and has `CowOrderPoster.announce` emit for it,
+ * naming itself in `sender`.
  *
  * `onlyDrops` narrows to cow-drop's own orders by additionally requiring a `DropTriggered` from
  * `DropExecutor` in the same transaction, naming the emitter. `DropExecutor` re-derives a drop from
@@ -96,7 +108,7 @@ export async function scanForOrders(options: ScanOptions): Promise<DiscoveredOrd
   for (const log of logs) {
     let order: PlacedOrder
     try {
-      order = parseCowOrderPlaced(log)
+      order = parseOrderPlacement(log, deployment)
     } catch (cause) {
       skip('undecodable', log, cause instanceof Error ? cause.message : String(cause))
       continue

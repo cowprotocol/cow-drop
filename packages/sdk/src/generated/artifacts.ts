@@ -7,31 +7,32 @@ import type { Hex } from 'viem'
 export const PROXY_CREATION_CODE: Hex = '0x60a03461009557601f61033d38819003918201601f19168301916001600160401b0383118484101761009957808492604094855283398101031261009557610052602061004b836100ad565b92016100ad565b6080527f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc5560405161027b90816100c28239608051818181608b01526101750152f35b5f80fd5b634e487b7160e01b5f52604160045260245ffd5b51906001600160a01b03821682036100955756fe60806040526004361015610018575b3661019757610197565b5f3560e01c8063025b22bc146100375763f851a4400361000e57610116565b346101125760207ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc3601126101125760043573ffffffffffffffffffffffffffffffffffffffff81169081810361011257337f000000000000000000000000000000000000000000000000000000000000000073ffffffffffffffffffffffffffffffffffffffff160361010d577f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc557fbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b5f80a2005b61023d565b5f80fd5b34610112575f7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc36011261011257602061014e61016c565b73ffffffffffffffffffffffffffffffffffffffff60405191168152f35b33300361010d577f000000000000000000000000000000000000000000000000000000000000000090565b60ff7f68df44b1011761f481358c0f49a711192727fb02c377d697bcb0ea8ff8393ac0541615806101f0575b1561023d577ff92ee8a9000000000000000000000000000000000000000000000000000000005f5260045ffd5b507fc4d66de8000000000000000000000000000000000000000000000000000000007fffffffff000000000000000000000000000000000000000000000000000000005f351614156101c3565b5f807f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc54368280378136915af43d5f803e15610277573d5ff35b3d5ffd'
 
 /**
- * `CowOrderPlaced`, the discrete-order event, on its own. Tied to no contract: anything that
- * pre-signs a CoW order can emit it, so an indexer filters on its topic0 alone.
+ * `OrderPlacement` and `OrderInvalidation`, CoW's own on-chain order events. Tied to no contract:
+ * anything that pre-signs a CoW order can emit them, so an indexer filters on the topic0 alone.
  */
-export const COW_ORDER_ABI = [
+export const ONCHAIN_ORDERS_ABI = [
   {
     "type": "event",
-    "name": "CowOrderPlaced",
+    "name": "OrderInvalidation",
     "inputs": [
       {
         "name": "orderUid",
         "type": "bytes",
         "indexed": false,
         "internalType": "bytes"
-      },
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OrderPlacement",
+    "inputs": [
       {
-        "name": "signingScheme",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum CowOrder.SigningScheme"
-      },
-      {
-        "name": "signature",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "order",
@@ -100,6 +101,30 @@ export const COW_ORDER_ABI = [
             "internalType": "bytes32"
           }
         ]
+      },
+      {
+        "name": "signature",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct ICoWSwapOnchainOrders.OnchainSignature",
+        "components": [
+          {
+            "name": "scheme",
+            "type": "uint8",
+            "internalType": "enum ICoWSwapOnchainOrders.OnchainSigningScheme"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -202,6 +227,11 @@ export const COW_ORDER_POSTER_ABI = [
             "internalType": "bytes32"
           }
         ]
+      },
+      {
+        "name": "quoteId",
+        "type": "int64",
+        "internalType": "int64"
       }
     ],
     "outputs": [
@@ -369,6 +399,11 @@ export const COW_ORDER_POSTER_ABI = [
             "internalType": "bytes32"
           }
         ]
+      },
+      {
+        "name": "quoteId",
+        "type": "int64",
+        "internalType": "int64"
       }
     ],
     "outputs": [
@@ -382,25 +417,13 @@ export const COW_ORDER_POSTER_ABI = [
   },
   {
     "type": "event",
-    "name": "CowOrderPlaced",
+    "name": "OrderPlacement",
     "inputs": [
       {
-        "name": "orderUid",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      },
-      {
-        "name": "signingScheme",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum CowOrder.SigningScheme"
-      },
-      {
-        "name": "signature",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "order",
@@ -469,6 +492,30 @@ export const COW_ORDER_POSTER_ABI = [
             "internalType": "bytes32"
           }
         ]
+      },
+      {
+        "name": "signature",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct ICoWSwapOnchainOrders.OnchainSignature",
+        "components": [
+          {
+            "name": "scheme",
+            "type": "uint8",
+            "internalType": "enum ICoWSwapOnchainOrders.OnchainSigningScheme"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -952,25 +999,13 @@ export const PRESIGN_STEPS_ABI = [
   },
   {
     "type": "event",
-    "name": "CowOrderPlaced",
+    "name": "OrderPlacement",
     "inputs": [
       {
-        "name": "orderUid",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      },
-      {
-        "name": "signingScheme",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum CowOrder.SigningScheme"
-      },
-      {
-        "name": "signature",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "order",
@@ -1039,6 +1074,30 @@ export const PRESIGN_STEPS_ABI = [
             "internalType": "bytes32"
           }
         ]
+      },
+      {
+        "name": "signature",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct ICoWSwapOnchainOrders.OnchainSignature",
+        "components": [
+          {
+            "name": "scheme",
+            "type": "uint8",
+            "internalType": "enum ICoWSwapOnchainOrders.OnchainSigningScheme"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false

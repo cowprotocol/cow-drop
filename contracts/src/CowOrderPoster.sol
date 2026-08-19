@@ -3,16 +3,18 @@ pragma solidity ^0.8.25;
 
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 
+import {ICoWSwapOnchainOrders} from "./interfaces/ICoWSwapOnchainOrders.sol";
 import {ISettlementLike} from "./interfaces/IDropExternal.sol";
 import {CowOrder} from "./lib/CowOrder.sol";
 
 /// @title CowOrderPoster
 /// @notice Place a discrete CoW order from a contract and have it posted for you.
 ///
-/// @dev The deployed half of `CowOrder`. A contract can always copy the event declaration and emit
-///      it — that is cheaper and this changes nothing about what is possible. This exists so an
-///      integration does not have to reproduce the EIP-712 hashing, the UID packing or the exact
-///      event ABI to be picked up by `packages/watch-tower`.
+/// @dev The deployed half of `CowOrder`. A contract can always redeclare
+///      `ICoWSwapOnchainOrders.OrderPlacement` and emit it — that is cheaper and this changes nothing
+///      about what is possible. This exists so an integration does not have to reproduce the EIP-712
+///      hashing, the UID packing or the `data` layout to be picked up by
+///      [`packages/watch-tower`](../packages/watch-tower/README.md).
 ///
 ///      Two entry points, because `setPreSignature` keys off `msg.sender` and that splits the job:
 ///
@@ -21,8 +23,8 @@ import {CowOrder} from "./lib/CowOrder.sol";
 ///      | delegatecall (shed, Safe, cow-drop step) | `presignAndAnnounce` | you | you |
 ///      | only make ordinary calls | `setPreSignature` yourself, then `announce` | you | this contract |
 ///
-///      `announce` refuses to emit an order the settlement contract has no signature for, so a
-///      `CowOrderPlaced` from this address is signed by construction.
+///      `announce` refuses to emit an order the settlement contract has no signature for, so an
+///      `OrderPlacement` from this address is signed by construction.
 ///
 ///      Holds no funds and no storage, and grants nobody anything: pre-signing is something only an
 ///      order's own owner can do, and announcing an order that is already signed does not make it any
@@ -53,23 +55,38 @@ contract CowOrderPoster {
     /// @notice **Delegatecall this.** Pre-sign `order` as your own contract, and announce it.
     /// @dev Immutables are readable under delegatecall — they live in this contract's code, not its
     ///      storage — which is what makes `SETTLEMENT` work here.
+    /// @param quoteId The CoW API quote the order was priced from, or `CowOrder.NO_QUOTE`. Required
+    ///                rather than defaulted, and not overloaded away: it is the one field of the
+    ///                announcement a caller can get wrong silently, and a caller that *does* hold a
+    ///                quote is the reason the field exists.
     /// @return orderUid The 56 bytes the settlement contract keys the signature by.
-    function presignAndAnnounce(LibCowOrder.Data calldata order) external returns (bytes memory orderUid) {
+    function presignAndAnnounce(LibCowOrder.Data calldata order, int64 quoteId)
+        external
+        returns (bytes memory orderUid)
+    {
         if (address(this) == SELF) revert MustBeDelegateCalled();
-        return CowOrder.presign(SETTLEMENT, order);
+        return CowOrder.presign(SETTLEMENT, order, quoteId);
     }
 
     /// @notice Announce an order you have already pre-signed. An ordinary call.
-    /// @dev The owner is `msg.sender`, so the emitter is this contract rather than the owner. That is
-    ///      fine and is why the owner travels inside `orderUid`: an indexer reads it from there and
-    ///      confirms it against the settlement contract, which is the only check that ever mattered.
-    function announce(LibCowOrder.Data calldata order) external returns (bytes memory orderUid) {
+    /// @dev The owner is `msg.sender`, and `OrderPlacement`'s `sender` is where an indexer reads the
+    ///      owner of a `PreSign` order from — so this contract emits a log naming its caller, which is
+    ///      precisely what that field is for. The signature is checked against the settlement contract
+    ///      first, which is the only check that ever mattered.
+    function announce(LibCowOrder.Data calldata order, int64 quoteId) external returns (bytes memory orderUid) {
         if (address(this) != SELF) revert MustNotBeDelegateCalled();
 
         orderUid = CowOrder.uidOf(SETTLEMENT, order, msg.sender);
         if (SETTLEMENT.preSignature(orderUid) == 0) revert NotSigned(orderUid);
 
-        emit CowOrder.CowOrderPlaced(orderUid, CowOrder.SigningScheme.PreSign, abi.encodePacked(msg.sender), order);
+        emit ICoWSwapOnchainOrders.OrderPlacement(
+            msg.sender,
+            order,
+            ICoWSwapOnchainOrders.OnchainSignature(
+                ICoWSwapOnchainOrders.OnchainSigningScheme.PreSign, abi.encodePacked(msg.sender)
+            ),
+            CowOrder.extraData(quoteId, order.validTo)
+        );
     }
 
     /// @notice The UID `order` would have if `owner` signed it. A convenience for callers building

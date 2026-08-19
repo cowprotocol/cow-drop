@@ -4,13 +4,16 @@ import {
   encodeFunctionData,
   getAddress,
   keccak256,
+  size,
+  slice,
   toEventSelector,
   type Address,
   type Hex,
   type Log,
 } from 'viem'
 
-import { DROP_EXECUTOR_ABI, COW_ORDER_ABI } from './generated/artifacts.js'
+import { DROP_EXECUTOR_ABI, ONCHAIN_ORDERS_ABI } from './generated/artifacts.js'
+import { cowDomainSeparator, orderUidFor, type CowOrderData } from './orderUid.js'
 import type { DropDeployment } from './types.js'
 
 export interface EvmCall {
@@ -41,118 +44,180 @@ export function buildActivateTx(params: {
 }
 
 /**
- * The signing schemes a drop can produce, by their `GPv2Signing.Scheme` numbers — which is what
- * `CowOrderPlaced` carries.
+ * The signing schemes an order placed on-chain can use, by their `OnchainSigningScheme` numbers.
  *
- * A drop is a contract, so it cannot produce an ECDSA signature and the first two are unreachable.
- * They are listed anyway because the numbering has to stay the protocol's, not ours.
+ * Two, not `GPv2Signing.Scheme`'s four: a contract cannot produce an ECDSA signature, so the two
+ * ECDSA schemes are unreachable from on-chain order placement and are not in this numbering. The names
+ * are the strings the order book takes, so they go out to the API unchanged.
  */
-export const COW_SIGNING_SCHEMES = ['eip712', 'ethsign', 'eip1271', 'presign'] as const
+export const COW_SIGNING_SCHEMES = ['eip1271', 'presign'] as const
 export type CowSigningScheme = (typeof COW_SIGNING_SCHEMES)[number]
 
-/** A discrete order as emitted by `CowOrderPlaced`, plus the owner read back out of its uid. */
-export interface PlacedOrder {
+/** A discrete order as announced by `OrderPlacement`, with its owner and uid resolved. */
+export interface PlacedOrder extends CowOrderData {
+  /**
+   * `orderDigest ++ owner ++ validTo`.
+   *
+   * Not in the log — computed here from the order struct, the owner and the domain separator, which is
+   * exactly what the settlement contract keys the signature by. See `packages/sdk/src/orderUid.ts`.
+   */
   orderUid: Hex
   /**
-   * The order's owner, decoded from the middle 20 bytes of `orderUid`.
+   * The order's owner: the address that signed, and the one the order book will attribute the order
+   * to.
    *
-   * An indexer should check this against the log's emitter. They agree for any order a step actually
-   * placed — the step runs as a delegatecall, so the drop is both — and disagreeing means the log came
-   * from something that is not a drop placing its own order.
+   * Read from `sender` for `presign` and from `signature` for `eip1271` — the two places the scheme
+   * puts it. **Not** the log's emitter, which may be a helper announcing on the owner's behalf.
    */
   owner: Address
+  /**
+   * Who triggered the placement — `OrderPlacement`'s indexed `sender`.
+   *
+   * The owner for a `presign` order, and not necessarily related to the order at all otherwise.
+   */
+  sender: Address
   /** How the order book should check the order. */
   signingScheme: CowSigningScheme
-  /** Forwarded to the order book verbatim. For `presign` this is the owner address. */
+  /** Forwarded to the order book verbatim. Under both schemes this is the owner's address. */
   signature: Hex
-  sellToken: Address
-  buyToken: Address
-  receiver: Address
-  sellAmount: bigint
-  buyAmount: bigint
-  validTo: number
-  appData: Hex
-  feeAmount: bigint
-  kind: Hex
-  partiallyFillable: boolean
-  sellTokenBalance: Hex
-  buyTokenBalance: Hex
+  /**
+   * `OrderPlacement`'s `data`, unparsed.
+   *
+   * Twelve bytes of `int64 quoteId ++ uint32 validTo` by convention — see `parseExtraData` — but the
+   * event enforces nothing, so an emitter that put something else there is not an error here.
+   */
+  extraData: Hex
 }
 
 /**
- * `CowOrderPlaced` on its own, for `getLogs`.
+ * `OrderPlacement` on its own, for `getLogs`.
  *
- * The one event every step emits for a discrete order, which is what makes an indexer possible: it
- * filters on this topic0 with **no address filter** — drop addresses are counterfactual and nobody
- * knows them in advance — and picks up orders from step contracts that did not exist when it was
- * written. See `packages/watch-tower`.
+ * CoW's own event, not cow-drop's — see `contracts/src/interfaces/ICoWSwapOnchainOrders.sol` for why
+ * that matters. An indexer filters on this topic0 with **no address filter**, because drop addresses
+ * are counterfactual and nobody knows them in advance, and so picks up orders from contracts that did
+ * not exist when it was written. See `packages/watch-tower`.
  */
-export const COW_ORDER_PLACED_EVENT = COW_ORDER_ABI.find(
-  (item): item is Extract<(typeof COW_ORDER_ABI)[number], { type: 'event' }> =>
-    item.type === 'event' && item.name === 'CowOrderPlaced',
+export const ORDER_PLACEMENT_EVENT = ONCHAIN_ORDERS_ABI.find(
+  (item): item is Extract<(typeof ONCHAIN_ORDERS_ABI)[number], { type: 'event' }> =>
+    item.type === 'event' && item.name === 'OrderPlacement',
 )!
 
-/** `topic0` of `CowOrderPlaced` — the only filter an indexer needs. */
-export const COW_ORDER_PLACED_TOPIC: Hex = toEventSelector(COW_ORDER_PLACED_EVENT)
+/** `topic0` of `OrderPlacement` — the only filter an indexer needs. */
+export const ORDER_PLACEMENT_TOPIC: Hex = toEventSelector(ORDER_PLACEMENT_EVENT)
+
+/** `topic0` of `OrderInvalidation`. */
+export const ORDER_INVALIDATION_TOPIC: Hex = toEventSelector(
+  ONCHAIN_ORDERS_ABI.find(
+    (item): item is Extract<(typeof ONCHAIN_ORDERS_ABI)[number], { type: 'event' }> =>
+      item.type === 'event' && item.name === 'OrderInvalidation',
+  )!,
+)
+
+/** Where the chain and settlement address that resolve a uid come from. */
+export interface OrderPlacementContext {
+  chainId: number
+  settlement: Address
+}
 
 /**
- * Decode a `CowOrderPlaced` log into the order that was placed.
+ * Decode an `OrderPlacement` log into the order that was placed.
  *
- * Decoded against `COW_ORDER_ABI` rather than any step contract's ABI, deliberately: the event is
- * declared once in `CowOrder.sol` precisely so that a decoder does not have to know which contract
- * emitted it. Throws if the log is not a `CowOrderPlaced`.
+ * Decoded against `ONCHAIN_ORDERS_ABI` rather than any emitter's ABI, deliberately: the event belongs
+ * to the protocol, so a decoder does not have to know which contract emitted it — EthFlow's logs decode
+ * here as readily as a drop's. Throws if the log is not an `OrderPlacement`.
  *
- * The event is emitted from inside a delegatecall, so its emitter is the drop rather than the step
- * contract — which is what lets a poster filter by drop address.
+ * A drop's own orders are emitted from inside a delegatecall, so their emitter is the drop rather than
+ * the step contract, and `sender` is the drop too.
+ *
+ * @param context The chain and settlement address, used only to derive the domain separator the uid is
+ *                computed against. Pass `domainSeparator` instead if you already hold one.
  */
-export function parseCowOrderPlaced(log: Pick<Log, 'data' | 'topics'>): PlacedOrder {
+export function parseOrderPlacement(
+  log: Pick<Log, 'data' | 'topics'>,
+  context: OrderPlacementContext | { domainSeparator: Hex },
+): PlacedOrder {
   const decoded = decodeEventLog({
-    abi: COW_ORDER_ABI,
-    eventName: 'CowOrderPlaced',
+    abi: ONCHAIN_ORDERS_ABI,
+    eventName: 'OrderPlacement',
     data: log.data,
     topics: log.topics,
   })
 
-  const { orderUid, signingScheme, signature, order } = decoded.args as unknown as {
-    orderUid: Hex
-    signingScheme: number
-    signature: Hex
-    order: {
-      sellToken: Address
-      buyToken: Address
-      receiver: Address
-      sellAmount: bigint
-      buyAmount: bigint
-      validTo: number
-      appData: Hex
-      feeAmount: bigint
-      kind: Hex
-      partiallyFillable: boolean
-      sellTokenBalance: Hex
-      buyTokenBalance: Hex
-    }
+  const { sender, order, signature, data } = decoded.args as unknown as {
+    sender: Address
+    order: CowOrderData
+    signature: { scheme: number; data: Hex }
+    data: Hex
   }
 
-  const scheme = COW_SIGNING_SCHEMES[signingScheme]
+  const scheme = COW_SIGNING_SCHEMES[signature.scheme]
   if (!scheme) {
-    // A scheme this SDK has no name for means the contracts are newer than the SDK. Posting it under
-    // a guessed name would be worse than refusing.
-    throw new Error(`unknown signing scheme ${signingScheme} in CowOrderPlaced`)
+    // The enum has two values and the parser upstream treats anything else as an unreachable state.
+    // Guessing a name for a third would post an order under a scheme nobody agreed on.
+    throw new Error(`unknown on-chain signing scheme ${signature.scheme} in OrderPlacement`)
   }
 
-  return { orderUid, owner: ownerOfOrderUid(orderUid), signingScheme: scheme, signature, ...order }
+  // Under `presign` the settlement contract recorded the signature against `msg.sender`, which the
+  // emitter reports here. Under `eip1271` the signature names the contract the order book must call.
+  // Either way the owner is 20 bytes, and reading it from the wrong place would produce a uid the
+  // settlement contract has never heard of.
+  const owner =
+    scheme === 'presign'
+      ? getAddress(sender)
+      : (() => {
+          if (size(signature.data) < 20) {
+            throw new Error(`an eip1271 signature must begin with the 20-byte signer, got ${signature.data}`)
+          }
+          return getAddress(slice(signature.data, 0, 20))
+        })()
+
+  const domainSeparator =
+    'domainSeparator' in context ? context.domainSeparator : cowDomainSeparator(context.chainId, context.settlement)
+
+  return {
+    ...order,
+    orderUid: orderUidFor(order, owner, domainSeparator),
+    owner,
+    sender: getAddress(sender),
+    signingScheme: scheme,
+    signature: signature.data,
+    extraData: data,
+  }
+}
+
+/** `OrderPlacement`'s `data`, as every producer so far encodes it. */
+export interface OrderPlacementExtraData {
+  /** A CoW API quote id, or `0` for "none" — see `CowOrder.NO_QUOTE`. */
+  quoteId: bigint
+  /**
+   * The deadline the emitter wants honoured, which need not be the order's own `validTo`.
+   *
+   * EthFlow commits `validTo = uint32.max` on-chain and puts the real deadline here, because its orders
+   * are gated by ERC-1271 and it enforces expiry itself. A pre-signed order cannot do that — nothing
+   * gates it but the settlement contract's `validTo` — so for a drop the two agree.
+   */
+  validTo: number
 }
 
 /**
- * The owner encoded in an order UID.
+ * Parse the twelve bytes of `int64 quoteId ++ uint32 validTo` from `extraData`.
  *
- * A UID is `orderDigest ++ owner ++ validTo` — 32 + 20 + 4 bytes — so the owner sits at a fixed
- * offset and needs no lookup. This is how an indexer cross-checks a log's emitter.
+ * Returns `undefined` rather than throwing when the field is some other length: the event enforces no
+ * encoding, so a log that carries something else is a log this convention does not apply to, not a
+ * malformed one.
  */
-export function ownerOfOrderUid(orderUid: Hex): Address {
-  const bytes = orderUid.slice(2)
-  if (bytes.length !== 112) throw new Error(`order uid must be 56 bytes, got ${bytes.length / 2}`)
-  return getAddress(`0x${bytes.slice(64, 104)}`)
+export function parseExtraData(extraData: Hex): OrderPlacementExtraData | undefined {
+  if (size(extraData) !== 12) return undefined
+
+  const [quoteId, validTo] = decodeAbiParametersPacked(extraData)
+  return { quoteId, validTo }
+}
+
+/** `int64 ++ uint32`, big-endian and two's complement, which no ABI decoder does for packed bytes. */
+function decodeAbiParametersPacked(extraData: Hex): [bigint, number] {
+  const unsigned = BigInt(slice(extraData, 0, 8))
+  const quoteId = unsigned >= 1n << 63n ? unsigned - (1n << 64n) : unsigned
+  return [quoteId, Number(BigInt(slice(extraData, 8, 12)))]
 }
 
 const KIND_SELL = '0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775'
@@ -164,13 +229,13 @@ const BALANCE_ERC20 = '0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f
  * `signingScheme` and `signature` are forwarded from the event rather than assumed, which is what
  * keeps a poster from having to know how the order was signed: for `presign` the order book checks
  * the on-chain pre-signature and expects the owner in the signature field, which is exactly what the
- * contract emits.
+ * announcement carries.
  *
  * `appData` goes out as the hash, because the hash is all the order struct holds. The order book
  * accepts that form for a document it already knows; a poster holding the document itself should
  * upload it first — see `packages/watch-tower`.
  *
- * @param drop Overrides the owner. Defaults to the one encoded in the order uid, which is the drop.
+ * @param drop Overrides the owner. Defaults to the order's own owner, which for a drop is the drop.
  */
 export function toOrderBookPayload(order: PlacedOrder, drop: Address = order.owner) {
   return {

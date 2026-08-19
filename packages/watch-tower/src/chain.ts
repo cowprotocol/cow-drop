@@ -1,4 +1,4 @@
-import { COW_ORDER_PLACED_TOPIC, DROP_EXECUTOR_ABI } from '@cowprotocol/cow-drop-sdk'
+import { ORDER_PLACEMENT_TOPIC, DROP_EXECUTOR_ABI } from '@cowprotocol/cow-drop-sdk'
 import { encodeEventTopics, type Address, type Hex, type PublicClient } from 'viem'
 
 /** A log, reduced to the fields the scanner reads. */
@@ -54,8 +54,15 @@ export function viemChainReader(client: PublicClient): ChainReader {
   }
 }
 
-/** `topic0` of `CowOrderPlaced`. Re-exported so a caller never has to reach into the SDK for it. */
-export const COW_ORDER_TOPIC = COW_ORDER_PLACED_TOPIC
+/**
+ * `topic0` of CoW's `OrderPlacement`. Re-exported so a caller never has to reach into the SDK for it.
+ *
+ * The same topic EthFlow emits, deliberately — see `contracts/src/interfaces/ICoWSwapOnchainOrders.sol`.
+ * A watch tower scanning for it with no address filter therefore sees EthFlow's orders too; they are
+ * already in the order book, so posting one is a `DuplicatedOrder` and harmless, and `onlyDrops`
+ * narrows the scan when that noise is unwanted.
+ */
+export const COW_ORDER_TOPIC = ORDER_PLACEMENT_TOPIC
 
 /**
  * `topic0` of `DropExecutor.DropTriggered`. Only used by the opt-in `onlyDrops` filter, which needs

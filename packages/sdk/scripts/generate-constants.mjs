@@ -30,10 +30,11 @@ const proxy = artifact('COWShedProxy.sol/COWShedProxy.json')
 const executor = artifact('DropExecutor.sol/DropExecutor.json')
 const factory = artifact('COWShedExecutorFactory.sol/COWShedExecutorFactory.json')
 
-// `CowOrder` is a library and is never deployed, so its artifact carries one thing: the ABI of
-// `CowOrderPlaced`. Generating from here rather than from a step contract is the point — an indexer
-// decodes orders from contracts this SDK has never heard of.
-const cowOrder = artifact('CowOrder.sol/CowOrder.json')
+// CoW's own on-chain order announcement, generated from the interface that redeclares it rather than
+// from any contract that emits it — which is the point. An indexer decodes `OrderPlacement` from
+// contracts this SDK has never heard of, including EthFlow's, and must not learn the shape from a
+// cow-drop step. `test/OnchainOrders.t.sol` is what holds the redeclaration to the canonical topic0.
+const onchainOrders = artifact('ICoWSwapOnchainOrders.sol/ICoWSwapOnchainOrders.json')
 const cowOrderPoster = artifact('CowOrderPoster.sol/CowOrderPoster.json')
 
 // One ABI per step contract. They are separate deployments so that each address depends only on what
@@ -137,10 +138,10 @@ import type { Hex } from 'viem'
 export const PROXY_CREATION_CODE: Hex = '${proxyCreationCode}'
 
 /**
- * \`CowOrderPlaced\`, the discrete-order event, on its own. Tied to no contract: anything that
- * pre-signs a CoW order can emit it, so an indexer filters on its topic0 alone.
+ * \`OrderPlacement\` and \`OrderInvalidation\`, CoW's own on-chain order events. Tied to no contract:
+ * anything that pre-signs a CoW order can emit them, so an indexer filters on the topic0 alone.
  */
-export const COW_ORDER_ABI = ${JSON.stringify(cowOrder.abi, null, 2)} as const
+export const ONCHAIN_ORDERS_ABI = ${JSON.stringify(onchainOrders.abi, null, 2)} as const
 
 /** The deployed helper: pre-sign and announce in one delegatecall, or announce what you signed. */
 export const COW_ORDER_POSTER_ABI = ${JSON.stringify(cowOrderPoster.abi, null, 2)} as const

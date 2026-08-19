@@ -32,9 +32,10 @@ import {Orders} from "../lib/Orders.sol";
 /// deliberately has none.
 ///
 /// Events emitted from here are emitted *by the drop*, since that is `address(this)` — so
-/// `CowOrderPlaced` logs are indexed by drop address, which is what an off-chain poster wants. The
-/// event itself is not declared here: it is `CowOrder.CowOrderPlaced`, which any contract placing a
-/// discrete order emits, so a poster needs one topic0 rather than one per step contract.
+/// `OrderPlacement` logs carry the drop as both emitter and `sender`, which is what an off-chain
+/// poster wants. The event itself is not declared here: it is CoW's own
+/// `ICoWSwapOnchainOrders.OrderPlacement`, emitted through `CowOrder`, so a poster needs one topic0
+/// rather than one per step contract — and the same one EthFlow has used since it shipped.
 contract PresignSteps {
     /// @notice A haircut above 100% would make the limit negative.
     error HaircutTooLarge(uint256 haircutBps);
@@ -49,7 +50,7 @@ contract PresignSteps {
 
     /// @notice Sell the drop's entire balance of `sellToken` as a single pre-signed CoW order.
     /// @dev Needs no ERC-1271 and no conditional-order handler: the drop pre-signs on-chain and an
-    ///      off-chain poster forwards the order (see the `CowOrderPlaced` event) with
+    ///      off-chain poster forwards the order (see the `OrderPlacement` event) with
     ///      `signingScheme: "presign"`.
     /// @param limitNumerator   Buy units per sell unit, numerator.
     /// @param limitDenominator Buy units per sell unit, denominator.
@@ -169,7 +170,7 @@ contract PresignSteps {
         });
 
         // msg.sender at the settlement contract is the drop, which is the order's owner — so this
-        // is the drop signing its own order. `CowOrder` also emits `CowOrderPlaced`, from the drop.
+        // is the drop signing its own order. `CowOrder` also emits `OrderPlacement`, from the drop.
         orderUid = CowOrder.presign(SETTLEMENT, order);
     }
 }

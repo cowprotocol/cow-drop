@@ -62,27 +62,54 @@ path C work lives in `DropExecutor.isValidSignature`, and pre-signing needs noth
 implementation at all. That is what lets us reuse the cow-shed contracts already deployed rather than
 shipping our own variant.
 
-## `CowOrderPlaced`, for any contract
+## `OrderPlacement`, CoW's own event
 
 A contract that pre-signs a CoW order has a problem that is not cow-drop's: the signature is on-chain
 but nothing told the order book the order exists, so no solver sees it. `setPreSignature` takes a UID
 and says nothing about what was signed.
 
-So the announcement is a shared event rather than ours, declared once in
-[`contracts/src/lib/CowOrder.sol`](contracts/src/lib/CowOrder.sol):
+The event that closes that is **already in production**. EthFlow has emitted it since it shipped, and
+`autopilot` already decodes it under both of the schemes a contract can reach:
 
 ```solidity
-event CowOrderPlaced(bytes orderUid, SigningScheme signingScheme, bytes signature, LibCowOrder.Data order);
+event OrderPlacement(address indexed sender, GPv2Order.Data order, OnchainSignature signature, bytes data);
 ```
 
-Emit it and [`packages/watch-tower`](packages/watch-tower/README.md) posts the order. It filters on
-that one topic0 with no address filter — the only thing that works when emitters are counterfactual
-addresses — and verifies `settlement.preSignature(uid) != 0` before posting, which is what makes the
-event safe to leave open to anyone.
+So cow-drop emits that, redeclared in
+[`contracts/src/interfaces/ICoWSwapOnchainOrders.sol`](contracts/src/interfaces/ICoWSwapOnchainOrders.sol)
+because ethflowcontract is not a dependency here. A redeclaration is only worth something if it is
+byte-compatible, so [`contracts/test/OnchainOrders.t.sol`](contracts/test/OnchainOrders.t.sol) pins the
+topic0 to EthFlow's `0xcf5f9de2…` — the field list expands to the same tuple, so `LibCowOrder.Data` and
+`GPv2Order.Data` are the same event.
 
-Copy the declaration, or call `CowOrderPoster`: `presignAndAnnounce` if you can delegatecall, or
-`setPreSignature` yourself and then `announce`, which refuses to emit an order that is not really
-signed.
+**An earlier version of this repository shipped its own `CowOrderPlaced` instead**, carrying a
+pre-packed `orderUid`. That was right about the gap and wrong about the fix. What was missing was never
+the event — it was an indexer that does not filter by address, because
+`CoWSwapOnchainOrdersContract::filter()` in `services` pins a configured address list and asserts it is
+non-empty, which no counterfactual drop address can ever be in. A second event would have split the
+standard and bought nothing.
+
+That indexer is [`packages/watch-tower`](packages/watch-tower/README.md). It filters on the one topic0
+with no address filter, and verifies `settlement.preSignature(uid) != 0` before posting — which is what
+makes dropping the address filter safe, and is the check `autopilot` skips because it has a filter
+instead. **Generalising the upstream parser to work without one, gated on that check, is the change
+this repository is actually asking for.**
+
+Two details the switch turns on:
+
+- **The UID is not in the log.** The owner is: in `sender` for a pre-signed order, in `signature.data`
+  for an ERC-1271 one. So a consumer recomputes `orderDigest ++ owner ++ validTo` itself — see
+  [`packages/sdk/src/orderUid.ts`](packages/sdk/src/orderUid.ts), checked against the compiled contract
+  by fixtures, since a wrong digest means checking the pre-signature of an order that never existed.
+- **`data` is twelve bytes of `int64 quoteId ++ uint32 validTo`,** the only layout the parser upstream
+  accepts. A drop passes `NO_QUOTE`, honestly: the recipe is compiled into an address long before
+  anything is funded and any quote that old has expired. EthFlow uses the `validTo` half to carry a
+  deadline its order struct does not — it commits `uint32.max` and enforces expiry in ERC-1271 — which a
+  pre-signed order must *not* do, since nothing gates it but the settlement contract's own check.
+
+To emit it, redeclare the interface, or call `CowOrderPoster`: `presignAndAnnounce` if you can
+delegatecall, or `setPreSignature` yourself and then `announce`, which refuses to emit an order that is
+not really signed.
 
 ## Layout
 
@@ -92,7 +119,7 @@ Each package has its own short README — start with whichever part you're touch
 |---|---|---|
 | [`contracts/`](contracts/README.md) | The three contracts, why `DropExecutor` re-derives the address on every entry point, and why the build settings are load-bearing | foundry |
 | [`packages/sdk/`](packages/sdk/README.md) | Compile a recipe, get an address, build the activation tx | TypeScript, viem |
-| [`packages/watch-tower/`](packages/watch-tower/README.md) | Index `CowOrderPlaced` and post the orders to the order book, unattended | TypeScript, viem, cow-sdk |
+| [`packages/watch-tower/`](packages/watch-tower/README.md) | Index `OrderPlacement` and post the orders to the order book, unattended | TypeScript, viem, cow-sdk |
 | [`apps/web/`](apps/web/README.md) | The demo page: a form that turns into an address | Vite, React, cow-sdk |
 | `recipes/` | Example `.drop.json` files | |
 
@@ -103,7 +130,8 @@ contracts/        lib/cow-shed pinned to cow-shed#78 (feat/owner-deploy-without-
   src/lib/                internal libraries: inlined, never deployed, so they cost no address
     Orders.sol            order UID packing, limit-price math
     Allowance.sol         allowance handling
-    CowOrder.sol          CowOrderPlaced: the one event any discrete CoW order is announced with
+    CowOrder.sol          pre-sign an order and announce it as OrderPlacement
+  src/interfaces/ICoWSwapOnchainOrders.sol   CoW's own event, redeclared
   src/CowOrderPoster.sol  the deployed helper, for third-party contracts placing an order
     Errors.sol            the errors more than one step contract raises
 packages/sdk/src/
@@ -112,7 +140,7 @@ packages/sdk/src/
   steps.ts                the step registry (extension point)
   templates.ts            swapOnArrival, twapOnArrival
 packages/watch-tower/src/
-  scanner.ts              find CowOrderPlaced anywhere on the chain, and verify it
+  scanner.ts              find OrderPlacement anywhere on the chain, and verify it
   poster.ts               forward one order to the order book
   watchTower.ts           the loop, and where the block cursor advances
 apps/web/src/App.tsx      the form, and the recipe it builds
@@ -125,7 +153,7 @@ apps/web/src/App.tsx      the form, and the recipe it builds
 git submodule update --init --recursive
 
 pnpm install
-cd contracts && forge test              # 67 hermetic tests
+cd contracts && forge test              # 79 hermetic tests
 cd ../packages/sdk && pnpm generate && pnpm build && pnpm test
 cd ../watch-tower && pnpm build && pnpm test
 cd ../../apps/web && pnpm dev           # http://localhost:5173
@@ -226,7 +254,8 @@ The functions you'll actually reach for:
 | `describeRecipe(setupData, deployment)` | Committed bytes → named steps, decoded arguments, and warnings about anything that cannot be named. |
 | `deriveDropAddress(…)` | The CREATE2 derivation on its own, if you already have `setupData`. |
 | `buildActivateTx(…)` | The activation transaction. Idempotent; safe to send twice. |
-| `parseCowOrderPlaced` / `toOrderBookPayload` | Turn an activation receipt into an order-book submission. Every discrete order emits the same `CowOrderPlaced`, so this decodes all of them. |
+| `parseOrderPlacement` / `toOrderBookPayload` | Turn an activation receipt into an order-book submission. The event is the protocol's, so this decodes any on-chain order — EthFlow's included. |
+| `hashCowOrder` / `orderUidFor` / `cowDomainSeparator` | The UID the announcement does not carry, computed offline. |
 
 Full reference in [`packages/sdk/README.md`](packages/sdk/README.md).
 
@@ -253,19 +282,33 @@ in place. Past generations stay deployed and the SDK keeps their addresses in `G
 what lets a recipe file pinned to an older generation still resolve to the address its author funded.
 Bump `GENERATION` in `script/Deploy.s.sol` whenever any input to an address changes.
 
-Generation 1:
+Generation 2 — the current one:
 
-| Contract | Address | Status |
-|---|---|---|
-| `COWShedWithExecutorSigner` | `0x1c4b988481d945c98a21446AB2960000d290aB22` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) |
-| `COWShedExecutorFactory` | `0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) |
-| `GuardSteps` | `0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7` | **not yet broadcast** |
-| `TokenSteps` | `0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c` | **not yet broadcast** |
-| `PresignSteps` | `0x14bD678715E374e379EA3F8DE21b35826d90eB9e` | **not yet broadcast** |
-| `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | **not yet broadcast** |
-| `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | **not yet broadcast** |
-| `CowOrderPoster` | `0x5a2117173284E78CBB160F1cEE3CFC998CbD286B` | **not yet broadcast** |
-| `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | **not yet broadcast** |
+| Contract | Address | Status | vs. gen 1 |
+|---|---|---|---|
+| `COWShedWithExecutorSigner` | `0x1c4b988481d945c98a21446AB2960000d290aB22` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) | same |
+| `COWShedExecutorFactory` | `0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) | same |
+| `GuardSteps` | `0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7` | **not yet broadcast** | same |
+| `TokenSteps` | `0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c` | **not yet broadcast** | same |
+| `PresignSteps` | `0xd00cae373DE3a738D13ab7E1203a8d4662D4f1e0` | **not yet broadcast** | **moved** |
+| `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | **not yet broadcast** | same |
+| `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | **not yet broadcast** | same |
+| `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | **not yet broadcast** | **moved** |
+| `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis | same |
+
+Generation 2 exists because `PresignSteps` and `CowOrderPoster` now announce an order as CoW's own
+`OrderPlacement` rather than a `CowOrderPlaced` of this repository's invention, which changes their
+bytecode and therefore their addresses. Nothing else moved — `SALT` does not depend on the generation and
+no other contract's code changed, so `DropExecutor` keeps the address it is already deployed at. Both of
+generation 1's replaced contracts were never broadcast on any chain, so nothing on-chain was orphaned;
+generation 1 is kept anyway, because a recipe compiled against it resolves to a drop address somebody
+may have funded, and that is the case a generation exists to protect. Generation 1's addresses are in
+[`contracts/deployments/gen1/`](contracts/deployments/gen1/) and stay in the SDK's `GENERATIONS`.
+
+**Generation 2 has not been broadcast.** `pnpm generate` has already pointed the SDK at it, so a recipe
+compiled today resolves against the new `PresignSteps`; until the deploy runs, activating a path-P drop
+reverts with `NoCodeAtDelegateTarget` — which the UI's `getCode` check surfaces before anyone funds
+anything. Broadcast it with the command at the top of `script/Deploy.s.sol`.
 
 Both cow-shed contracts are the canonical ones already live on Gnosis, reused rather than
 redeployed — so **the only things this project deploys are its own seven contracts**, and a drop address

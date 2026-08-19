@@ -72,7 +72,7 @@ export function buildSweepCalls(params: {
  *
  * Neither call needs a step contract: both take literals, and by rescue time those literals are known
  * — the params hash and the order UID are both in the activation receipt. See
- * `parseConditionalOrdersCreated` and `parseCowOrderPlaced`.
+ * `parseConditionalOrdersCreated` and `parseOrderPlacement`.
  *
  * These are plain calls, not delegatecalls: `msg.sender` has to be the drop, and the shed calling out
  * directly is already that.
@@ -81,7 +81,7 @@ export function buildRevokeCalls(params: {
   deployment: Pick<DropDeployment, 'composableCow' | 'settlement'>
   /** ComposableCoW params hashes to de-authorise, from `parseConditionalOrdersCreated`. */
   conditionalOrderHashes?: Hex[]
-  /** Pre-signed order UIDs to un-sign, from `parseCowOrderPlaced`. */
+  /** Pre-signed order UIDs to un-sign, from `parseOrderPlacement`. */
   orderUids?: Hex[]
 }): DropCall[] {
   const calls: DropCall[] = []

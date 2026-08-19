@@ -23,7 +23,7 @@ below.
 
 ```bash
 git submodule update --init --recursive   # cow-shed has its own submodules
-forge test                                # 66 hermetic tests
+forge test                                # 79 hermetic tests
 forge fmt
 ```
 
@@ -121,7 +121,7 @@ only move if their own code changes.
   step, because "the amount that arrived" is not a literal.
 - `sweep` — rescue: send the whole balance out. `token = address(0)` for native. An empty balance is a
   no-op, not a revert, so a rescue naming five tokens moves whatever it finds.
-- `presignSellAll` — sell the whole balance as one pre-signed CoW order. Emits `CowOrderPlaced` so an
+- `presignSellAll` — sell the whole balance as one pre-signed CoW order. Emits `OrderPlacement` so an
   off-chain poster can submit it — see `lib/CowOrder.sol`.
 - `presignSellAllAtOracle` — the same, but the limit is `max(oracle-derived, committed floor)`. The
   floor is not optional and is the whole point: activation is permissionless, so an activator picks the
@@ -149,28 +149,46 @@ and `_register` internals live in `lib/ComposableBase.sol`, which is what a seco
 from — see its notes on the two requirements a handler has to meet (it must implement the generator
 side, not just `verify`, and it must ignore `sender`).
 
-Events emitted here come *from the drop*, since that's `address(this)` under delegatecall — which is
-what lets a poster filter `CowOrderPlaced` by drop address.
+Events emitted here come *from the drop*, since that's `address(this)` under delegatecall — so an
+`OrderPlacement` from a drop names the drop as both emitter and `sender`.
 
-### `lib/CowOrder.sol` and `CowOrderPoster.sol` — the discrete-order event
+### `interfaces/ICoWSwapOnchainOrders.sol`, `lib/CowOrder.sol` and `CowOrderPoster.sol`
 
 A *discrete* order has every field resolved, unlike a *conditional* one, which is a rule ComposableCoW
 turns into orders later. Conditional orders are announced by `ConditionalOrderCreated` and indexed for
-you; discrete ones had nothing, because `setPreSignature` takes a UID and says nothing about what was
-signed. So the order existed and no solver could see it.
+you; discrete ones look like they have nothing, because `setPreSignature` takes a UID and says nothing
+about what was signed. So the order exists and no solver can see it.
+
+The announcement that closes that is **not ours and not new**:
 
 ```solidity
-event CowOrderPlaced(bytes orderUid, SigningScheme signingScheme, bytes signature, LibCowOrder.Data order);
+event OrderPlacement(address indexed sender, GPv2Order.Data order, OnchainSignature signature, bytes data);
 ```
 
-Declared **once**, for the same reason `NothingToSell` is: every contract placing a discrete order must
-produce the same `topic0`, or an indexer would need the full set of emitters up front — and the
-interesting ones are counterfactual drop addresses nobody knows yet. So the event is deliberately not
-cow-drop's own, and `packages/watch-tower` filters on that one topic with no address filter.
+EthFlow has emitted it since it shipped, and `autopilot` decodes it under both schemes a contract can
+reach — `Eip1271`, owner from `signature.data`; `PreSign`, owner from `sender`. It is redeclared in
+`interfaces/ICoWSwapOnchainOrders.sol` only because ethflowcontract is not a dependency here; the
+canonical event signature expands a struct to its tuple, so `LibCowOrder.Data` and `GPv2Order.Data`
+produce the identical `topic0`. `test/OnchainOrders.t.sol` pins that to EthFlow's hash, along with the
+scheme numbering and the twelve-byte `data` layout — nothing else in the suite would notice a drift,
+since every other test emits and decodes with the same declaration.
 
-The owner travels inside `orderUid`, so **the emitter does not have to be the owner**, and
-`settlement.preSignature(uid) != 0` is what an indexer actually verifies. `signature` is forwarded to
-the order book verbatim, so a poster never learns how the order was signed.
+What was actually missing is an indexer *without* an address filter:
+`CoWSwapOnchainOrdersContract::filter()` upstream pins a configured address list and asserts it is
+non-empty, and a counterfactual drop address can never be in one. `packages/watch-tower` filters on
+`topic0` alone and verifies `settlement.preSignature(uid) != 0` instead, which is what makes doing so
+safe. Generalising the upstream parser along those lines is the change this repository is asking for.
+
+Two consequences:
+
+- **The emitter does not have to be the owner** — that is what `sender` is for.
+- **The UID is not in the log.** A consumer recomputes `orderDigest ++ owner ++ validTo`. `uidOf` is
+  still here because this side needs one to pass to `setPreSignature`; it just no longer pays to log it.
+- **`data` is `int64 quoteId ++ uint32 validTo`,** exactly twelve bytes or the parser upstream rejects
+  it. `CowOrder.NO_QUOTE` is what a drop passes: the recipe was compiled into an address long before
+  anything was funded, so any quote it named would have expired. Note a pre-signed order must keep its
+  real `validTo` in the struct — EthFlow's trick of committing `uint32.max` works only because ERC-1271
+  lets it enforce expiry itself.
 
 `CowOrder` is a library: every function is `internal`, so it is inlined and never deployed.
 `CowOrder.presign(settlement, order)` is the whole tail of the pre-sign path — hash, pack the UID,
@@ -181,10 +199,13 @@ points, because `setPreSignature` keys off `msg.sender`:
 
 | you can | use | who signs | who emits |
 |---|---|---|---|
-| delegatecall | `presignAndAnnounce(order)` | you | you |
-| only plain calls | `setPreSignature` yourself, then `announce(order)` | you | the poster |
+| delegatecall | `presignAndAnnounce(order, quoteId)` | you | you |
+| only plain calls | `setPreSignature` yourself, then `announce(order, quoteId)` | you | the poster |
 
-`announce` reverts unless the settlement contract already holds the signature, so a `CowOrderPlaced`
+`quoteId` is a required argument rather than an overload: it is the one field of the announcement a
+caller can get wrong invisibly, and a caller that holds a live quote is the reason it exists.
+
+`announce` reverts unless the settlement contract already holds the signature, so an `OrderPlacement`
 from that address is signed by construction. Each entry point rejects the wrong call type rather than
 silently doing the wrong thing. The poster is **not** part of any drop address — no recipe reaches it,
 since the steps inline the library — but it ships with the generation because integrators build
@@ -266,7 +287,8 @@ addresses cow-shed#79 records as live on Gnosis, and a CREATE2 address is derive
 | `steps/StepsBase.sol` | The shared harness: a real factory, a real `DropExecutor`, all four step contracts and the mocks. Every step test runs its step delegatecalled from inside a drop by an activation nobody signed — calling a step contract directly would read *its* balance, which is always zero. |
 | `steps/GuardSteps.t.sol` | The guards, including a one-shot recipe surviving a premature activation, and a guard placed *last* still binding because the activation is atomic. |
 | `steps/TokenSteps.t.sol` | `wrapNative`, and a recipe spanning two step contracts. |
-| `steps/PresignSteps.t.sol` | Pre-signing an arbitrary arrived amount; that `CowOrderPlaced` is emitted by the drop; and that the event alone carries everything a poster needs, decoded the way `packages/watch-tower` decodes it. |
+| `steps/PresignSteps.t.sol` | Pre-signing an arbitrary arrived amount; that `OrderPlacement` is emitted by the drop and names it in `sender`; and that the event alone carries everything a poster needs, including the uid recomputed the way `packages/watch-tower` recomputes it. |
+| `OnchainOrders.t.sol` | That the redeclared `OrderPlacement` and `OrderInvalidation` still carry EthFlow's topics, that the scheme numbering is the on-chain one rather than `GPv2Signing`'s, and the twelve-byte `data` layout. |
 | `CowOrderPoster.t.sol` | Both integration shapes against the deployed helper — a contract that delegatecalls and one that can only make plain calls — plus the refusals: announcing an unsigned order, and either entry point reached the wrong way. |
 | `steps/TwapSteps.t.sol` | The TWAP step, plus a hermetic assertion that `TwapData` still encodes as the ten words the deployed handler decodes. |
 | `steps/StopLossSteps.t.sol` | The stop-loss step, the deadline running from activation rather than authoring, and a hermetic assertion on the thirteen-word `StopLossData` layout. |

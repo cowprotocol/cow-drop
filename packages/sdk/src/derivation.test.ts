@@ -6,6 +6,14 @@ import { describe, expect, it } from 'vitest'
 import { getAddress, type Address, type Hex } from 'viem'
 
 import { decodeRecipe, deriveDropAddress, encodeRecipe } from './encoding.js'
+import {
+  COW_ORDER_TYPE_HASH,
+  hashCowOrder,
+  orderUidFor,
+  ownerOfOrderUid,
+  packOrderUid,
+  type CowOrderData,
+} from './orderUid.js'
 import { conditionalOrderParamsHash } from './tx.js'
 
 interface Fixtures {
@@ -15,6 +23,15 @@ interface Fixtures {
   proxyCreationCode: Hex
   cases: Array<{ name: string; owner: Address; setupData: Hex; expected: Address }>
   conditionalOrders: Array<{ name: string; handler: Address; salt: Hex; staticInput: Hex; expected: Hex }>
+  orderUids: Array<{
+    name: string
+    domainSeparator: Hex
+    owner: Address
+    /** Serialized by forge, so the numbers arrive as decimal strings. */
+    order: Record<keyof CowOrderData, string | boolean>
+    digest: Hex
+    expected: Hex
+  }>
 }
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -81,5 +98,65 @@ describe('conditionalOrderParamsHash matches the contract', () => {
         staticInput: testCase.staticInput,
       }),
     ).toBe(testCase.expected)
+  })
+})
+
+/**
+ * `OrderPlacement` carries no order uid, so the SDK computes one from the order struct and the owner —
+ * a second implementation of `LibCowOrder.hash` plus `Orders.packUid`. Checked against the compiled
+ * contract for the same reason as everything else here: the drift is silent, and a watch tower checking
+ * the pre-signature of a uid no order ever had concludes the order is unsigned and posts nothing.
+ */
+describe('order hashing matches the contract', () => {
+  /** Forge writes the struct as JSON, so widen it back to the types the SDK works in. */
+  function orderOf(fixture: Fixtures['orderUids'][number]): CowOrderData {
+    const raw = fixture.order
+    return {
+      sellToken: getAddress(raw.sellToken as string),
+      buyToken: getAddress(raw.buyToken as string),
+      receiver: getAddress(raw.receiver as string),
+      sellAmount: BigInt(raw.sellAmount as string),
+      buyAmount: BigInt(raw.buyAmount as string),
+      validTo: Number(raw.validTo),
+      appData: raw.appData as Hex,
+      feeAmount: BigInt(raw.feeAmount as string),
+      kind: raw.kind as Hex,
+      partiallyFillable: raw.partiallyFillable as boolean,
+      sellTokenBalance: raw.sellTokenBalance as Hex,
+      buyTokenBalance: raw.buyTokenBalance as Hex,
+    }
+  }
+
+  describe('hashCowOrder', () => {
+    it.each(fixtures.orderUids.map((c) => [c.name, c] as const))('%s', (_name, testCase) => {
+      expect(hashCowOrder(orderOf(testCase), testCase.domainSeparator)).toBe(testCase.digest)
+    })
+  })
+
+  describe('orderUidFor', () => {
+    it.each(fixtures.orderUids.map((c) => [c.name, c] as const))('%s', (_name, testCase) => {
+      expect(orderUidFor(orderOf(testCase), testCase.owner, testCase.domainSeparator).toLowerCase()).toBe(
+        testCase.expected.toLowerCase(),
+      )
+    })
+  })
+
+  describe('ownerOfOrderUid reads back what packOrderUid wrote', () => {
+    it.each(fixtures.orderUids.map((c) => [c.name, c] as const))('%s', (_name, testCase) => {
+      expect(ownerOfOrderUid(testCase.expected)).toBe(getAddress(testCase.owner))
+    })
+  })
+
+  it('derives the type hash the settlement contract uses', () => {
+    // `LibCowOrder.TYPE_HASH`, hard-coded there and in GPv2. Building it from the type string is what
+    // catches declaring `kind` as `bytes32` — plausible, since the struct field is — which yields a
+    // digest nothing on-chain has ever signed.
+    expect(COW_ORDER_TYPE_HASH).toBe('0xd5a25ba2e97094ad7d83dc28a6572da797d6b3e7fc6663bd93efb789fc17e489')
+  })
+
+  it('refuses a validTo that is not a uint32', () => {
+    // The uid packs it into four bytes, so a wider number would silently truncate and produce a uid
+    // for a different order.
+    expect(() => packOrderUid(`0x${'ab'.repeat(32)}`, `0x${'11'.repeat(20)}`, 2 ** 32)).toThrow(/uint32/)
   })
 })

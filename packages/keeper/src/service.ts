@@ -53,7 +53,7 @@ export interface KeeperService {
  * Wire the whole thing together: registry, watcher, activator, and the watch tower that posts.
  *
  * The only place that composes. Two loops run side by side — the keeper decides what to activate and
- * pays for it, and an in-process watch tower turns the resulting `CowOrderPlaced` logs into posted
+ * pays for it, and an in-process watch tower turns the resulting `OrderPlacement` logs into posted
  * orders. Neither knows about the other except through the event bus.
  */
 export async function startKeeperService(options: KeeperServiceOptions): Promise<KeeperService> {

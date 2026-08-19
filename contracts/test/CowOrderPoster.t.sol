@@ -4,6 +4,7 @@ pragma solidity ^0.8.25;
 import {Test, Vm} from "forge-std/Test.sol";
 
 import {CowOrderPoster} from "src/CowOrderPoster.sol";
+import {ICoWSwapOnchainOrders} from "src/interfaces/ICoWSwapOnchainOrders.sol";
 import {ISettlementLike} from "src/interfaces/IDropExternal.sol";
 import {CowOrder} from "src/lib/CowOrder.sol";
 import {Orders} from "src/lib/Orders.sol";
@@ -27,12 +28,12 @@ contract PlainIntegrator {
     function place(LibCowOrder.Data calldata order) external returns (bytes memory orderUid) {
         orderUid = POSTER.orderUidFor(order, address(this));
         SETTLEMENT.setPreSignature(orderUid, true);
-        POSTER.announce(order);
+        POSTER.announce(order, CowOrder.NO_QUOTE);
     }
 
     /// @dev Announce without signing first, to prove the poster refuses.
     function announceOnly(LibCowOrder.Data calldata order) external {
-        POSTER.announce(order);
+        POSTER.announce(order, CowOrder.NO_QUOTE);
     }
 }
 
@@ -40,13 +41,17 @@ contract PlainIntegrator {
 ///      `presignAndAnnounce` exists for.
 contract DelegatingIntegrator {
     function place(CowOrderPoster poster, LibCowOrder.Data calldata order) external {
-        _delegate(poster, abi.encodeCall(CowOrderPoster.presignAndAnnounce, (order)));
+        placeWithQuote(poster, order, CowOrder.NO_QUOTE);
+    }
+
+    function placeWithQuote(CowOrderPoster poster, LibCowOrder.Data calldata order, int64 quoteId) public {
+        _delegate(poster, abi.encodeCall(CowOrderPoster.presignAndAnnounce, (order, quoteId)));
     }
 
     /// @dev The mistake `announce` guards against: delegatecalling it would emit from *this* address
     ///      an order owned by whoever called this contract.
     function announceByDelegateCall(CowOrderPoster poster, LibCowOrder.Data calldata order) external {
-        _delegate(poster, abi.encodeCall(CowOrderPoster.announce, (order)));
+        _delegate(poster, abi.encodeCall(CowOrderPoster.announce, (order, CowOrder.NO_QUOTE)));
     }
 
     function _delegate(CowOrderPoster poster, bytes memory callData) private {
@@ -89,19 +94,35 @@ contract CowOrderPosterTest is Test {
         });
     }
 
-    /// @dev The event, as the watch tower reads it: uid, scheme, signature, order.
-    function _placed() internal returns (bytes memory uid, CowOrder.SigningScheme scheme, bytes memory signature) {
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes memory payload;
+    /// @dev An `OrderPlacement` as the watch tower reads it, with the uid it would recompute.
+    struct Placed {
+        /// @dev The contract the log came from.
         address emitter;
+        /// @dev `topics[1]`, and for a `PreSign` order the owner.
+        address sender;
+        LibCowOrder.Data order;
+        ICoWSwapOnchainOrders.OnchainSignature signature;
+        bytes extraData;
+        /// @dev Not in the log — recomputed from the order and `sender`, which is the whole point.
+        bytes uid;
+    }
+
+    function _placed() internal returns (Placed memory placed) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool found;
         for (uint256 i; i < logs.length; i++) {
-            if (logs[i].topics[0] == CowOrder.CowOrderPlaced.selector) {
-                payload = logs[i].data;
-                emitter = logs[i].emitter;
-            }
+            if (logs[i].topics[0] != ICoWSwapOnchainOrders.OrderPlacement.selector) continue;
+            placed.emitter = logs[i].emitter;
+            placed.sender = address(uint160(uint256(logs[i].topics[1])));
+            (placed.order, placed.signature, placed.extraData) =
+                abi.decode(logs[i].data, (LibCowOrder.Data, ICoWSwapOnchainOrders.OnchainSignature, bytes));
+            found = true;
         }
-        assertGt(payload.length, 0, "CowOrderPlaced not emitted");
-        (uid, scheme, signature,) = abi.decode(payload, (bytes, CowOrder.SigningScheme, bytes, LibCowOrder.Data));
+        assertTrue(found, "OrderPlacement not emitted");
+
+        placed.uid = Orders.packUid(
+            LibCowOrder.hash(placed.order, settlement.domainSeparator()), placed.sender, placed.order.validTo
+        );
     }
 
     function test_delegateCall_signsAsTheCallerAndEmitsFromIt() external {
@@ -110,13 +131,32 @@ contract CowOrderPosterTest is Test {
         vm.recordLogs();
         integrator.place(poster, _order());
 
-        (bytes memory uid, CowOrder.SigningScheme scheme, bytes memory signature) = _placed();
+        Placed memory placed = _placed();
 
-        // The point of delegatecalling: the *integrator* is the owner, not the poster.
-        assertEq(settlement.signerOf(keccak256(uid)), address(integrator), "poster signed instead of the caller");
-        assertEq(address(bytes20(_slice(uid, 32, 20))), address(integrator), "uid owner is not the caller");
-        assertEq(uint8(scheme), uint8(CowOrder.SigningScheme.PreSign), "wrong scheme");
-        assertEq(signature, abi.encodePacked(address(integrator)), "signature is not the owner");
+        // The point of delegatecalling: the *integrator* is the owner, not the poster — and it is the
+        // emitter too, so an indexer needs nothing but the log to know whose order this is.
+        assertEq(placed.emitter, address(integrator), "poster emitted instead of the caller");
+        assertEq(placed.sender, address(integrator), "sender is not the caller");
+        assertEq(settlement.signerOf(keccak256(placed.uid)), address(integrator), "poster signed instead of the caller");
+        assertEq(
+            uint8(placed.signature.scheme), uint8(ICoWSwapOnchainOrders.OnchainSigningScheme.PreSign), "wrong scheme"
+        );
+        assertEq(placed.signature.data, abi.encodePacked(address(integrator)), "signature is not the owner");
+        assertEq(placed.extraData, abi.encodePacked(CowOrder.NO_QUOTE, _order().validTo), "wrong extra data");
+    }
+
+    function test_delegateCall_carriesAQuoteIdWhenGivenOne() external {
+        DelegatingIntegrator integrator = new DelegatingIntegrator();
+
+        vm.recordLogs();
+        integrator.placeWithQuote(poster, _order(), 4242);
+
+        Placed memory placed = _placed();
+
+        // The reason to name a quote at all: the order book matches the two, and a caller that priced
+        // against a live quote has one to name where a drop does not.
+        assertEq(placed.extraData, abi.encodePacked(int64(4242), _order().validTo), "quote id was not carried");
+        assertEq(placed.extraData.length, 12, "extra data is not the twelve bytes the parser reads");
     }
 
     function test_plainCall_announcesAnOrderTheCallerSignedItself() external {
@@ -125,12 +165,14 @@ contract CowOrderPosterTest is Test {
         vm.recordLogs();
         integrator.place(_order());
 
-        (bytes memory uid,, bytes memory signature) = _placed();
+        Placed memory placed = _placed();
 
-        // The emitter here is the poster, which is why the owner has to travel inside the uid.
-        assertEq(address(bytes20(_slice(uid, 32, 20))), address(integrator), "uid owner is not the caller");
-        assertEq(signature, abi.encodePacked(address(integrator)), "signature is not the owner");
-        assertGt(settlement.preSignature(uid), 0, "the announced uid is not the signed one");
+        // The emitter here is the poster, not the owner — which is exactly what `sender` is for, and
+        // why an indexer must read the owner from there rather than from the log's address.
+        assertEq(placed.emitter, address(poster), "the poster did not emit");
+        assertEq(placed.sender, address(integrator), "sender is not the caller");
+        assertEq(placed.signature.data, abi.encodePacked(address(integrator)), "signature is not the owner");
+        assertGt(settlement.preSignature(placed.uid), 0, "the announced uid is not the signed one");
     }
 
     function test_announce_refusesAnOrderThatWasNeverSigned() external {
@@ -146,7 +188,7 @@ contract CowOrderPosterTest is Test {
     function test_presignAndAnnounce_refusesAnOrdinaryCall() external {
         // It would sign an order owned by the poster: unfundable, and never what the caller meant.
         vm.expectRevert(CowOrderPoster.MustBeDelegateCalled.selector);
-        poster.presignAndAnnounce(_order());
+        poster.presignAndAnnounce(_order(), CowOrder.NO_QUOTE);
     }
 
     function test_announce_refusesADelegateCall() external {
@@ -163,12 +205,5 @@ contract CowOrderPosterTest is Test {
 
         assertEq(uid, poster.orderUidFor(_order(), address(integrator)), "uid disagrees with the helper");
         assertEq(uid.length, 56, "uid is not 56 bytes");
-    }
-
-    function _slice(bytes memory data, uint256 offset, uint256 length) private pure returns (bytes memory out) {
-        out = new bytes(length);
-        for (uint256 i; i < length; i++) {
-            out[i] = data[offset + i];
-        }
     }
 }

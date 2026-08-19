@@ -14,7 +14,7 @@ KEEPER_PRIVATE_KEY=0x… cow-drop-keeper --rpc-url $RPC_URL --state ./gnosis.jso
 
 Two loops run side by side. **The keeper activates; the watch tower posts.** The keeper decides what
 to spend money on; an in-process [`watch-tower`](../watch-tower/README.md) turns the resulting
-`CowOrderPlaced` logs into posted orders, with the retry and cursor semantics it already has. One
+`OrderPlacement` logs into posted orders, with the retry and cursor semantics it already has. One
 implementation of order posting, not two — at the cost of `order-posted` arriving a poll or two after
 the receipt rather than instantly.
 

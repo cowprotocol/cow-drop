@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 import {Vm} from "forge-std/Test.sol";
 
+import {ICoWSwapOnchainOrders} from "src/interfaces/ICoWSwapOnchainOrders.sol";
 import {CowOrder} from "src/lib/CowOrder.sol";
 import {NothingToSell} from "src/lib/Errors.sol";
 import {Orders} from "src/lib/Orders.sol";
@@ -58,13 +59,16 @@ contract DropPresignTest is StepsBase {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bool found;
         for (uint256 i; i < logs.length; i++) {
-            if (logs[i].topics[0] == CowOrder.CowOrderPlaced.selector) {
+            if (logs[i].topics[0] == ICoWSwapOnchainOrders.OrderPlacement.selector) {
                 // The poster keys off this: the log's emitter must be the drop, not the step contract.
-                assertEq(logs[i].emitter, drop, "CowOrderPlaced not emitted by the drop");
+                assertEq(logs[i].emitter, drop, "OrderPlacement not emitted by the drop");
+                // And `sender` is where an indexer reads a pre-signed order's owner from, so for a
+                // drop signing its own order the two must agree.
+                assertEq(address(uint160(uint256(logs[i].topics[1]))), drop, "sender is not the drop");
                 found = true;
             }
         }
-        assertTrue(found, "CowOrderPlaced not emitted");
+        assertTrue(found, "OrderPlacement not emitted");
     }
 
     /// @dev The whole point of the event: an indexer that has never heard of `PresignSteps` can post
@@ -81,22 +85,37 @@ contract DropPresignTest is StepsBase {
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes memory payload;
+        address sender;
         for (uint256 i; i < logs.length; i++) {
-            if (logs[i].topics[0] == CowOrder.CowOrderPlaced.selector) payload = logs[i].data;
+            if (logs[i].topics[0] == ICoWSwapOnchainOrders.OrderPlacement.selector) {
+                payload = logs[i].data;
+                sender = address(uint160(uint256(logs[i].topics[1])));
+            }
         }
-        assertGt(payload.length, 0, "CowOrderPlaced not emitted");
+        assertGt(payload.length, 0, "OrderPlacement not emitted");
 
-        (bytes memory uid, CowOrder.SigningScheme scheme, bytes memory signature, LibCowOrder.Data memory order) =
-            abi.decode(payload, (bytes, CowOrder.SigningScheme, bytes, LibCowOrder.Data));
+        (
+            LibCowOrder.Data memory order,
+            ICoWSwapOnchainOrders.OnchainSignature memory signature,
+            bytes memory extraData
+        ) = abi.decode(payload, (LibCowOrder.Data, ICoWSwapOnchainOrders.OnchainSignature, bytes));
 
-        assertEq(uint8(scheme), uint8(CowOrder.SigningScheme.PreSign), "wrong signing scheme");
+        assertEq(
+            uint8(signature.scheme), uint8(ICoWSwapOnchainOrders.OnchainSigningScheme.PreSign), "wrong signing scheme"
+        );
         // What the order book wants in the signature field of a pre-signed order.
-        assertEq(signature, abi.encodePacked(drop), "signature is not the owner");
-        assertGt(settlement.preSignature(uid), 0, "the announced uid is not the signed one");
+        assertEq(signature.data, abi.encodePacked(drop), "signature is not the owner");
 
-        // The uid embeds the owner, so an indexer can check it against the log's emitter.
+        // No uid in the log: an indexer recomputes it from the order struct, the domain separator and
+        // the owner it read from `sender`. Do exactly that, and check the result is the signed one.
+        assertEq(sender, drop, "sender is not the drop");
+        bytes memory uid = Orders.packUid(LibCowOrder.hash(order, settlement.domainSeparator()), sender, order.validTo);
+        assertGt(settlement.preSignature(uid), 0, "the recomputed uid is not the signed one");
         assertEq(uid.length, 56, "uid is not 56 bytes");
-        assertEq(address(bytes20(_slice(uid, 32, 20))), drop, "uid owner is not the drop");
+
+        // Twelve bytes of `int64 quoteId ++ uint32 validTo`, which is the only layout the parser
+        // upstream accepts. A drop names no quote, and its two deadlines agree.
+        assertEq(extraData, abi.encodePacked(CowOrder.NO_QUOTE, order.validTo), "wrong extra data");
 
         assertEq(address(order.sellToken), address(sellToken), "wrong sell token");
         assertEq(address(order.buyToken), address(buyToken), "wrong buy token");
@@ -107,13 +126,6 @@ contract DropPresignTest is StepsBase {
         assertEq(order.kind, Orders.KIND_SELL, "not a sell order");
         assertEq(order.feeAmount, 0, "fee must be zero");
         assertFalse(order.partiallyFillable, "must be fill-or-kill");
-    }
-
-    function _slice(bytes memory data, uint256 offset, uint256 length) private pure returns (bytes memory out) {
-        out = new bytes(length);
-        for (uint256 i; i < length; i++) {
-            out[i] = data[offset + i];
-        }
     }
 
     function test_presignSellAll_revertsWhenNothingArrived() external {

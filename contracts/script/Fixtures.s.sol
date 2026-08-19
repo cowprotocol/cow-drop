@@ -4,12 +4,15 @@ pragma solidity ^0.8.25;
 import {Script} from "forge-std/Script.sol";
 
 import {DropExecutor} from "src/DropExecutor.sol";
+import {Orders} from "src/lib/Orders.sol";
 
 import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
 import {Call} from "cow-shed/ICOWAuthHook.sol";
 import {IComposableCow} from "cow-shed/IComposableCow.sol";
 import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
+import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Generates address-derivation fixtures for the SDK to check itself against.
 ///
@@ -64,8 +67,93 @@ contract FixturesScript is Script {
             orders[i] = vm.serializeBytes32(obj, "expected", keccak256(abi.encode(params)));
         }
 
-        string memory json = vm.serializeString(root, "conditionalOrders", orders);
+        vm.serializeString(root, "conditionalOrders", orders);
+
+        // `OrderPlacement` carries no order uid — the owner travels in `sender` and the digest is
+        // recomputed by whoever reads the log. So the SDK now hashes GPv2 orders itself, and that is a
+        // second implementation of `LibCowOrder.hash` plus `Orders.packUid`. Drift here means a watch
+        // tower that checks the pre-signature of a uid no order ever had, and therefore posts nothing.
+        string[] memory uids = new string[](_orderUidCaseCount());
+        for (uint256 i; i < _orderUidCaseCount(); i++) {
+            (LibCowOrder.Data memory order, bytes32 domainSeparator, address owner, string memory name) =
+                _orderUidCase(i);
+
+            bytes32 digest = LibCowOrder.hash(order, domainSeparator);
+
+            string memory obj = string.concat("uid", vm.toString(i));
+            vm.serializeString(obj, "name", name);
+            vm.serializeBytes32(obj, "domainSeparator", domainSeparator);
+            vm.serializeAddress(obj, "owner", owner);
+            vm.serializeString(obj, "order", _serializeOrder(string.concat(obj, "order"), order));
+            vm.serializeBytes32(obj, "digest", digest);
+            uids[i] = vm.serializeBytes(obj, "expected", Orders.packUid(digest, owner, order.validTo));
+        }
+
+        string memory json = vm.serializeString(root, "orderUids", uids);
         vm.writeJson(json, "./deployments/derivation-fixtures.json");
+    }
+
+    function _serializeOrder(string memory obj, LibCowOrder.Data memory order) internal returns (string memory) {
+        vm.serializeAddress(obj, "sellToken", address(order.sellToken));
+        vm.serializeAddress(obj, "buyToken", address(order.buyToken));
+        vm.serializeAddress(obj, "receiver", order.receiver);
+        vm.serializeUint(obj, "sellAmount", order.sellAmount);
+        vm.serializeUint(obj, "buyAmount", order.buyAmount);
+        vm.serializeUint(obj, "validTo", order.validTo);
+        vm.serializeBytes32(obj, "appData", order.appData);
+        vm.serializeUint(obj, "feeAmount", order.feeAmount);
+        vm.serializeBytes32(obj, "kind", order.kind);
+        vm.serializeBool(obj, "partiallyFillable", order.partiallyFillable);
+        vm.serializeBytes32(obj, "sellTokenBalance", order.sellTokenBalance);
+        return vm.serializeBytes32(obj, "buyTokenBalance", order.buyTokenBalance);
+    }
+
+    function _orderUidCaseCount() internal pure returns (uint256) {
+        return 4;
+    }
+
+    /// @dev Spans what the EIP-712 encoding and the uid packing can get wrong: a zero receiver (which
+    ///      GPv2 reads as "same as owner"), both order kinds, both balance sources, a `validTo` at the
+    ///      uint32 boundary, and amounts above 2^128 so a 64-bit slip shows up.
+    function _orderUidCase(uint256 i)
+        internal
+        pure
+        returns (LibCowOrder.Data memory order, bytes32 domainSeparator, address owner, string memory name)
+    {
+        order = LibCowOrder.Data({
+            sellToken: IERC20(address(0x5E11)),
+            buyToken: IERC20(address(0xB111)),
+            receiver: address(0xBEEF),
+            sellAmount: 100e18,
+            buyAmount: 95e18,
+            validTo: 1_800_003_600,
+            appData: keccak256("appData"),
+            feeAmount: 0,
+            kind: Orders.KIND_SELL,
+            partiallyFillable: false,
+            sellTokenBalance: Orders.BALANCE_ERC20,
+            buyTokenBalance: Orders.BALANCE_ERC20
+        });
+
+        if (i == 0) {
+            return (order, keccak256("domain"), address(0xA11CE), "sell order, plain");
+        }
+        if (i == 1) {
+            order.receiver = address(0);
+            order.kind = Orders.KIND_BUY;
+            order.partiallyFillable = true;
+            return (order, keccak256("domain"), address(0xA11CE), "buy order, zero receiver, partial");
+        }
+        if (i == 2) {
+            order.sellAmount = type(uint128).max;
+            order.buyAmount = uint256(type(uint128).max) + 1;
+            order.validTo = type(uint32).max;
+            order.feeAmount = 12_345;
+            return (order, keccak256("another domain"), address(0xD00D), "large amounts, max validTo, non-zero fee");
+        }
+        order.appData = bytes32(0);
+        order.validTo = 0;
+        return (order, bytes32(0), address(type(uint160).max), "zero appData, zero validTo, max owner");
     }
 
     function _caseCount() internal pure returns (uint256) {

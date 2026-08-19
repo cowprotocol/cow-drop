@@ -1,0 +1,15 @@
+{
+  "chainId": 11155111,
+  "composableCow": "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
+  "cowOrderPoster": "0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38",
+  "executor": "0xB61071638BE341F8959492838899907FDA1dA817",
+  "factory": "0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99",
+  "generation": 2,
+  "guardSteps": "0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7",
+  "presignSteps": "0xd00cae373DE3a738D13ab7E1203a8d4662D4f1e0",
+  "settlement": "0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+  "shedImplementation": "0x1c4b988481d945c98a21446AB2960000d290aB22",
+  "stopLossSteps": "0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C",
+  "tokenSteps": "0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c",
+  "twapSteps": "0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5"
+}

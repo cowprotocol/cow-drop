@@ -2,7 +2,7 @@ import {
   buildActivateTx,
   compileRecipe,
   getDeployment,
-  parseCowOrderPlaced,
+  parseOrderPlacement,
   toOrderBookPayload,
   type CompiledRecipe,
   type DropDeployment,
@@ -195,11 +195,15 @@ export async function activateDrop(params: {
  *
  * Submitted through `OrderBookApi` rather than a hand-rolled fetch, so the base URL, the payload type
  * and the error shapes are the SDK's problem rather than ours.
+ *
+ * @param settlement Needed because `OrderPlacement` carries no order uid — it is recomputed from the
+ *                   order struct against the settlement contract's domain separator.
  */
 export async function postPlacedOrders(
   receipt: TransactionReceipt,
   drop: Address,
   chainId: number,
+  settlement: Address,
 ): Promise<string[]> {
   const posted: string[] = []
 
@@ -208,9 +212,9 @@ export async function postPlacedOrders(
 
     let order
     try {
-      order = parseCowOrderPlaced(log)
+      order = parseOrderPlacement(log, { chainId, settlement })
     } catch {
-      continue // not a CowOrderPlaced log
+      continue // not an OrderPlacement log
     }
 
     try {

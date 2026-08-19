@@ -8,7 +8,7 @@ import type { KeeperStore } from './store.js'
  * Turn the watch tower's results into keeper events.
  *
  * The keeper never posts an order. It activates; the watch tower — running in the same process —
- * finds the `CowOrderPlaced` logs the activation emitted and posts them on its own schedule, with the
+ * finds the `OrderPlacement` logs the activation emitted and posts them on its own schedule, with the
  * retry and cursor semantics it already has. One implementation of order posting, not two.
  *
  * The cost is latency: `order-posted` lands `confirmations` blocks plus one watch-tower poll after the
@@ -22,8 +22,8 @@ export function forwardOrderResults(options: { store: KeeperStore; events: Event
   const { store, events, chainId } = options
 
   return async (result: PostResult): Promise<void> => {
-    // `discovered.owner` is the drop: the owner encoded in the order uid, which for a step running
-    // under delegatecall is the drop that placed it.
+    // `discovered.owner` is the drop: for a pre-signed order the event names the owner in `sender`,
+    // and a step running under delegatecall signs and emits as the drop itself.
     const drop = result.discovered.owner.toLowerCase() as Address
     const registered = await store.get(chainId, drop)
     if (!registered) return

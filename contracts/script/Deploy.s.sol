@@ -47,7 +47,16 @@ contract DeployScript is Script {
     ///      So each generation gets its own output directory and is never overwritten. Bump this
     ///      whenever any input to an address changes, and leave the previous directory alone: the
     ///      contracts it names stay deployed, and the SDK keeps compiling old recipes against them.
-    uint256 internal constant GENERATION = 1;
+    ///
+    ///      **2** — `PresignSteps` and `CowOrderPoster` announce a discrete order as CoW's own
+    ///      `ICoWSwapOnchainOrders.OrderPlacement` rather than a `CowOrderPlaced` of this repository's
+    ///      invention. That changes the bytecode of both, and therefore both addresses; every other
+    ///      address in the generation is byte-identical to generation 1, including the already-deployed
+    ///      `DropExecutor`, because `SALT` does not depend on the generation and nothing else's code
+    ///      changed. Generation 1's two versions were never broadcast on any chain — but a recipe
+    ///      compiled against them still resolves to a drop address somebody may have funded, which is
+    ///      the case a generation exists to protect.
+    uint256 internal constant GENERATION = 2;
 
     struct Deployment {
         address shedImplementation;

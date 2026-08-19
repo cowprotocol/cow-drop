@@ -1,10 +1,10 @@
-import { parseCowOrderPlaced } from '@cowprotocol/cow-drop-sdk'
+import { parseOrderPlacement } from '@cowprotocol/cow-drop-sdk'
 import type { Address, Hex } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ChainReader, RawLog } from './chain.js'
 import { COW_ORDER_TOPIC } from './chain.js'
-import { cowOrderPlacedLog, dropTriggeredLog } from './fixtures.js'
+import { orderPlacementLog, dropTriggeredLog } from './fixtures.js'
 import { scanForOrders, type SkippedLog } from './scanner.js'
 
 const EXECUTOR: Address = '0xB61071638BE341F8959492838899907FDA1dA817'
@@ -12,7 +12,7 @@ const SETTLEMENT: Address = '0x9008D19f58AAbD9eD0D60971565AA8510560ab41'
 const DROP: Address = '0x1111111111111111111111111111111111111111'
 const IMPOSTOR: Address = '0x9999999999999999999999999999999999999999'
 const POSTER: Address = '0x5a2117173284E78CBB160F1cEE3CFC998CbD286B'
-const DEPLOYMENT = { executor: EXECUTOR, settlement: SETTLEMENT }
+const DEPLOYMENT = { chainId: 100, executor: EXECUTOR, settlement: SETTLEMENT }
 
 /**
  * A chain that returns exactly the logs it is given, split by which filter asked for them, and
@@ -30,12 +30,12 @@ function fakeChain(options: { logs?: RawLog[]; activations?: RawLog[]; signed?: 
 
 /** The uid of the order a log carries. Decoded rather than sliced, so the layout is not restated. */
 function uidOf(log: RawLog): Hex {
-  return parseCowOrderPlaced(log).orderUid
+  return parseOrderPlacement(log, DEPLOYMENT).orderUid
 }
 
 /** The happy path: one order and the activation that produced it. */
-function wellFormed(overrides: Parameters<typeof cowOrderPlacedLog>[0] = { drop: DROP }) {
-  const log = cowOrderPlacedLog(overrides)
+function wellFormed(overrides: Parameters<typeof orderPlacementLog>[0] = { drop: DROP }) {
+  const log = orderPlacementLog(overrides)
   return { log, activation: dropTriggeredLog({ executor: EXECUTOR, drop: overrides.drop }) }
 }
 
@@ -74,8 +74,9 @@ describe('scanForOrders', () => {
 
   it('accepts an order announced by something other than its owner', async () => {
     // CowOrderPoster.announce: a contract that cannot delegatecall signs its own order and has the
-    // poster emit for it. The signature is the owner's either way, so the order is postable.
-    const log = cowOrderPlacedLog({ drop: POSTER, uidOwner: DROP })
+    // poster emit for it, naming the owner in `sender`. The signature is the owner's either way, so
+    // the order is postable — and an indexer keying off the emitter would have rejected it.
+    const log = orderPlacementLog({ drop: POSTER, owner: DROP })
 
     const found = await scan(fakeChain({ logs: [log], signed: [uidOf(log)] }))
 
@@ -177,7 +178,7 @@ describe('scanForOrders', () => {
 
   it('does not look for a pre-signature for an order that is not pre-signed', async () => {
     // An ERC-1271 order carries its own signature; there is nothing on-chain to read.
-    const log = cowOrderPlacedLog({ drop: DROP, signingScheme: 2 })
+    const log = orderPlacementLog({ drop: DROP, signingScheme: 0 })
     const isPreSigned = vi.fn(async () => false)
     const activations = [dropTriggeredLog({ executor: EXECUTOR, drop: DROP })]
 
@@ -189,7 +190,7 @@ describe('scanForOrders', () => {
 
   it('drops a log that carries the topic but does not decode', async () => {
     const skips: SkippedLog[] = []
-    const log: RawLog = { ...cowOrderPlacedLog({ drop: DROP }), data: '0xdeadbeef' }
+    const log: RawLog = { ...orderPlacementLog({ drop: DROP }), data: '0xdeadbeef' }
 
     expect(await scan(fakeChain({ logs: [log] }), (s) => skips.push(s))).toEqual([])
     expect(skips[0]?.reason).toBe('undecodable')

@@ -1,18 +1,19 @@
 import type { Address } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 
-import { cowOrderPlacedLog, ZERO_APP_DATA } from './fixtures.js'
+import { orderPlacementLog, ZERO_APP_DATA } from './fixtures.js'
 import { postDiscoveredOrder } from './poster.js'
 import type { DiscoveredOrder } from './scanner.js'
-import { parseCowOrderPlaced } from '@cowprotocol/cow-drop-sdk'
+import { parseOrderPlacement } from '@cowprotocol/cow-drop-sdk'
 
 const DROP: Address = '0x1111111111111111111111111111111111111111'
+const SETTLEMENT: Address = '0x9008D19f58AAbD9eD0D60971565AA8510560ab41'
 const CUSTOM_APP_DATA = `0x${'cd'.repeat(32)}` as const
 
 function discovered(appData = ZERO_APP_DATA): DiscoveredOrder {
-  const log = cowOrderPlacedLog({ drop: DROP, appData })
+  const log = orderPlacementLog({ drop: DROP, appData })
   return {
-    order: parseCowOrderPlaced(log),
+    order: parseOrderPlacement(log, { chainId: 100, settlement: SETTLEMENT }),
     emitter: DROP,
     owner: DROP,
     blockNumber: log.blockNumber,

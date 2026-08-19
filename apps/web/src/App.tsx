@@ -534,7 +534,12 @@ export function App() {
       const { hash, receipt } = await activateDrop({ account, recipe })
       setMessage(`Activated in ${hash}`)
 
-      const posted = await postPlacedOrders(receipt, compiled.value.address, form.chainId)
+      const posted = await postPlacedOrders(
+        receipt,
+        compiled.value.address,
+        form.chainId,
+        compiled.value.deployment.settlement,
+      )
       if (posted.length > 0) {
         setMessage(`Activated, and posted ${posted.length} order(s): ${posted.join(', ')}`)
       }

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ChainReader, RawLog } from './chain.js'
 import { COW_ORDER_TOPIC } from './chain.js'
 import { memoryCursor } from './cursor.js'
-import { cowOrderPlacedLog, dropTriggeredLog } from './fixtures.js'
+import { orderPlacementLog, dropTriggeredLog } from './fixtures.js'
 import { createWatchTower } from './watchTower.js'
 
 const EXECUTOR: Address = '0xB61071638BE341F8959492838899907FDA1dA817'
@@ -75,7 +75,7 @@ describe('createWatchTower', () => {
 
   it('posts what it finds and reports the outcome', async () => {
     const sendOrder = vi.fn(async () => 'uid')
-    const log = cowOrderPlacedLog({ drop: DROP, blockNumber: 950n })
+    const log = orderPlacementLog({ drop: DROP, blockNumber: 950n })
     const reader = chainAt(1000n, [log], [dropTriggeredLog({ executor: EXECUTOR, drop: DROP })])
 
     const result = await tower({
@@ -92,7 +92,7 @@ describe('createWatchTower', () => {
   it('leaves the cursor alone when the order book is unreachable, so nothing is lost', async () => {
     // The failure that must not silently skip orders: a 5xx mid-range.
     const cursor = memoryCursor(940n)
-    const log = cowOrderPlacedLog({ drop: DROP, blockNumber: 950n })
+    const log = orderPlacementLog({ drop: DROP, blockNumber: 950n })
     const reader = chainAt(1000n, [log], [dropTriggeredLog({ executor: EXECUTOR, drop: DROP })])
     const sendOrder = vi.fn(async () => Promise.reject(Object.assign(new Error('down'), { response: { status: 503 } })))
 
@@ -109,7 +109,7 @@ describe('createWatchTower', () => {
 
   it('advances past an order the book rejected on its merits', async () => {
     const cursor = memoryCursor(940n)
-    const log = cowOrderPlacedLog({ drop: DROP, blockNumber: 950n })
+    const log = orderPlacementLog({ drop: DROP, blockNumber: 950n })
     const reader = chainAt(1000n, [log], [dropTriggeredLog({ executor: EXECUTOR, drop: DROP })])
     const sendOrder = vi.fn(async () =>
       Promise.reject(Object.assign(new Error('nope'), { response: { status: 400 }, body: { errorType: 'ZeroAmount' } })),
