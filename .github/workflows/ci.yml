@@ -82,5 +82,11 @@ jobs:
           pnpm --filter @cowprotocol/cow-drop-watch-tower build
           pnpm --filter @cowprotocol/cow-drop-watch-tower test
 
+      # Depends on both the SDK's and the watch tower's `dist/` — it composes the latter as a library.
+      - name: build and test the keeper
+        run: |
+          pnpm --filter @cowprotocol/cow-drop-keeper build
+          pnpm --filter @cowprotocol/cow-drop-keeper test
+
       - name: typecheck and build the web app
         run: pnpm --filter @cowprotocol/cow-drop-web build

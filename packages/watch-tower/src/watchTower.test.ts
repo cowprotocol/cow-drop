@@ -151,3 +151,17 @@ describe('createWatchTower', () => {
     expect(errors[0]).toContain('rpc down')
   })
 })
+
+describe('run', () => {
+  it('stops promptly when the signal is already aborted, rather than sitting out a poll', async () => {
+    // `addEventListener('abort')` never fires for a signal that has already aborted, so without an
+    // explicit check the loop waits the full interval before noticing.
+    const stop = new AbortController()
+    stop.abort()
+
+    const started = Date.now()
+    await tower({ pollIntervalMs: 60_000 }).run(stop.signal)
+
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+})

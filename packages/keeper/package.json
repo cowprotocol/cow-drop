@@ -1,0 +1,40 @@
+{
+  "name": "@cowprotocol/cow-drop-keeper",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Watch registered drops, activate them when they are ready, and pay the gas",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "cow-drop-keeper": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cowprotocol/cow-drop-sdk": "workspace:*",
+    "@cowprotocol/cow-drop-watch-tower": "workspace:*",
+    "@cowprotocol/cow-sdk": "^9.2.6",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

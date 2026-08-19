@@ -178,6 +178,10 @@ function describe(error: unknown): string {
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  // Already aborted means the `abort` event has fired and will not fire again — without this the
+  // loop would sit out a whole poll interval before noticing it had been asked to stop.
+  if (signal?.aborted) return Promise.resolve()
+
   return new Promise((resolve) => {
     const timer = setTimeout(finish, ms)
     signal?.addEventListener('abort', finish, { once: true })
