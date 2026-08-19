@@ -138,6 +138,8 @@ pnpm --filter @cowprotocol/cow-drop-watch-tower build
 node packages/watch-tower/dist/cli.js --rpc-url $RPC_URL --state ./gnosis.json
 ```
 
+To run the keeper, the watch tower and the UI together, see [RUNNING.md](RUNNING.md).
+
 Fork tests against the real Gnosis deployments (skipped without the env var):
 
 ```bash
