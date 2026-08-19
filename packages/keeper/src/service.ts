@@ -198,7 +198,7 @@ async function reportPayerBalance({
   logger.info(`payer ${payer} holds ${formatEther(balance)} native`)
 
   if (balance === 0n) {
-    logger.error(`payer ${payer} is empty — it can pay for nothing until it is funded`)
+    logger.error(`payer ${payer} is out of funds — it can pay for nothing until it is funded`)
   } else if (balance < policy.minPayerBalanceWei) {
     logger.error(
       `payer balance ${formatEther(balance)} is below the policy floor of ` +

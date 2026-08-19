@@ -14,9 +14,12 @@ const NATIVE: Address = '0x0000000000000000000000000000000000000000'
 /**
  * The escape hatch, for when a drop's recipe cannot or should not run.
  *
- * Deliberately kept behind a details toggle: it is the wrong answer to almost every question, and a
- * prominent "get my money out" button next to "activate" would invite people to use it instead of
- * fixing their recipe. But when it *is* needed, not having it means stranded funds.
+ * Deliberately kept behind a toggle: it is the wrong answer to almost every question, and a prominent
+ * "get my money out" button next to "activate" would invite people to use it instead of fixing their
+ * recipe. But when it *is* needed, not having it means stranded funds.
+ *
+ * The toggle itself is the section heading, owned by the caller — a panel that folded itself away
+ * *inside* an already-titled section gave the user two things to click for one disclosure.
  */
 export function RescuePanel({
   compiled,
@@ -101,9 +104,7 @@ export function RescuePanel({
   }
 
   return (
-    <details className="rescue">
-      <summary>Rescue &amp; manual control</summary>
-
+    <>
       <p className="hint">
         A drop is funded before it exists, so a recipe can turn out to be unrunnable — funds arrive too
         late, or a condition stops holding. Both paths are owner-only and need no signature.
@@ -173,6 +174,6 @@ export function RescuePanel({
 
       {message && <p className="ok">{message}</p>}
       {error && <p className="error">{error}</p>}
-    </details>
+    </>
   )
 }

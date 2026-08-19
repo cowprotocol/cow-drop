@@ -34,8 +34,8 @@ import {
 import { GNOSIS_TOKENS } from './lib/tokens.js'
 import { fetchTokenList, findToken, type TokenInfo } from './lib/tokenList.js'
 import { NetworkPicker } from './components/NetworkPicker.js'
-import { isSaved, markSentToKeeper, recipeFromHash, recipeToHash, saveDrop } from './lib/storage.js'
-import { keeperUrl, registerWithKeeper } from './lib/keeper.js'
+import { isSaved, listDrops, markSentToKeeper, recipeFromHash, recipeToHash, saveDrop } from './lib/storage.js'
+import { keeperUrl, readKeeperDrop, registerWithKeeper } from './lib/keeper.js'
 import { TokenPicker } from './components/TokenPicker.js'
 import { DropAddress } from './components/DropAddress.js'
 import { RecipeJson } from './components/RecipeJson.js'
@@ -230,6 +230,15 @@ export function App() {
   const [imported, setImported] = useState<DropRecipeJson | null>(() => recipeFromHash(window.location.hash))
   const [saved, setSaved] = useState(false)
   /**
+   * What the keeper says about the address on screen, or `null` when there is nothing to say.
+   *
+   * `null` covers three different situations on purpose — no keeper configured, this browser never
+   * sent this drop, the answer has not arrived yet — because the button treats them identically:
+   * offer to hand it over. Only a definite `watching` changes what it does, and that is the one thing
+   * a claim has to be certain about.
+   */
+  const [keeperWatching, setKeeperWatching] = useState<boolean | null>(null)
+  /**
    * Bumped whenever a drop is written, so the saved list re-reads.
    *
    * `SavedDrops` reads `localStorage` once on mount, so without this a drop saved after first paint
@@ -423,6 +432,47 @@ export function App() {
     if (compiled.ok) setSaved(isSaved(compiled.value.address, form.chainId))
   }, [compiled, form.chainId])
 
+  /**
+   * Ask the keeper whether it is watching *this* drop, so the button can stop offering what is done.
+   *
+   * Gated on the local "we sent it" flag, exactly as the saved list is: the address recompiles on
+   * every keystroke, and without the gate this would be a request per character for an address nobody
+   * has ever registered. Re-runs on `savedRevision`, which is bumped by the registration itself — so
+   * pressing the button is what fetches the answer that then disables it.
+   *
+   * Any failure leaves this `null`. A keeper that is down must not be reported as one that is
+   * watching, and must not block the retry either.
+   */
+  useEffect(() => {
+    if (!compiled.ok || keeperUrl() === null) {
+      setKeeperWatching(null)
+      return
+    }
+
+    const address = compiled.value.address
+    const chainId = compiled.value.deployment.chainId
+    const sent = listDrops().some(
+      (drop) => drop.chainId === chainId && drop.address.toLowerCase() === address.toLowerCase() && drop.keeper,
+    )
+    if (!sent) {
+      setKeeperWatching(null)
+      return
+    }
+
+    let cancelled = false
+    void readKeeperDrop(address)
+      .then((remote) => {
+        if (!cancelled) setKeeperWatching(remote?.watching ?? false)
+      })
+      .catch(() => {
+        if (!cancelled) setKeeperWatching(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [compiled, savedRevision])
+
   useEffect(() => {
     const chainId = form.chainId
     let cancelled = false
@@ -544,6 +594,9 @@ export function App() {
       })
       setSaved(true)
       setSavedRevision((n) => n + 1)
+      // The keeper's own answer, so the button settles immediately rather than after the re-read that
+      // `savedRevision` triggers.
+      setKeeperWatching(drop.watching)
       setMessage(
         drop.watching
           ? `The keeper is watching ${drop.address}`
@@ -1055,8 +1108,19 @@ export function App() {
                     {busy ? 'Activating…' : 'Activate drop'}
                   </button>
                   {keeperUrl() !== null && (
-                    <button onClick={() => void onRegisterKeeper()} disabled={busy}>
-                      Hand to keeper
+                    /*
+                     * Disabled once the keeper confirms it is watching: the action is idempotent, so
+                     * pressing again is harmless, but a button that stays on offer reads as one that
+                     * has not been pressed — and there is no way back from here yet, so this says
+                     * what the state is rather than inviting a no-op. Not a toggle: telling the
+                     * keeper to stop is `POST /v1/drops/unregister`, which nothing on this page calls.
+                     */
+                    <button
+                      onClick={() => void onRegisterKeeper()}
+                      disabled={busy || keeperWatching === true}
+                      title={keeperWatching === true ? 'The keeper is already watching this drop' : undefined}
+                    >
+                      {keeperWatching === true ? 'Keeper watching' : 'Hand to keeper'}
                     </button>
                   )}
                   <a
@@ -1064,16 +1128,36 @@ export function App() {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Orders on CoW Explorer
+                    View in Explorer
                   </a>
                   <a
                     href={`${blockExplorer(dropChainId).url}/address/${compiled.value.address}`}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Balances on {blockExplorer(dropChainId).name}
+                    View on {blockExplorer(dropChainId).name}
                   </a>
                 </div>
+
+                {/*
+                  * The keeper sentence is gated on the same condition as the button it describes, or the
+                  * explainer names an action that is not on the page.
+                  */}
+                <ul className="hint hint-list">
+                  <li>
+                    <strong>Activate drop</strong> — deploy the drop and run its setup yourself, now. Safe
+                    to press again: an already-deployed drop just re-runs the setup.
+                  </li>
+                  {keeperUrl() !== null && (
+                    <li>
+                      <strong>Hand to keeper</strong> — have the keeper do that for you instead. It waits
+                      until the drop has a balance, then activates it unattended.
+                      {keeperWatching === true
+                        ? ' Already handed over: this keeper is watching the drop, and stopping it is not something this page can do yet.'
+                        : ''}
+                    </li>
+                  )}
+                </ul>
 
                 {!account && (
                   <p className="hint">
@@ -1088,15 +1172,24 @@ export function App() {
                 <TerminalPanel compiled={compiled.value} />
               </section>
 
+              {/*
+                * Collapsed behind its heading, like section 7: the rescue paths are the wrong answer to
+                * almost every question, and the panel used to fold itself away *inside* this already
+                * titled section — two things to click, and two different names for one panel.
+                */}
               <section>
-                <h2>6 &middot; If something goes wrong</h2>
-                <RescuePanel
-                  compiled={compiled.value}
-                  account={account}
-                  deployed={status?.deployed ?? false}
-                  sellToken={form.sellToken}
-                  tokens={tokens}
-                />
+                <details className="collapsed-section rescue">
+                  <summary>
+                    <h2>6 &middot; If something goes wrong</h2>
+                  </summary>
+                  <RescuePanel
+                    compiled={compiled.value}
+                    account={account}
+                    deployed={status?.deployed ?? false}
+                    sellToken={form.sellToken}
+                    tokens={tokens}
+                  />
+                </details>
               </section>
 
               {/*

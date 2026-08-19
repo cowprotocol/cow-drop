@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { runInNewContext } from 'node:vm'
 import { compileRecipe } from '@cowprotocol/cow-drop-sdk'
 import { afterEach, describe, expect, it } from 'vitest'
+import { keccak256 } from 'viem'
 
 import { createEventBus } from './events.js'
 import { CHAIN_ID, deployment, fakeSubmitter, recipeJson, registered } from './fixtures.js'
@@ -220,6 +221,38 @@ describe('GET /v1/health and /v1/policy', () => {
   it('says whether it is subsidising before anyone commits to registering', async () => {
     const { base } = await serve()
     expect((await json(await fetch(`${base}/v1/policy`))).subsidising).toBe(true)
+  })
+})
+
+
+describe('GET /v1/about', () => {
+  it('publishes the contracts behind the generation number, named and addressed', async () => {
+    // The mismatch this catches is silent: a keeper on a generation the client did not compile
+    // against derives a different address for the same recipe, and the drop is funded before it
+    // exists. Comparing the numbers is not enough — these are what the numbers stand for.
+    const { base } = await serve()
+    const body = await json(await fetch(`${base}/v1/about`))
+    const deployed = deployment()
+
+    expect(body.chainId).toBe(CHAIN_ID)
+    expect(body.generation).toBe(deployed.generation)
+    expect(body.contracts.factory).toEqual({
+      name: 'COWShedExecutorFactory',
+      address: deployed.factory,
+      dropAddress: true,
+    })
+    expect(body.contracts.cowOrderPoster.dropAddress).toBe(false)
+    expect(body.proxyCreationCodeHash).toBe(keccak256(deployed.proxyCreationCode))
+  })
+
+  it('covers every address of the deployment', async () => {
+    // Hand-maintained, so an address added to `DropAddresses` and not to the table would otherwise
+    // just be quietly missing from the one place a client goes to check what it is talking to.
+    const { base } = await serve()
+    const body = await json(await fetch(`${base}/v1/about`))
+    const { chainId, generation, proxyCreationCode, ...addresses } = deployment()
+
+    expect(Object.keys(body.contracts).sort()).toEqual(Object.keys(addresses).sort())
   })
 })
 

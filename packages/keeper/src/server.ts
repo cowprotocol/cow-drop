@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import type { DropDeployment, DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
+import type { DropAddresses, DropDeployment, DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
+import { getDropChain } from '@cowprotocol/cow-drop-sdk'
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
 import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
-import type { Address } from 'viem'
+import { keccak256, type Address } from 'viem'
 
 import type { Submitter } from './chain.js'
 import type { EventBus } from './events.js'
@@ -59,6 +60,40 @@ function toWire(drop: RegisteredDrop) {
   }
 }
 
+
+/**
+ * The contracts one generation is made of, in the order an operator reads them.
+ *
+ * Keyed by the `DropDeployment` field so a client can diff this against its own SDK's deployment key
+ * by key, and *named* because the key is this package's internal detail where `COWShedExecutorFactory`
+ * is what someone pastes into a block explorer.
+ *
+ * `dropAddress` records whether the address is an input to a drop's CREATE2 derivation. That is the
+ * one property worth publishing about these: the ones marked true cannot change without changing
+ * every drop address anyone has already funded, which is why they are versioned as a generation
+ * rather than updated in place. The step contracts are inputs only to the drops whose recipes reach
+ * them, which is still true rather than false.
+ */
+const CONTRACTS: readonly { key: keyof DropAddresses; name: string; dropAddress: boolean }[] = [
+  { key: 'factory', name: 'COWShedExecutorFactory', dropAddress: true },
+  { key: 'executor', name: 'DropExecutor', dropAddress: true },
+  { key: 'shedImplementation', name: 'COWShedWithExecutorSigner', dropAddress: true },
+  { key: 'guardSteps', name: 'GuardSteps', dropAddress: true },
+  { key: 'tokenSteps', name: 'TokenSteps', dropAddress: true },
+  { key: 'presignSteps', name: 'PresignSteps', dropAddress: true },
+  { key: 'twapSteps', name: 'TwapSteps', dropAddress: true },
+  { key: 'stopLossSteps', name: 'StopLossSteps', dropAddress: true },
+  // Not an input to any drop address: no recipe reaches it, because the step contracts inline the
+  // `CowOrder` library instead. Published because it is the address an integrating contract builds
+  // against.
+  { key: 'cowOrderPoster', name: 'CowOrderPoster', dropAddress: false },
+  // Not cow-drop's own and not inputs to a drop address, but constructor inputs to the step
+  // contracts — so they belong to the generation, and a client checking which CoW deployment this
+  // keeper is wired to needs them.
+  { key: 'settlement', name: 'GPv2Settlement', dropAddress: false },
+  { key: 'composableCow', name: 'ComposableCoW', dropAddress: false },
+]
+
 /**
  * The HTTP surface, described once.
  *
@@ -79,6 +114,7 @@ export interface RouteDoc {
 export const ROUTES: readonly RouteDoc[] = [
   { method: 'GET', path: '/v1/health', summary: 'Liveness, payer balance, today\'s spend. 503 when the payer is below its floor.' },
   { method: 'GET', path: '/v1/policy', summary: 'The subsidy policy in force.' },
+  { method: 'GET', path: '/v1/about', summary: 'The chain, generation and contract addresses this keeper serves.' },
   { method: 'GET', path: '/v1/openapi.json', summary: 'This surface as an OpenAPI 3.1 document.' },
   { method: 'GET', path: '/v1/docs', summary: 'Swagger UI over that document.', produces: 'text/html' },
   { method: 'POST', path: '/v1/drops', summary: 'Register a drop for the keeper to watch and pay for.' },
@@ -258,6 +294,7 @@ export function createKeeperServer(options: ServerOptions): Server {
 
     if (request.method === 'GET' && path === '/v1/health') return health(response)
     if (request.method === 'GET' && path === '/v1/policy') return describePolicy(response)
+    if (request.method === 'GET' && path === '/v1/about') return about(response)
     if (request.method === 'GET' && path === '/v1/docs') return sendHtml(response, 200, docsPage())
     if (request.method === 'GET' && path === '/v1/openapi.json') {
       return send(response, 200, openApiDocument(deployment.chainId, deployment.generation))
@@ -294,6 +331,34 @@ export function createKeeperServer(options: ServerOptions): Server {
         retired: all.filter((d) => d.status === 'retired').length,
       },
       head: events.head(),
+    })
+  }
+
+
+  /**
+   * Which contracts this keeper is serving, so a client can check it is talking to the right one.
+   *
+   * The mismatch this exists to catch is silent otherwise: a keeper on the generation the client did
+   * not compile against derives a *different* address for the same recipe, and since a drop is funded
+   * before it exists, the money goes to an address nothing will ever activate. `/v1/health` already
+   * carries the chain and generation numbers; this carries the addresses those numbers stand for, so
+   * the check is against the thing that actually matters rather than against a label.
+   *
+   * The proxy creation code is published as a hash rather than as the several kilobytes of init code
+   * it is. A client comparing deployments only needs to know whether it matches, and this response is
+   * served to every page load.
+   */
+  function about(response: ServerResponse): void {
+    send(response, 200, {
+      chainId: deployment.chainId,
+      // Undefined for a chain the SDK does not list, which is a keeper an operator pointed somewhere
+      // unusual rather than an error to raise here.
+      chain: getDropChain(deployment.chainId)?.name,
+      generation: deployment.generation,
+      contracts: Object.fromEntries(
+        CONTRACTS.map(({ key, name, dropAddress }) => [key, { name, address: deployment[key], dropAddress }]),
+      ),
+      proxyCreationCodeHash: keccak256(deployment.proxyCreationCode),
     })
   }
 

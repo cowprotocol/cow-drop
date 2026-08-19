@@ -33,6 +33,7 @@ OpenAPI document.
 ```bash
 curl localhost:8787/v1/health         # payer, balance, budget left
 curl localhost:8787/v1/policy         # whether it is subsidising, before anyone commits
+curl localhost:8787/v1/about          # the contracts behind the generation it serves
 open  localhost:8787/v1/docs          # Swagger UI
 curl  localhost:8787/v1/openapi.json  # the spec behind it
 ```

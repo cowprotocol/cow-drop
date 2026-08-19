@@ -236,6 +236,14 @@ code {
   max-width: 70ch;
 }
 
+.hint-list {
+  padding-left: 1.1rem;
+}
+
+.hint-list li + li {
+  margin-top: 0.35rem;
+}
+
 .pill {
   display: inline-block;
   background: var(--panel-2);
@@ -341,17 +349,6 @@ details summary {
 
 .upload input {
   display: none;
-}
-
-/* Rescue panel: present but not inviting — it is the wrong answer to most questions. */
-details.rescue > summary {
-  color: var(--warn);
-  font-weight: 600;
-  margin: 0;
-}
-
-details.rescue[open] > summary {
-  margin-bottom: 0.85rem;
 }
 
 fieldset.tokens {
@@ -725,6 +722,16 @@ button.danger:hover:not(:disabled) {
 
 .collapsed-section[open] > summary {
   margin-bottom: 0.9rem;
+}
+
+/*
+ * Rescue: present but not inviting — it is the wrong answer to most questions, so its heading warns.
+ * The `summary` is coloured alongside the `h2` because the disclosure marker takes its colour from the
+ * summary, and a muted marker on a warn heading reads as two different controls.
+ */
+.collapsed-section.rescue > summary,
+.collapsed-section.rescue > summary h2 {
+  color: var(--warn);
 }
 
 /* --- custom step builder -------------------------------------------------- */
