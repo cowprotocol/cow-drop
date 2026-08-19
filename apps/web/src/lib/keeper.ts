@@ -1,6 +1,8 @@
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import type { Address } from 'viem'
 
+import { configuredKeeperUrl } from './runtimeConfig'
+
 /**
  * Talking to a keeper.
  *
@@ -9,16 +11,16 @@ import type { Address } from 'viem'
  * recompiles `setupData` itself and refuses anything that does not derive the address it was given, so
  * the client cannot register a recipe for an address it does not own the preimage of.
  *
- * Optional by design. With no `VITE_KEEPER_URL` the app behaves exactly as it did before — local
+ * Optional by design. With no keeper configured the app behaves exactly as it did before — local
  * persistence only — because a keeper is an operational choice and the page has to be useful without
  * one.
  */
 
-/** The keeper this page talks to, or null when none is configured. */
+/** The keeper this page talks to, or null when none is configured. See `./runtimeConfig.ts`. */
 export function keeperUrl(): string | null {
-  const raw = import.meta.env.VITE_KEEPER_URL
-  if (typeof raw !== 'string' || raw.trim() === '') return null
-  return raw.trim().replace(/\/+$/, '')
+  const raw = configuredKeeperUrl()
+  if (raw === undefined) return null
+  return raw.replace(/\/+$/, '')
 }
 
 /**

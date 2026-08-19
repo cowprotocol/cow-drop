@@ -15,6 +15,12 @@ pnpm build
 | `VITE_KEEPER_URL` | Points the page at a [keeper](../../packages/keeper/README.md). Without it the **Hand to keeper** button is hidden and the page keeps drops locally only. |
 | `VITE_RPC_URL` | Your own RPC for the default chain instead of the public one. |
 
+Both are build-time values, which is right for `pnpm dev` and wrong for a container image — Vite
+would bake them into the bundle, pinning the image to one environment. So the published image reads
+`KEEPER_URL` and `RPC_URL` at **container start** instead and writes them into `/config.js`, which
+takes precedence over the `VITE_*` pair. See [`src/lib/runtimeConfig.ts`](src/lib/runtimeConfig.ts)
+and [docs/RELEASING.md](../../docs/RELEASING.md).
+
 ## Against a local fork
 
 ```bash

@@ -20,6 +20,8 @@ import {
   type PublicClient,
 } from 'viem'
 
+import { configuredRpcUrl } from './runtimeConfig'
+
 /**
  * CoW-facing chain metadata comes from the official SDK rather than being retyped here — it already
  * knows the block explorer, the API path segment and the wrapped native token for every chain it
@@ -63,9 +65,9 @@ const RPC_OVERRIDES: Record<number, string> = {
   [DropChainId.SEPOLIA]: 'https://ethereum-sepolia-rpc.publicnode.com',
 }
 
-/** RPC endpoint. `VITE_RPC_URL` overrides, but only for the default chain — it names one endpoint. */
+/** RPC endpoint. The configured override applies only to the default chain — it names one endpoint. */
 export function rpcUrl(chainId: number): string {
-  const override = import.meta.env.VITE_RPC_URL
+  const override = configuredRpcUrl()
   if (override && chainId === DEFAULT_CHAIN_ID) return override
 
   const url = RPC_OVERRIDES[chainId] ?? chainInfo(chainId).rpcUrls.default.http[0]
