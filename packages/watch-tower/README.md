@@ -14,13 +14,13 @@ to it: any contract that emits the event is picked up, EthFlow included.
 pnpm --filter @cowprotocol/cow-drop-watch-tower build
 pnpm --filter @cowprotocol/cow-drop-watch-tower test
 
-cow-drop-watch-tower --rpc-url https://rpc.gnosischain.com --state ./gnosis.json
+cow-drop-watch-tower --rpc-url https://rpc.gnosischain.com
 ```
 
 Or from the repo root, without linking the binary:
 
 ```bash
-node packages/watch-tower/dist/cli.js --rpc-url $RPC_URL --state ./gnosis.json
+node packages/watch-tower/dist/cli.js --rpc-url $RPC_URL
 ```
 
 Nothing here is privileged: the orders are already signed on-chain, so posting one only makes it
@@ -33,7 +33,7 @@ visible, and a duplicate counts as success.
 --chain-id <id>       Defaults to $CHAIN_ID, else whatever the RPC says.
 --generation <n>      Contract generation to watch. Defaults to the latest.
 --from-block <n>      First block when there is no saved state. Default: the current head.
---state <path>        JSON file to persist the block cursor in. Default: memory only.
+--state <path>        JSON file for the block cursor. Default out/watch-tower/cursor-<chainId>.json.
 --confirmations <n>   Blocks to stay behind the head. Default 2.
 --max-block-range <n> Largest getLogs range. Default 10000.
 --poll <seconds>      Seconds between passes once caught up. Default 15.

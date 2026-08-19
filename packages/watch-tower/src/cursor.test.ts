@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { fileCursor, memoryCursor } from './cursor.js'
+import { defaultCursorPath, fileCursor, memoryCursor } from './cursor.js'
 
 async function tempPath(name = 'state.json'): Promise<string> {
   return join(await mkdtemp(join(tmpdir(), 'cow-drop-watch-tower-')), name)
@@ -54,5 +54,12 @@ describe('fileCursor', () => {
     await writeFile(path, 'not json')
 
     await expect(fileCursor(path, 100).get()).rejects.toThrow()
+  })
+})
+
+describe('defaultCursorPath', () => {
+  it('is scoped to the chain, so two of them in one directory do not collide', () => {
+    expect(defaultCursorPath(100)).toBe('out/watch-tower/cursor-100.json')
+    expect(defaultCursorPath(1)).toBe('out/watch-tower/cursor-1.json')
   })
 })

@@ -14,6 +14,16 @@ export interface Cursor {
   set(block: bigint): Promise<void>
 }
 
+/**
+ * Where a cursor lives when the caller names no file.
+ *
+ * Chain-scoped: `fileCursor` refuses a file written for another chain, but only once the second
+ * process is already up, and a path per chain means it never comes to that.
+ */
+export function defaultCursorPath(chainId: number): string {
+  return `out/watch-tower/cursor-${chainId}.json`
+}
+
 /** A cursor that lives only as long as the process. */
 export function memoryCursor(initial?: bigint): Cursor {
   let last = initial

@@ -25,8 +25,8 @@ Options:
   --generation <n>           Contract generation. Defaults to the SDK's latest.
   --private-key-file <path>  File holding the hot key. Defaults to $KEEPER_PRIVATE_KEY.
   --policy <path>            JSON subsidy policy. Defaults to subsidise-all with small budgets.
-  --state <path>             Registry and spend ledger. Default: memory only, lost on restart.
-  --cursor <path>            The watch tower's block cursor.
+  --state <path>             Registry and spend ledger. Default out/keeper/state-<chainId>.json.
+  --cursor <path>            Watch tower block cursor. Default out/keeper/cursor-<chainId>.json.
   --port <n>                 HTTP port. Default 8787.
   --allow-origin <origins>   CORS origins, comma separated. Default *.
   --poll <seconds>           Seconds between passes. Default 12.
@@ -95,6 +95,23 @@ export async function loadPrivateKey(args: Args): Promise<`0x${string}`> {
   return key as `0x${string}`
 }
 
+/**
+ * Where the registry, the spend ledger and the block cursor live when nothing says otherwise.
+ *
+ * On disk rather than in memory, because both files exist to survive a restart: the registry holds
+ * drops nobody else knows about, and the ledger holds the day's spend — a memory-only default
+ * resets the daily budget on every crash, which is the moment the budget matters most.
+ *
+ * Chain-scoped, because a process serves one chain and two of them sharing a working directory
+ * would otherwise fight over the same file.
+ */
+export function resolvePaths(args: Args, chainId: number): { statePath: string; cursorPath: string } {
+  return {
+    statePath: str(args, 'state') ?? `out/keeper/state-${chainId}.json`,
+    cursorPath: str(args, 'cursor') ?? `out/keeper/cursor-${chainId}.json`,
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
 
@@ -121,14 +138,16 @@ async function main(): Promise<void> {
   const chainId = num(args, 'chain-id') ?? Number(process.env['CHAIN_ID'] ?? 0)
   const resolvedChainId = chainId || (await chainIdFromRpc(rpcUrl))
 
+  const { statePath, cursorPath } = resolvePaths(args, resolvedChainId)
+
   const service = await startKeeperService({
     rpcUrl,
     chainId: resolvedChainId,
     generation: num(args, 'generation'),
     account,
     policy,
-    statePath: str(args, 'state'),
-    cursorPath: str(args, 'cursor'),
+    statePath,
+    cursorPath,
     port: num(args, 'port') ?? 8787,
     allowOrigin: str(args, 'allow-origin') ?? '*',
     pollIntervalMs: (num(args, 'poll') ?? 12) * 1000,
@@ -138,6 +157,7 @@ async function main(): Promise<void> {
   })
 
   logger.info(`paying from ${account.address}`)
+  logger.info(`state in ${statePath}, block cursor in ${cursorPath}`)
   if (policy.mode === 'all') {
     // Said out loud, because the default is the risky one: `owner` comes from the submitted recipe,
     // so per-owner caps do not bind and the daily budget is the only thing that does.

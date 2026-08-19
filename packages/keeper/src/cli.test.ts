@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { loadPrivateKey, parseArgs } from './cli.js'
+import { loadPrivateKey, parseArgs, resolvePaths } from './cli.js'
 
 const KEY = `0x${'11'.repeat(32)}`
 
@@ -46,5 +46,22 @@ describe('loadPrivateKey', () => {
     delete process.env['KEEPER_PRIVATE_KEY']
     await expect(loadPrivateKey({})).rejects.toThrow(/hot key is required/)
     if (saved) process.env['KEEPER_PRIVATE_KEY'] = saved
+  })
+})
+
+describe('resolvePaths', () => {
+  it('defaults to chain-scoped files, so two chains in one directory do not collide', () => {
+    expect(resolvePaths({}, 100)).toEqual({
+      statePath: 'out/keeper/state-100.json',
+      cursorPath: 'out/keeper/cursor-100.json',
+    })
+    expect(resolvePaths({}, 1).statePath).toBe('out/keeper/state-1.json')
+  })
+
+  it('takes the flags when they are given', () => {
+    expect(resolvePaths({ state: './s.json', cursor: './c.json' }, 100)).toEqual({
+      statePath: './s.json',
+      cursorPath: './c.json',
+    })
   })
 })

@@ -13,6 +13,9 @@ contracts/cache/
 # foundry's actual nesting depth (broadcast/<script>/<chainId>/dry-run/).
 contracts/broadcast/**/dry-run/
 
+# keeper and watch tower state: registry, spend ledger, block cursors
+/out/
+
 # env
 .env
 .env.local

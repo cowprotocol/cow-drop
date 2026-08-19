@@ -1,6 +1,6 @@
 export { COW_ORDER_TOPIC, DROP_TRIGGERED_TOPIC, viemChainReader } from './chain.js'
 export type { ChainReader, RawLog } from './chain.js'
-export { fileCursor, memoryCursor } from './cursor.js'
+export { defaultCursorPath, fileCursor, memoryCursor } from './cursor.js'
 export type { Cursor } from './cursor.js'
 export { postDiscoveredOrder } from './poster.js'
 export type { AppDataResolver, PostOptions, PostResult, PostStatus } from './poster.js'

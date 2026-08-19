@@ -10,17 +10,14 @@ both**.
 
 ## Build and run
 
-It needs a funded hot key, read from a file or `$KEEPER_PRIVATE_KEY` — never from argv, since an
-argument is visible in `ps`.
+It needs a funded hot key, from `$KEEPER_PRIVATE_KEY` or `--private-key-file` — never from argv,
+since an argument is visible in `ps`.
 
 ```bash
 pnpm --filter @cowprotocol/cow-drop-keeper build
 pnpm --filter @cowprotocol/cow-drop-keeper test
 
-echo 0x<hot-key> > ./keeper.key && chmod 600 ./keeper.key
-node packages/keeper/dist/cli.js \
-  --rpc-url $RPC_URL --private-key-file ./keeper.key \
-  --state ./keeper.json --cursor ./gnosis.json --port 8787
+KEEPER_PRIVATE_KEY=0x<hot-key> node packages/keeper/dist/cli.js --rpc-url $RPC_URL
 ```
 
 `--dry-run` decides and simulates everything without broadcasting; run it first. The default policy
@@ -40,8 +37,8 @@ curl localhost:8787/v1/policy    # whether it is subsidising, before anyone comm
 --generation <n>           Contract generation. Defaults to the SDK's latest.
 --private-key-file <path>  File holding the hot key. Defaults to $KEEPER_PRIVATE_KEY.
 --policy <path>            JSON subsidy policy. Defaults to subsidise-all with small budgets.
---state <path>             Registry and spend ledger. Default: memory only, lost on restart.
---cursor <path>            The watch tower's block cursor.
+--state <path>             Registry and spend ledger. Default out/keeper/state-<chainId>.json.
+--cursor <path>            Watch tower block cursor. Default out/keeper/cursor-<chainId>.json.
 --port <n>                 HTTP port. Default 8787.
 --allow-origin <origins>   CORS origins, comma separated. Default *.
 --poll <seconds>           Seconds between passes. Default 12.

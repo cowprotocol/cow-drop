@@ -4,7 +4,7 @@ import { OrderBookApi, type SupportedChainId } from '@cowprotocol/cow-sdk'
 import { createPublicClient, http } from 'viem'
 
 import { viemChainReader } from './chain.js'
-import { fileCursor, memoryCursor } from './cursor.js'
+import { defaultCursorPath, fileCursor } from './cursor.js'
 import { createWatchTower, type Logger } from './watchTower.js'
 
 const USAGE = `cow-drop-watch-tower — post the discrete CoW orders contracts place on-chain
@@ -21,7 +21,7 @@ Options:
   --chain-id <id>       Chain to watch. Defaults to $CHAIN_ID, else the RPC's own chain id.
   --generation <n>      Contract generation to watch. Defaults to ${LATEST_GENERATION}.
   --from-block <n>      First block when there is no saved state. Default: the current head.
-  --state <path>        JSON file to persist the block cursor in. Default: none (memory only).
+  --state <path>        JSON file to persist the block cursor in. Default out/watch-tower/cursor-<chainId>.json.
   --confirmations <n>   Blocks to stay behind the head. Default 2.
   --max-block-range <n> Largest getLogs range. Default 10000.
   --poll <seconds>      Seconds between passes once caught up. Default 15.
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
 
   const deployment = getDeployment(resolvedChainId, num(args, 'generation') ?? LATEST_GENERATION)
 
-  const statePath = str(args, 'state')
+  const statePath = str(args, 'state') ?? defaultCursorPath(resolvedChainId)
   const fromBlock = str(args, 'from-block')
 
   const quiet = args['quiet'] === true
@@ -101,6 +101,8 @@ async function main(): Promise<void> {
     error: (message) => console.error(message),
   }
 
+  logger.info(`block cursor in ${statePath}`)
+
   const watchTower = createWatchTower({
     reader: viemChainReader(client),
     orderBook: new OrderBookApi({
@@ -108,7 +110,7 @@ async function main(): Promise<void> {
       env: str(args, 'env') === 'staging' ? 'staging' : 'prod',
     }),
     deployment,
-    cursor: statePath ? fileCursor(statePath, resolvedChainId) : memoryCursor(),
+    cursor: fileCursor(statePath, resolvedChainId),
     fromBlock: fromBlock === undefined ? 'latest' : BigInt(fromBlock),
     confirmations: num(args, 'confirmations') ?? 2,
     maxBlockRange: BigInt(str(args, 'max-block-range') ?? 10_000),

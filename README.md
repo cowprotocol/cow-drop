@@ -69,7 +69,7 @@ Drop `VITE_KEEPER_URL` to hide the **Hand to keeper** button. `VITE_RPC_URL` ove
 Posts the discrete orders any contract places on-chain. Nothing privileged, no key.
 
 ```bash
-node packages/watch-tower/dist/cli.js --rpc-url $RPC_URL --state ./gnosis.json
+node packages/watch-tower/dist/cli.js --rpc-url $RPC_URL
 ```
 
 Add `--dry-run` to verify without posting, `--only-drops` to ignore other contracts' orders.
@@ -80,10 +80,7 @@ Activates registered drops and pays the gas, so it needs a funded hot key. It ru
 tower in-process — **don't run both.**
 
 ```bash
-echo 0x<hot-key> > ./keeper.key && chmod 600 ./keeper.key
-node packages/keeper/dist/cli.js \
-  --rpc-url $RPC_URL --private-key-file ./keeper.key \
-  --state ./keeper.json --cursor ./gnosis.json --port 8787
+KEEPER_PRIVATE_KEY=0x<hot-key> node packages/keeper/dist/cli.js --rpc-url $RPC_URL
 ```
 
 Add `--dry-run` to decide and simulate without broadcasting. `curl localhost:8787/v1/health` for the
