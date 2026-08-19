@@ -41,9 +41,13 @@ export function SavedDrops({
 }) {
   const [drops, setDrops] = useState<SavedDrop[]>(() => listDrops())
   const [keeperStates, setKeeperStates] = useState<Record<string, KeeperState>>({})
+  /** Key of the drop whose Forget was clicked, waiting to be confirmed. */
+  const [pendingForget, setPendingForget] = useState<string | null>(null)
 
   useEffect(() => {
     setDrops(listDrops())
+    // A drop written or reloaded under us is no longer the row the user aimed at.
+    setPendingForget(null)
   }, [revision])
 
   // Confirm the local flags against the keeper rather than displaying them as fact. Only drops this
@@ -57,7 +61,7 @@ export function SavedDrops({
       drops
         .filter((drop) => drop.keeper)
         .map(async (drop) => {
-          const key = `${drop.chainId}:${drop.address.toLowerCase()}`
+          const key = dropKey(drop)
           try {
             const remote = await readKeeperDrop(drop.address)
             if (!remote) return [key, 'missing'] as const
@@ -79,6 +83,7 @@ export function SavedDrops({
 
   const remove = (drop: SavedDrop) => {
     forgetDrop(drop.address, drop.chainId)
+    setPendingForget(null)
     setDrops(listDrops())
   }
 
@@ -93,7 +98,7 @@ export function SavedDrops({
 
       <ul className="saved-list">
         {drops.map((drop) => (
-          <li key={`${drop.chainId}:${drop.address}`}>
+          <li key={dropKey(drop)}>
             <div className="saved-main">
               <strong>{drop.label}</strong>
               <code>{drop.address}</code>
@@ -103,12 +108,8 @@ export function SavedDrops({
                 {drop.address.toLowerCase() === currentAddress?.toLowerCase() ? ' · showing now' : ''}
               </span>
               {drop.keeper ? (
-                <span
-                  className={`keeper-tag ${
-                    keeperStates[`${drop.chainId}:${drop.address.toLowerCase()}`] === 'missing' ? 'warn' : ''
-                  }`}
-                >
-                  {keeperLabel(keeperStates[`${drop.chainId}:${drop.address.toLowerCase()}`] ?? 'unreachable')}
+                <span className={`keeper-tag ${keeperStates[dropKey(drop)] === 'missing' ? 'warn' : ''}`}>
+                  {keeperLabel(keeperStates[dropKey(drop)] ?? 'unreachable')}
                 </span>
               ) : (
                 <span className="keeper-tag muted">local only</span>
@@ -116,13 +117,51 @@ export function SavedDrops({
             </div>
             <div className="saved-actions">
               <button onClick={() => onLoad(drop.recipe)}>Load</button>
-              <button onClick={() => remove(drop)}>Forget</button>
+              <button
+                onClick={() => setPendingForget(dropKey(drop))}
+                disabled={pendingForget === dropKey(drop)}
+                aria-expanded={pendingForget === dropKey(drop)}
+              >
+                Forget
+              </button>
             </div>
+
+            {pendingForget === dropKey(drop) ? (
+              <div className="saved-confirm warn-box" role="alertdialog" aria-label={`Forget ${drop.label}?`}>
+                <p>
+                  <strong>This can cost you the drop.</strong> Forgetting only deletes the recipe from this
+                  browser — nothing on-chain changes and any funds stay where they are. But the recipe is what
+                  activates the drop and the only record of its address here, so unless you kept the
+                  downloaded <code>.drop.json</code>, whatever the drop holds now or receives later is out of
+                  reach for good.
+                </p>
+                {drop.keeper ? (
+                  <p>
+                    The keeper also keeps this drop, and telling it to stop needs the recipe you are about to
+                    delete.
+                  </p>
+                ) : null}
+                <div className="saved-actions">
+                  {/* Cancel first and focused: the safe choice is where a second click already is. */}
+                  <button autoFocus onClick={() => setPendingForget(null)}>
+                    Cancel
+                  </button>
+                  <button className="danger" onClick={() => remove(drop)}>
+                    Forget anyway
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </li>
         ))}
       </ul>
     </details>
   )
+}
+
+/** Chain plus lowercased address: the same drop on two chains is two records. */
+function dropKey(drop: SavedDrop): string {
+  return `${drop.chainId}:${drop.address.toLowerCase()}`
 }
 
 /**

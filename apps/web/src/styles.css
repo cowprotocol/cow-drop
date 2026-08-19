@@ -633,6 +633,31 @@ details.saved > summary {
   font-size: 0.8rem;
 }
 
+/*
+ * Forget asks first, and the question is inline rather than a native `confirm()`: the reason to
+ * hesitate is specific to the row — whether a keeper holds it, which address is about to go — and a
+ * browser dialog can show none of that. Full width so the warning is read, not skimmed past.
+ */
+.saved-confirm {
+  flex-basis: 100%;
+  border-radius: 6px;
+}
+
+.saved-confirm p:last-of-type {
+  margin-bottom: 0.6rem;
+}
+
+/* Reserved for the irreversible half of a confirmation, so it never reads as just another button. */
+button.danger {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+button.danger:hover:not(:disabled) {
+  border-color: var(--error);
+  background: rgba(239, 123, 123, 0.12);
+}
+
 /* The one warning in this UI that is about losing money outright. */
 .keep-recipe {
   border-left: 2px solid var(--warn);
