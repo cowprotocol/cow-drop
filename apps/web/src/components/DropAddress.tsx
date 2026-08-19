@@ -70,16 +70,16 @@ export function DropAddress({
         </div>
 
         <p className="hint keep-recipe">
-          <strong>Keep the recipe.</strong> This address is a hash of it, so the recipe is the only way
-          to activate the drop — or to recover from it, since the owner&apos;s rescue needs the same bytes.
-          Lose it after funding and the money cannot be retrieved by anyone. It is saved in this browser
-          and in the page URL; download the file for anything you care about.
+          <strong>Keep the recipe.</strong> This address is a hash of it, so it is the only way to
+          activate <em>or</em> recover the drop. Lose it after funding and nobody can retrieve the
+          money — not even you. It is kept in this browser and the page URL; download the file for
+          anything you care about.
         </p>
 
         <p className="hint">
-          Nothing exists at this address yet. Send the sell token here — by bridge, exchange withdrawal
-          or plain transfer — then activate. Funds sent before it is deployed are safe: the recipe spends
-          them on activation.
+          Nothing exists here yet. Send the sell token — by bridge, exchange withdrawal or plain
+          transfer — then activate. Funds sent before deployment are safe; the recipe spends them on
+          activation.
         </p>
       </div>
     </div>

@@ -4,6 +4,7 @@ pragma solidity ^0.8.25;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 
+import {CowOrderPoster} from "src/CowOrderPoster.sol";
 import {DropExecutor} from "src/DropExecutor.sol";
 import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 import {GuardSteps} from "src/steps/GuardSteps.sol";
@@ -56,6 +57,7 @@ contract DeployScript is Script {
         address presignSteps;
         address twapSteps;
         address stopLossSteps;
+        address cowOrderPoster;
         address composableCow;
         address executor;
     }
@@ -160,6 +162,16 @@ contract DeployScript is Script {
             new StopLossSteps{salt: SALT}(DropConfig.VAULT_RELAYER, IComposableCowLike(composableCow), stopLossHandler);
         }
 
+        // Not part of any drop address: nothing in a recipe reaches it, because the steps inline the
+        // `CowOrder` library instead. It ships with the generation because it is the address a
+        // third-party contract integrates against, and that address has to be stable and recorded.
+        bytes memory posterInit = abi.encodePacked(type(CowOrderPoster).creationCode, abi.encode(DropConfig.SETTLEMENT));
+        address cowOrderPoster = _create2(posterInit);
+        if (cowOrderPoster.code.length == 0) {
+            vm.broadcast();
+            new CowOrderPoster{salt: SALT}(ISettlementLike(DropConfig.SETTLEMENT));
+        }
+
         return Deployment({
             shedImplementation: implementation,
             factory: factory,
@@ -168,6 +180,7 @@ contract DeployScript is Script {
             presignSteps: presignSteps,
             twapSteps: twapSteps,
             stopLossSteps: stopLossSteps,
+            cowOrderPoster: cowOrderPoster,
             composableCow: composableCow,
             executor: executor
         });
@@ -192,6 +205,7 @@ contract DeployScript is Script {
         console.log("presignSteps       ", d.presignSteps);
         console.log("twapSteps          ", d.twapSteps);
         console.log("stopLossSteps      ", d.stopLossSteps);
+        console.log("cowOrderPoster     ", d.cowOrderPoster);
         console.log("executor           ", d.executor);
     }
 
@@ -219,6 +233,7 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "presignSteps", d.presignSteps);
         vm.serializeAddress(obj, "twapSteps", d.twapSteps);
         vm.serializeAddress(obj, "stopLossSteps", d.stopLossSteps);
+        vm.serializeAddress(obj, "cowOrderPoster", d.cowOrderPoster);
         string memory json = vm.serializeAddress(obj, "executor", d.executor);
 
         // `vm.writeJson` does not create parent directories, so the first run of a new generation would

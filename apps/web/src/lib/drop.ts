@@ -2,7 +2,7 @@ import {
   buildActivateTx,
   compileRecipe,
   getDeployment,
-  parseDropOrderPlaced,
+  parseCowOrderPlaced,
   toOrderBookPayload,
   type CompiledRecipe,
   type DropDeployment,
@@ -208,9 +208,9 @@ export async function postPlacedOrders(
 
     let order
     try {
-      order = parseDropOrderPlaced(log)
+      order = parseCowOrderPlaced(log)
     } catch {
-      continue // not a DropOrderPlaced log
+      continue // not a CowOrderPlaced log
     }
 
     try {

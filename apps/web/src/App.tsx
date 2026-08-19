@@ -285,6 +285,13 @@ export function App() {
    * first bad recipe would come back if it were re-opened.
    */
   const ownerUnusable = UNUSABLE_OWNERS.has(recipe.owner.toLowerCase())
+  /**
+   * A stop-loss cannot be priced without both feeds, and the form has nothing sensible to fall back on
+   * — so this is the same situation as an empty owner: withhold the address and say what is missing,
+   * rather than surfacing whatever the SDK threw.
+   */
+  const feedsMissing =
+    form.recipeKind === 'stoploss' && !(isAddress(form.sellOracle) && isAddress(form.buyOracle))
 
   /**
    * What is wrong with the owner *field*, as opposed to with the recipe.
@@ -592,10 +599,10 @@ export function App() {
         </div>
         <p className="hint">
           {form.recipeKind === 'swap'
-            ? 'Sells whatever lands at the address once, at your limit price. Uses the pre-sign path: no watch tower needed, but the order is posted to the API after activation.'
+            ? 'Sells whatever lands here once, at your limit price. No watch tower needed, but you post the order to the API after activation.'
             : form.recipeKind === 'twap'
-              ? 'Splits whatever lands at the address into parts and sells them over time. Uses ComposableCoW: after one activation the watch tower posts each part unattended.'
-              : 'Sells whatever lands at the address once a price feed pair crosses your strike. Uses ComposableCoW, so the watch tower polls the condition and posts the order itself — nobody has to be watching.'}
+              ? 'Splits whatever lands here into parts and sells them over time. Self-driving: after one activation the watch tower posts each part.'
+              : 'Sells whatever lands here once a price feed pair crosses your strike. Self-driving: the watch tower polls the condition, so nobody has to be watching.'}
         </p>
       </section>
 
@@ -736,22 +743,19 @@ export function App() {
               )}
             </div>
             <p className="hint">
-              Both feeds must quote the <em>same currency</em> — nothing on-chain can check that, and two
-              feeds quoting different currencies produce a number that looks fine and means nothing.
+              Both feeds must quote the <em>same currency</em> — nothing on-chain checks it.{' '}
+              {form.recipeKind === 'swap' ? (
+                <>
+                  Your limit price becomes a <strong>floor</strong> the feed may only tighten, so whoever
+                  activates cannot pick your price.
+                </>
+              ) : (
+                <>
+                  The strike fires when one sell token is worth <em>at most</em> that many buy tokens, at
+                  18 decimals; the limit price says how bad a fill you refuse.
+                </>
+              )}
             </p>
-            {form.recipeKind === 'swap' ? (
-              <p className="hint">
-                Your limit price above becomes a <strong>floor</strong>. The feed may only ever tighten
-                it, never loosen it — which matters because anyone may activate a drop, so without the
-                floor whoever activates would be choosing your price by choosing the moment.
-              </p>
-            ) : (
-              <p className="hint">
-                The strike is a floor on the pair: the order fires when one sell token is worth{' '}
-                <em>at most</em> that many buy tokens, scaled to 18 decimals. The limit price above is a
-                separate thing — the strike says when to sell, the limit says how bad a fill you refuse.
-              </p>
-            )}
           </fieldset>
         )}
 
@@ -784,22 +788,16 @@ export function App() {
             </label>
           </div>
           <p className="hint">
-            Activation is permissionless, so &ldquo;nobody will trigger this early&rdquo; cannot be a
-            promise made by whoever activates — it has to be committed into the address, which is what a
-            guard does. A guard reverts, so a premature activation costs the caller gas and changes
-            nothing.
+            Anyone can activate, so &ldquo;not yet&rdquo; must be committed into the address, not promised.
+            Guards <em>refuse</em> rather than trigger — nothing watches for one to turn true — and they
+            are part of the address, so adding one moves it.
           </p>
           {form.recipeKind !== 'swap' && !form.minAmount && (
             <p className="hint warn-note">
-              This recipe is one-shot. Without a minimum, anyone may activate it the moment the first wei
-              lands and the whole order gets sized from a part-delivered balance — which is exactly what
-              a bridge paying out in tranches does. Strongly recommended here.
+              This recipe is one-shot. Without a minimum, anyone can activate on the first wei and the
+              order gets sized from a part-delivered balance — what a bridge paying in tranches does.
             </p>
           )}
-          <p className="hint">
-            Guards are part of the address, so adding one moves it. They are also{' '}
-            <em>refusals, not triggers</em>: nothing is watching for the moment a guard turns true.
-          </p>
         </fieldset>
         <div className="quote">
           <label>
@@ -824,21 +822,28 @@ export function App() {
             )}
           </div>
           <p className="hint">
-            A drop cannot know its amount in advance, so only the quote&apos;s <em>price</em> is used —
-            but the amount still matters, because quoting too little lets the fee dominate and makes the
-            market look worse than it is. The −% buttons set the limit price below market.
+            Only the <em>price</em> is used — a drop cannot know its amount in advance. The amount still
+            matters: quote too little and the fee dominates, making the market look worse than it is.
           </p>
         </div>
 
         <p className="hint">
-          Bought tokens go to the <strong>receiver</strong>, defaulting to the owner. Set it to the
-          zero address to leave them in the drop instead — it can&apos;t default to the drop&apos;s own
-          address, because that address is derived from these parameters and naming it here would be
-          circular.
+          Bought tokens go to the <strong>receiver</strong>, defaulting to the owner; the zero address
+          leaves them in the drop. It cannot default to the drop itself — that address is derived from
+          these fields.
         </p>
       </section>
 
-      {compiled.ok ? (
+      {feedsMissing ? (
+        <section>
+          <h2>3 &middot; Add the price feeds</h2>
+          <p className="warn">A stop-loss needs both feeds before it has an address.</p>
+          <p className="hint">
+            The strike compares one against the other, so neither has a sensible default. Fill in the two
+            aggregators above — they must quote the same currency — and the address appears.
+          </p>
+        </section>
+      ) : compiled.ok ? (
         <>
           {probeError !== null ? (
             <section>
@@ -869,18 +874,14 @@ export function App() {
                 address is withheld here rather than shown.
               </p>
               <p className="hint">
-                Withheld because an address is only worth having if something can act on it. Funding
-                one on this chain would strand the money: activation needs{' '}
-                <code>DropExecutor</code> and the step contracts, and the owner&apos;s rescue
-                hatch needs <code>COWShedExecutorFactory</code> — so with these missing there is no
-                path out, not even for you. Nothing is lost forever, since the addresses are
-                deterministic and deploying the stack later would unstick it, but that is a wait with
-                no deadline attached to it.
+                An address is only worth having if something can act on it: activation needs{' '}
+                <code>DropExecutor</code> and the step contracts, and rescue needs{' '}
+                <code>COWShedExecutorFactory</code>. With those missing there is no path out, not even
+                for you.
               </p>
               <p className="hint">
-                The recipe itself is fine. It resolves to the same address on every chain, so this one
-                is already correct here and will not move once the contracts land — switch the network
-                above to a chain without this label to see it and fund it.
+                The recipe is fine, and resolves to the same address on every chain — so it will not
+                move once the contracts land. Switch to a chain without this label to fund it.
               </p>
             </section>
           ) : ownerUnusable ? (
@@ -890,17 +891,14 @@ export function App() {
                 The owner field is empty, so the drop address is withheld until you fill it in.
               </p>
               <p className="hint">
-                The owner is the only party who can ever recover a funded drop: both rescue paths are{' '}
-                <code>msg.sender == owner</code> checks. Left empty it would fall back to{' '}
-                <code>{PLACEHOLDER_OWNER}</code>, which is the ecrecover precompile — an address nobody
-                holds the key to. It would also become the order&apos;s receiver by default, so the
-                bought tokens would go there too. A drop like that can still be funded and still
-                activate, and the money would be unreachable from the first transfer onward.
+                Only the owner can recover a funded drop — both rescue paths check{' '}
+                <code>msg.sender == owner</code>. Left empty it falls back to the ecrecover precompile,{' '}
+                <code>{PLACEHOLDER_OWNER}</code>, which nobody holds the key to. Such a drop still funds
+                and activates; the money is just unreachable.
               </p>
               <p className="hint">
-                Paste an address above, or connect a wallet and it fills itself in. Note the owner is
-                part of the address derivation, so setting it produces a <em>different</em> drop
-                address — it cannot be added to one you have already funded.
+                Paste an address, or connect a wallet. The owner is part of the derivation, so setting
+                it produces a <em>different</em> address — it cannot be added to one already funded.
               </p>
             </section>
           ) : (
@@ -972,9 +970,9 @@ export function App() {
 
                 {!account && (
                   <p className="hint">
-                    <strong>Activate is disabled because no wallet is connected.</strong> Connect one
-                    above — it only pays the gas. Activation is permissionless, so the transaction
-                    authorises nothing and any account could send it.
+                    <strong>Activate needs a connected wallet</strong> — only to pay the gas. Activation
+                    is permissionless, so the transaction authorises nothing and any account could send
+                    it.
                   </p>
                 )}
 
@@ -998,8 +996,7 @@ export function App() {
                 <h2>7 &middot; Add a custom step</h2>
                 <p className="hint">
                   For calling something the recipe types do not cover. Every argument is a literal
-                  committed into the address, so this cannot express anything that depends on the amount
-                  that arrives — that is what the built-in steps are for.
+                  committed into the address, so it cannot depend on the amount that arrives.
                 </p>
                 <StepBuilder
                   onAddStep={(step) => {

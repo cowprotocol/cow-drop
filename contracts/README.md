@@ -121,8 +121,8 @@ only move if their own code changes.
   step, because "the amount that arrived" is not a literal.
 - `sweep` — rescue: send the whole balance out. `token = address(0)` for native. An empty balance is a
   no-op, not a revert, so a rescue naming five tokens moves whatever it finds.
-- `presignSellAll` — sell the whole balance as one pre-signed CoW order. Emits `DropOrderPlaced` so an
-  off-chain poster can submit it.
+- `presignSellAll` — sell the whole balance as one pre-signed CoW order. Emits `CowOrderPlaced` so an
+  off-chain poster can submit it — see `lib/CowOrder.sol`.
 - `presignSellAllAtOracle` — the same, but the limit is `max(oracle-derived, committed floor)`. The
   floor is not optional and is the whole point: activation is permissionless, so an activator picks the
   moment and therefore the oracle reading. Letting the oracle only *improve* on a committed number means
@@ -150,7 +150,45 @@ from — see its notes on the two requirements a handler has to meet (it must im
 side, not just `verify`, and it must ignore `sender`).
 
 Events emitted here come *from the drop*, since that's `address(this)` under delegatecall — which is
-what lets a poster filter `DropOrderPlaced` by drop address.
+what lets a poster filter `CowOrderPlaced` by drop address.
+
+### `lib/CowOrder.sol` and `CowOrderPoster.sol` — the discrete-order event
+
+A *discrete* order has every field resolved, unlike a *conditional* one, which is a rule ComposableCoW
+turns into orders later. Conditional orders are announced by `ConditionalOrderCreated` and indexed for
+you; discrete ones had nothing, because `setPreSignature` takes a UID and says nothing about what was
+signed. So the order existed and no solver could see it.
+
+```solidity
+event CowOrderPlaced(bytes orderUid, SigningScheme signingScheme, bytes signature, LibCowOrder.Data order);
+```
+
+Declared **once**, for the same reason `NothingToSell` is: every contract placing a discrete order must
+produce the same `topic0`, or an indexer would need the full set of emitters up front — and the
+interesting ones are counterfactual drop addresses nobody knows yet. So the event is deliberately not
+cow-drop's own, and `packages/watch-tower` filters on that one topic with no address filter.
+
+The owner travels inside `orderUid`, so **the emitter does not have to be the owner**, and
+`settlement.preSignature(uid) != 0` is what an indexer actually verifies. `signature` is forwarded to
+the order book verbatim, so a poster never learns how the order was signed.
+
+`CowOrder` is a library: every function is `internal`, so it is inlined and never deployed.
+`CowOrder.presign(settlement, order)` is the whole tail of the pre-sign path — hash, pack the UID,
+`setPreSignature`, emit.
+
+`CowOrderPoster` is the deployed version, for contracts that would rather call than copy. Two entry
+points, because `setPreSignature` keys off `msg.sender`:
+
+| you can | use | who signs | who emits |
+|---|---|---|---|
+| delegatecall | `presignAndAnnounce(order)` | you | you |
+| only plain calls | `setPreSignature` yourself, then `announce(order)` | you | the poster |
+
+`announce` reverts unless the settlement contract already holds the signature, so a `CowOrderPlaced`
+from that address is signed by construction. Each entry point rejects the wrong call type rather than
+silently doing the wrong thing. The poster is **not** part of any drop address — no recipe reaches it,
+since the steps inline the library — but it ships with the generation because integrators build
+against its address.
 
 ### `lib/ComposableBase.sol` — the shared half of a ComposableCoW step
 
@@ -228,7 +266,8 @@ addresses cow-shed#79 records as live on Gnosis, and a CREATE2 address is derive
 | `steps/StepsBase.sol` | The shared harness: a real factory, a real `DropExecutor`, all four step contracts and the mocks. Every step test runs its step delegatecalled from inside a drop by an activation nobody signed — calling a step contract directly would read *its* balance, which is always zero. |
 | `steps/GuardSteps.t.sol` | The guards, including a one-shot recipe surviving a premature activation, and a guard placed *last* still binding because the activation is atomic. |
 | `steps/TokenSteps.t.sol` | `wrapNative`, and a recipe spanning two step contracts. |
-| `steps/PresignSteps.t.sol` | Pre-signing an arbitrary arrived amount, and that `DropOrderPlaced` is emitted by the drop. |
+| `steps/PresignSteps.t.sol` | Pre-signing an arbitrary arrived amount; that `CowOrderPlaced` is emitted by the drop; and that the event alone carries everything a poster needs, decoded the way `packages/watch-tower` decodes it. |
+| `CowOrderPoster.t.sol` | Both integration shapes against the deployed helper — a contract that delegatecalls and one that can only make plain calls — plus the refusals: announcing an unsigned order, and either entry point reached the wrong way. |
 | `steps/TwapSteps.t.sol` | The TWAP step, plus a hermetic assertion that `TwapData` still encodes as the ten words the deployed handler decodes. |
 | `steps/StopLossSteps.t.sol` | The stop-loss step, the deadline running from activation rather than authoring, and a hermetic assertion on the thirteen-word `StopLossData` layout. |
 | `steps/ComposableBase.t.sol` | The half of the base `TwapSteps` does not reach: `divisor == 1`, and that a zero value factory routes to plain `create`. Uses a throwaway second handler defined in the test, so the branch a future `StopLoss` step will take does not ship unexercised. |

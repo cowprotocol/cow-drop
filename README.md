@@ -53,7 +53,7 @@ That yields some properties worth stating plainly:
 | Step | `PresignSteps.presignSellAll` | `TwapSteps.twapFromBalance` |
 | Needs ERC-1271 | no | yes, forwarded by `DropExecutor` |
 | Needs a watch tower | no | yes, and it is automatic |
-| After activation | an off-chain poster submits the order | self-driving; each part is posted for you |
+| After activation | an off-chain poster submits the order — [`packages/watch-tower`](packages/watch-tower/README.md) | self-driving; each part is posted for you |
 | Good for | swap whatever arrived, once | TWAP and anything recurring |
 
 Both share one implementation, `COWShedWithExecutorSigner`, whose ERC-1271 delegates to the shed's
@@ -61,6 +61,28 @@ trusted executor — which for a drop is `DropExecutor`. So the ComposableCoW fo
 path C work lives in `DropExecutor.isValidSignature`, and pre-signing needs nothing from the
 implementation at all. That is what lets us reuse the cow-shed contracts already deployed rather than
 shipping our own variant.
+
+## `CowOrderPlaced`, for any contract
+
+A contract that pre-signs a CoW order has a problem that is not cow-drop's: the signature is on-chain
+but nothing told the order book the order exists, so no solver sees it. `setPreSignature` takes a UID
+and says nothing about what was signed.
+
+So the announcement is a shared event rather than ours, declared once in
+[`contracts/src/lib/CowOrder.sol`](contracts/src/lib/CowOrder.sol):
+
+```solidity
+event CowOrderPlaced(bytes orderUid, SigningScheme signingScheme, bytes signature, LibCowOrder.Data order);
+```
+
+Emit it and [`packages/watch-tower`](packages/watch-tower/README.md) posts the order. It filters on
+that one topic0 with no address filter — the only thing that works when emitters are counterfactual
+addresses — and verifies `settlement.preSignature(uid) != 0` before posting, which is what makes the
+event safe to leave open to anyone.
+
+Copy the declaration, or call `CowOrderPoster`: `presignAndAnnounce` if you can delegatecall, or
+`setPreSignature` yourself and then `announce`, which refuses to emit an order that is not really
+signed.
 
 ## Layout
 
@@ -70,6 +92,7 @@ Each package has its own short README — start with whichever part you're touch
 |---|---|---|
 | [`contracts/`](contracts/README.md) | The three contracts, why `DropExecutor` re-derives the address on every entry point, and why the build settings are load-bearing | foundry |
 | [`packages/sdk/`](packages/sdk/README.md) | Compile a recipe, get an address, build the activation tx | TypeScript, viem |
+| [`packages/watch-tower/`](packages/watch-tower/README.md) | Index `CowOrderPlaced` and post the orders to the order book, unattended | TypeScript, viem, cow-sdk |
 | [`apps/web/`](apps/web/README.md) | The demo page: a form that turns into an address | Vite, React, cow-sdk |
 | `recipes/` | Example `.drop.json` files | |
 
@@ -80,12 +103,18 @@ contracts/        lib/cow-shed pinned to cow-shed#78 (feat/owner-deploy-without-
   src/lib/                internal libraries: inlined, never deployed, so they cost no address
     Orders.sol            order UID packing, limit-price math
     Allowance.sol         allowance handling
+    CowOrder.sol          CowOrderPlaced: the one event any discrete CoW order is announced with
+  src/CowOrderPoster.sol  the deployed helper, for third-party contracts placing an order
     Errors.sol            the errors more than one step contract raises
 packages/sdk/src/
   recipe.ts               compileRecipe: recipe file -> address + committed bytes
   encoding.ts             the CREATE2 derivation, off-chain
   steps.ts                the step registry (extension point)
   templates.ts            swapOnArrival, twapOnArrival
+packages/watch-tower/src/
+  scanner.ts              find CowOrderPlaced anywhere on the chain, and verify it
+  poster.ts               forward one order to the order book
+  watchTower.ts           the loop, and where the block cursor advances
 apps/web/src/App.tsx      the form, and the recipe it builds
 ```
 
@@ -96,9 +125,17 @@ apps/web/src/App.tsx      the form, and the recipe it builds
 git submodule update --init --recursive
 
 pnpm install
-cd contracts && forge test              # 66 hermetic tests
+cd contracts && forge test              # 67 hermetic tests
 cd ../packages/sdk && pnpm generate && pnpm build && pnpm test
+cd ../watch-tower && pnpm build && pnpm test
 cd ../../apps/web && pnpm dev           # http://localhost:5173
+```
+
+Post the discrete orders anyone places on-chain, unattended:
+
+```bash
+pnpm --filter @cowprotocol/cow-drop-watch-tower build
+node packages/watch-tower/dist/cli.js --rpc-url $RPC_URL --state ./gnosis.json
 ```
 
 Fork tests against the real Gnosis deployments (skipped without the env var):
@@ -187,7 +224,7 @@ The functions you'll actually reach for:
 | `describeRecipe(setupData, deployment)` | Committed bytes → named steps, decoded arguments, and warnings about anything that cannot be named. |
 | `deriveDropAddress(…)` | The CREATE2 derivation on its own, if you already have `setupData`. |
 | `buildActivateTx(…)` | The activation transaction. Idempotent; safe to send twice. |
-| `parseDropOrderPlaced` / `toOrderBookPayload` | Turn an activation receipt into an order-book submission (pre-sign path only). |
+| `parseCowOrderPlaced` / `toOrderBookPayload` | Turn an activation receipt into an order-book submission. Every discrete order emits the same `CowOrderPlaced`, so this decodes all of them. |
 
 Full reference in [`packages/sdk/README.md`](packages/sdk/README.md).
 
@@ -222,13 +259,14 @@ Generation 1:
 | `COWShedExecutorFactory` | `0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) |
 | `GuardSteps` | `0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7` | **not yet broadcast** |
 | `TokenSteps` | `0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c` | **not yet broadcast** |
-| `PresignSteps` | `0xE9659a153DeE9B90FDA9653F78E2879dB695e74B` | **not yet broadcast** |
+| `PresignSteps` | `0x14bD678715E374e379EA3F8DE21b35826d90eB9e` | **not yet broadcast** |
 | `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | **not yet broadcast** |
 | `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | **not yet broadcast** |
+| `CowOrderPoster` | `0x5a2117173284E78CBB160F1cEE3CFC998CbD286B` | **not yet broadcast** |
 | `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | **not yet broadcast** |
 
 Both cow-shed contracts are the canonical ones already live on Gnosis, reused rather than
-redeployed — so **the only things this project deploys are its own six contracts**, and a drop address
+redeployed — so **the only things this project deploys are its own seven contracts**, and a drop address
 is derived entirely from official cow-shed code. Because a CREATE2 address is derived from init code,
 landing on #79's addresses is also proof this repo reproduces the deployed bytecode, which is why
 `contracts/foundry.toml` must stay byte-identical to cow-shed's.
@@ -346,10 +384,10 @@ activates it, and the real `GPv2Settlement` records the pre-signature for an ord
 Not done yet:
 
 - Broadcast to Gnosis (needs a funded deployer).
-- `packages/keeper` — a balance watcher that activates drops and posts orders unattended. The UI
-  covers this manually for now; [`bridge-and-swap`](https://github.com/cowprotocol/bridge-and-swap)'s
-  `backend/` is a working reference, though its `getLogs` has no address filter and its factory
-  verification is commented out, so both need fixing before reuse.
+- **Activation** is still manual. [`packages/watch-tower`](packages/watch-tower/README.md) now posts
+  the orders, but somebody still has to notice that funds arrived and send the activation
+  transaction. A balance watcher that does that is the remaining half; a solver pre-interaction is
+  the better answer for a real product.
 
 ## Known constraints
 

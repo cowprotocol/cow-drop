@@ -48,7 +48,7 @@ export function TerminalPanel({ compiled }: { compiled: CompiledRecipe }) {
 
       <p className="hint">
         Anyone can activate a drop, so none of this needs the owner — only gas. Useful for a keeper, or
-        for checking a recipe before you send anything to the address.
+        for checking a recipe before sending anything.
       </p>
 
       <CopyBlock

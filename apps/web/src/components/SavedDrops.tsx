@@ -32,8 +32,8 @@ export function SavedDrops({
       <summary>Saved drops ({drops.length})</summary>
 
       <p className="hint">
-        Kept in this browser only. A recipe is the only way to activate or recover its drop, so keep the
-        downloaded <code>.drop.json</code> somewhere durable too — clearing site data loses these.
+        Kept in this browser only, and a recipe is the only way to activate or recover its drop — so keep
+        the downloaded <code>.drop.json</code> somewhere durable. Clearing site data loses these.
       </p>
 
       <ul className="saved-list">

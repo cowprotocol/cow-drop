@@ -3,9 +3,9 @@ pragma solidity ^0.8.25;
 
 import {Vm} from "forge-std/Test.sol";
 
+import {CowOrder} from "src/lib/CowOrder.sol";
 import {NothingToSell} from "src/lib/Errors.sol";
 import {Orders} from "src/lib/Orders.sol";
-import {PresignSteps} from "src/steps/PresignSteps.sol";
 
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
@@ -58,13 +58,62 @@ contract DropPresignTest is StepsBase {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bool found;
         for (uint256 i; i < logs.length; i++) {
-            if (logs[i].topics[0] == PresignSteps.DropOrderPlaced.selector) {
+            if (logs[i].topics[0] == CowOrder.CowOrderPlaced.selector) {
                 // The poster keys off this: the log's emitter must be the drop, not the step contract.
-                assertEq(logs[i].emitter, drop, "DropOrderPlaced not emitted by the drop");
+                assertEq(logs[i].emitter, drop, "CowOrderPlaced not emitted by the drop");
                 found = true;
             }
         }
-        assertTrue(found, "DropOrderPlaced not emitted");
+        assertTrue(found, "CowOrderPlaced not emitted");
+    }
+
+    /// @dev The whole point of the event: an indexer that has never heard of `PresignSteps` can post
+    ///      the order from the log alone. So decode it the way `packages/watch-tower` does and check
+    ///      every field it forwards to the order book.
+    function test_presignSellAll_theEventCarriesEverythingAPosterNeeds() external {
+        bytes memory recipe = _presignRecipe(95, 100);
+        address drop = executor.dropOf(owner, recipe);
+        sellToken.mint(drop, 100e18);
+
+        vm.recordLogs();
+        vm.prank(keeper);
+        executor.activate(owner, recipe);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes memory payload;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == CowOrder.CowOrderPlaced.selector) payload = logs[i].data;
+        }
+        assertGt(payload.length, 0, "CowOrderPlaced not emitted");
+
+        (bytes memory uid, CowOrder.SigningScheme scheme, bytes memory signature, LibCowOrder.Data memory order) =
+            abi.decode(payload, (bytes, CowOrder.SigningScheme, bytes, LibCowOrder.Data));
+
+        assertEq(uint8(scheme), uint8(CowOrder.SigningScheme.PreSign), "wrong signing scheme");
+        // What the order book wants in the signature field of a pre-signed order.
+        assertEq(signature, abi.encodePacked(drop), "signature is not the owner");
+        assertGt(settlement.preSignature(uid), 0, "the announced uid is not the signed one");
+
+        // The uid embeds the owner, so an indexer can check it against the log's emitter.
+        assertEq(uid.length, 56, "uid is not 56 bytes");
+        assertEq(address(bytes20(_slice(uid, 32, 20))), drop, "uid owner is not the drop");
+
+        assertEq(address(order.sellToken), address(sellToken), "wrong sell token");
+        assertEq(address(order.buyToken), address(buyToken), "wrong buy token");
+        assertEq(order.receiver, recipient, "wrong receiver");
+        assertEq(order.sellAmount, 100e18, "sell amount is not what arrived");
+        assertEq(order.buyAmount, 95e18, "wrong limit");
+        assertEq(order.validTo, uint32(block.timestamp + 1 hours), "wrong deadline");
+        assertEq(order.kind, Orders.KIND_SELL, "not a sell order");
+        assertEq(order.feeAmount, 0, "fee must be zero");
+        assertFalse(order.partiallyFillable, "must be fill-or-kill");
+    }
+
+    function _slice(bytes memory data, uint256 offset, uint256 length) private pure returns (bytes memory out) {
+        out = new bytes(length);
+        for (uint256 i; i < length; i++) {
+            out[i] = data[offset + i];
+        }
     }
 
     function test_presignSellAll_revertsWhenNothingArrived() external {

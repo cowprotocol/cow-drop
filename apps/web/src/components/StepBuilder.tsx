@@ -143,8 +143,8 @@ export function StepBuilder({
             <input value={value} spellCheck={false} onChange={(event) => setValue(event.target.value)} />
           </label>
           <p className="hint">
-            A literal, like every argument here — so it cannot be “whatever arrived”. Use the{' '}
-            <code>wrapNative</code> step for that.
+            A literal, like every argument here. For “whatever arrived”, use the <code>wrapNative</code>{' '}
+            step.
           </p>
 
           <label className="inline">
@@ -188,9 +188,8 @@ export function StepBuilder({
             </button>
           </div>
           <p className="hint">
-            The step is appended to the recipe below, which recompiles it — so the drop address changes.
-            Anything you add here shows up in “What the address commits to” as an unrecognised call,
-            because only the registry’s steps can be named.
+            The step is appended to the recipe below, so the drop address changes. It will show up as an
+            unrecognised call above — only the registry’s steps can be named.
           </p>
         </>
       )}

@@ -59,6 +59,15 @@ export interface DropAddresses {
   twapSteps: Address
   stopLossSteps: Address
   /**
+   * `CowOrderPoster` — the deployed helper a third-party contract uses to place a discrete order
+   * and have `packages/watch-tower` post it.
+   *
+   * Not an input to any drop address: no recipe reaches it, because the step contracts inline the
+   * `CowOrder` library instead. It belongs to the generation because it is the address integrators
+   * build against, and that has to be recorded rather than rediscovered.
+   */
+  cowOrderPoster: Address
+  /**
    * `GPv2Settlement` and `ComposableCoW`. Not cow-drop's own contracts and not inputs to a drop
    * address — but they *are* constructor inputs to the step contracts, so they belong to the
    * generation. Carried so a rescue can retire live orders without an RPC round-trip.

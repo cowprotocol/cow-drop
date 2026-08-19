@@ -75,5 +75,12 @@ jobs:
           forge script script/Fixtures.s.sol
           git diff --exit-code -- deployments/derivation-fixtures.json
 
+      # Depends on the SDK's `dist/`, built above — it decodes `DropOrderPlaced` against the ABI the
+      # generate step produced, so a change to the event surfaces here as a failing decode.
+      - name: build and test the watch tower
+        run: |
+          pnpm --filter @cowprotocol/cow-drop-watch-tower build
+          pnpm --filter @cowprotocol/cow-drop-watch-tower test
+
       - name: typecheck and build the web app
         run: pnpm --filter @cowprotocol/cow-drop-web build

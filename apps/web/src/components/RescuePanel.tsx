@@ -105,9 +105,8 @@ export function RescuePanel({
       <summary>Rescue &amp; manual control</summary>
 
       <p className="hint">
-        A drop is funded before it exists, so the recipe can turn out to be unrunnable — funds arrive
-        too late, or a condition it depends on stops holding. These are owner-only, and neither needs
-        a signature.
+        A drop is funded before it exists, so a recipe can turn out to be unrunnable — funds arrive too
+        late, or a condition stops holding. Both paths are owner-only and need no signature.
       </p>
 
       <ul className="status">
@@ -127,13 +126,9 @@ export function RescuePanel({
       </ul>
 
       <p className="hint warn-note">
-        A sweep moves balances; it does not retire orders the drop has already placed. A registered
-        TWAP or stop-loss stays authorised in ComposableCoW until it is removed, and a pre-signature
-        stays valid until it expires — so an address swept mid-schedule will still trade whatever
-        arrives there next. Retiring them needs the order hashes from the activation receipt; the SDK
-        does it (<code>buildRevokeCalls</code>), but this page does not yet discover what is
-        outstanding. If this drop has a live conditional order, treat the sweep as recovering today&apos;s
-        balance rather than as closing the drop.
+        A sweep moves balances but does not retire orders already placed, so a drop swept mid-schedule
+        will still trade whatever arrives next. Retiring one needs the order hash from the activation
+        receipt — the SDK can (<code>buildRevokeCalls</code>), this page cannot yet.
       </p>
 
       <div className="grid">
@@ -171,9 +166,9 @@ export function RescuePanel({
       </div>
 
       <p className="hint">
-        <strong>Deploy shed only</strong> skips the recipe and hands you an ordinary cow-shed at the
-        same address, which you can then drive however you like. An empty balance is skipped rather
-        than failing, so listing a token that isn&apos;t there is harmless.
+        <strong>Deploy shed only</strong> skips the recipe and leaves an ordinary cow-shed at the same
+        address for you to drive. Empty balances are skipped, so listing a token that is not there is
+        harmless.
       </p>
 
       {message && <p className="ok">{message}</p>}

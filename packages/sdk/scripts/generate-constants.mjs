@@ -30,6 +30,12 @@ const proxy = artifact('COWShedProxy.sol/COWShedProxy.json')
 const executor = artifact('DropExecutor.sol/DropExecutor.json')
 const factory = artifact('COWShedExecutorFactory.sol/COWShedExecutorFactory.json')
 
+// `CowOrder` is a library and is never deployed, so its artifact carries one thing: the ABI of
+// `CowOrderPlaced`. Generating from here rather than from a step contract is the point — an indexer
+// decodes orders from contracts this SDK has never heard of.
+const cowOrder = artifact('CowOrder.sol/CowOrder.json')
+const cowOrderPoster = artifact('CowOrderPoster.sol/CowOrderPoster.json')
+
 // One ABI per step contract. They are separate deployments so that each address depends only on what
 // that contract needs — see `contracts/src/steps/`. Keeping the ABIs separate here is what lets a
 // decoder resolve a step by `(target, selector)` rather than guessing.
@@ -65,6 +71,7 @@ const FIELDS = [
   'presignSteps',
   'twapSteps',
   'stopLossSteps',
+  'cowOrderPoster',
   'settlement',
   'composableCow',
   'shedImplementation',
@@ -128,6 +135,15 @@ import type { Hex } from 'viem'
 
 /** \`type(COWShedProxy).creationCode\`, the first half of every drop's CREATE2 init code. */
 export const PROXY_CREATION_CODE: Hex = '${proxyCreationCode}'
+
+/**
+ * \`CowOrderPlaced\`, the discrete-order event, on its own. Tied to no contract: anything that
+ * pre-signs a CoW order can emit it, so an indexer filters on its topic0 alone.
+ */
+export const COW_ORDER_ABI = ${JSON.stringify(cowOrder.abi, null, 2)} as const
+
+/** The deployed helper: pre-sign and announce in one delegatecall, or announce what you signed. */
+export const COW_ORDER_POSTER_ABI = ${JSON.stringify(cowOrderPoster.abi, null, 2)} as const
 
 export const GUARD_STEPS_ABI = ${JSON.stringify(guards.abi, null, 2)} as const
 

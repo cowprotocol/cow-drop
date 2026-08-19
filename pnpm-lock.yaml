@@ -64,6 +64,28 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.1)
 
+  packages/watch-tower:
+    dependencies:
+      '@cowprotocol/cow-drop-sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      '@cowprotocol/cow-sdk':
+        specifier: ^9.2.6
+        version: 9.2.6(ajv@8.20.0)(cross-fetch@3.2.0)(multiformats@14.0.5)
+      viem:
+        specifier: ^2.21.0
+        version: 2.55.17(typescript@5.9.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.1
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.1)
+
 packages:
 
   '@adraffy/ens-normalize@1.11.1':

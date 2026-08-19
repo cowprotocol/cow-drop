@@ -6,6 +6,7 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 import {IERC20Like, ISettlementLike} from "../interfaces/IDropExternal.sol";
 import {Allowance} from "../lib/Allowance.sol";
+import {CowOrder} from "../lib/CowOrder.sol";
 import {NothingToSell} from "../lib/Errors.sol";
 import {Oracle} from "../lib/Oracle.sol";
 import {Orders} from "../lib/Orders.sol";
@@ -31,14 +32,12 @@ import {Orders} from "../lib/Orders.sol";
 /// deliberately has none.
 ///
 /// Events emitted from here are emitted *by the drop*, since that is `address(this)` — so
-/// `DropOrderPlaced` logs are indexed by drop address, which is what an off-chain poster wants.
+/// `CowOrderPlaced` logs are indexed by drop address, which is what an off-chain poster wants. The
+/// event itself is not declared here: it is `CowOrder.CowOrderPlaced`, which any contract placing a
+/// discrete order emits, so a poster needs one topic0 rather than one per step contract.
 contract PresignSteps {
     /// @notice A haircut above 100% would make the limit negative.
     error HaircutTooLarge(uint256 haircutBps);
-
-    /// @notice Emitted when a pre-signed order is placed, carrying everything an off-chain poster
-    ///         needs to submit it to the order book. The emitter is the drop.
-    event DropOrderPlaced(bytes orderUid, LibCowOrder.Data order);
 
     ISettlementLike public immutable SETTLEMENT;
     address public immutable VAULT_RELAYER;
@@ -50,7 +49,7 @@ contract PresignSteps {
 
     /// @notice Sell the drop's entire balance of `sellToken` as a single pre-signed CoW order.
     /// @dev Needs no ERC-1271 and no conditional-order handler: the drop pre-signs on-chain and an
-    ///      off-chain poster forwards the order (see the `DropOrderPlaced` event) with
+    ///      off-chain poster forwards the order (see the `CowOrderPlaced` event) with
     ///      `signingScheme: "presign"`.
     /// @param limitNumerator   Buy units per sell unit, numerator.
     /// @param limitDenominator Buy units per sell unit, denominator.
@@ -141,8 +140,8 @@ contract PresignSteps {
         );
     }
 
-    /// @dev Sign and announce an order whose amounts are already resolved. Shared by both entry points,
-    ///      which differ only in where `buyAmount` comes from.
+    /// @dev Build an order whose amounts are already resolved, then hand it to `CowOrder` to be signed
+    ///      and announced. Shared by both entry points, which differ only in where `buyAmount` comes from.
     function _presign(
         address sellToken,
         address buyToken,
@@ -169,13 +168,8 @@ contract PresignSteps {
             buyTokenBalance: Orders.BALANCE_ERC20
         });
 
-        bytes32 digest = LibCowOrder.hash(order, SETTLEMENT.domainSeparator());
-        orderUid = Orders.packUid(digest, address(this), order.validTo);
-
         // msg.sender at the settlement contract is the drop, which is the order's owner — so this
-        // is the drop signing its own order.
-        SETTLEMENT.setPreSignature(orderUid, true);
-
-        emit DropOrderPlaced(orderUid, order);
+        // is the drop signing its own order. `CowOrder` also emits `CowOrderPlaced`, from the drop.
+        orderUid = CowOrder.presign(SETTLEMENT, order);
     }
 }

@@ -11,6 +11,8 @@ export * from './rescue.js'
 export { ADDRESSES, DEPLOYMENTS, GENERATIONS, LATEST_GENERATION, getDeployment } from './generated/deployments.js'
 export {
   COW_SHED_EXECUTOR_FACTORY_ABI,
+  COW_ORDER_ABI,
+  COW_ORDER_POSTER_ABI,
   TWAP_STEPS_ABI,
   DROP_EXECUTOR_ABI,
   GUARD_STEPS_ABI,

@@ -34,9 +34,9 @@ export function StepTable({ setupData, deployment }: { setupData: Hex; deploymen
         <summary>Committed bytes ({(setupData.length - 2) / 2} bytes)</summary>
         <code className="calldata block">{setupData}</code>
         <p className="hint">
-          This is <code>setupData</code>. The drop address is a hash of these bytes together with the
-          owner, so changing any of it produces a different address — which is exactly why nobody can
-          substitute a different recipe at this one.
+          This is <code>setupData</code>. The drop address is a hash of these bytes and the owner, so
+          changing any of it produces a different address — which is why nobody can substitute a
+          different recipe at this one.
         </p>
       </details>
     </div>

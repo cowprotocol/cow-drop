@@ -85,8 +85,15 @@ deployments because a step's target is part of the drop address, so asking a gua
 | | |
 |---|---|
 | `buildActivateTx({ deployment, owner, setupData })` | `{ to, data, value }` for deploying the drop and running its recipe. Idempotent — safe to send twice. |
-| `parseDropOrderPlaced(log)` | Decode a `DropOrderPlaced` event into the order that got pre-signed. |
-| `toOrderBookPayload(order, drop)` | That order as a `POST /api/v1/orders` body, with `signingScheme: 'presign'`. |
+| `parseCowOrderPlaced(log)` | Decode a `CowOrderPlaced` event into the discrete order that was placed, with the owner read back out of the uid. |
+| `toOrderBookPayload(order)` | That order as a `POST /api/v1/orders` body, forwarding the scheme and signature the event carried. |
+| `COW_ORDER_PLACED_TOPIC` | The `topic0` to filter `getLogs` by. The only filter an indexer needs. |
+| `ownerOfOrderUid(uid)` | The owner in the middle 20 bytes of an order uid. |
+
+`CowOrderPlaced` is declared once, in `contracts/src/lib/CowOrder.sol`, and is not cow-drop's own —
+any contract that pre-signs an order can emit it. So decoding is against `COW_ORDER_ABI` rather than
+any particular contract's ABI, and an indexer filters on `COW_ORDER_PLACED_TOPIC` alone;
+`packages/watch-tower` is that indexer.
 
 ### Rescue
 
