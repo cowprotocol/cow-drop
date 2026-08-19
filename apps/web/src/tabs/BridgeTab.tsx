@@ -3,6 +3,7 @@ import { ON_FAILURE, type DropRecipeJson, type OnFailure } from '@cowprotocol/co
 import { formatUnits, parseUnits, type Address, type Hex } from 'viem'
 import { useEffect, useMemo, useState } from 'react'
 
+import { BridgeHistory } from '../components/BridgeHistory.js'
 import { TokenPicker } from '../components/TokenPicker.js'
 import {
   BRIDGE_SOURCE_CHAINS,
@@ -26,7 +27,7 @@ import {
   walletChainId,
 } from '../lib/chain.js'
 import { keeperUrl, readKeeperDrop, registerWithKeeper } from '../lib/keeper.js'
-import { markSentToKeeper, readBridgeForm, saveBridgeForm, saveDrop } from '../lib/storage.js'
+import { markSentToKeeper, readBridgeForm, saveBridge, saveBridgeForm, saveDrop } from '../lib/storage.js'
 import { fetchTokenList, findToken, type TokenInfo } from '../lib/tokenList.js'
 
 /**
@@ -58,6 +59,7 @@ export function BridgeTab({
       <section>
         <h2>Bridge &amp; Swap</h2>
         <p>Connect a wallet to quote a route and send the bridge transaction.</p>
+        <BridgeHistory revision={0} />
       </section>
     )
   }
@@ -77,6 +79,7 @@ function EmptyState({ onBuildRecipe }: { onBuildRecipe: () => void }) {
         There is no recipe to fund yet. Build one on the Recipes tab, then press <em>Fund by bridging</em>.
       </p>
       <button onClick={onBuildRecipe}>Go to Recipes</button>
+      <BridgeHistory revision={0} />
     </section>
   )
 }
@@ -142,6 +145,8 @@ function Bridge({
   const [balance, setBalance] = useState<bigint | null>(null)
   /** true/false once Bungee has answered, null while unknown or unasked. */
   const [reachable, setReachable] = useState<boolean | null>(null)
+  /** Bumped on a send, so the list below re-reads without polling localStorage. */
+  const [historyRevision, setHistoryRevision] = useState(0)
 
   const decimals = findToken(tokens, sourceToken ?? '')?.decimals ?? 18
 
@@ -356,7 +361,28 @@ function Bridge({
       // Before the money moves, never after: the keeper holds the appData pre-images the order book
       // needs, and is the fallback if the atomic activation declines.
       await ensureRegistered()
-      setBridgeHash(await sendBridge({ account, quote }))
+      const hash = await sendBridge({ account, quote })
+      setBridgeHash(hash)
+
+      // Written straight after the wallet returns, so a reload before the bridge fills still finds it.
+      saveBridge({
+        hash,
+        sourceChainId,
+        destinationChainId: destinationChain,
+        drop,
+        label: recipe.label,
+        route: quote.route.name,
+        sent: {
+          symbol: quote.input.token.symbol,
+          amount: formatUnits(quote.input.amount, quote.input.token.decimals),
+        },
+        expected: {
+          symbol: quote.output.token.symbol,
+          amount: formatUnits(quote.output.amount, quote.output.token.decimals),
+        },
+        sentAt: Date.now(),
+      })
+      setHistoryRevision((n) => n + 1)
     } catch (cause) {
       if (!isUserRejection(cause)) setSendError(describeBridgeError(cause))
     } finally {
@@ -592,6 +618,8 @@ function Bridge({
           </ul>
         </>
       )}
+
+      <BridgeHistory revision={historyRevision} />
     </section>
   )
 }

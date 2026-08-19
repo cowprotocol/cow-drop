@@ -219,3 +219,61 @@ export function saveBridgeForm(drop: Address, form: SavedBridgeForm): void {
     // A full or disabled store costs a convenience, not a recipe. Nothing to report.
   }
 }
+
+/**
+ * Bridges this browser has sent.
+ *
+ * A convenience, not a safety net — unlike a recipe, nothing here is unrecoverable if it is lost, and
+ * the source transaction hash is recorded on two chains regardless. What it buys is not having to keep
+ * a tab open or dig through a wallet history to find out whether a bridge from an hour ago has landed.
+ *
+ * Amounts are kept as decimal strings, already formatted for display. Re-deriving them would mean
+ * storing decimals and a token list alongside, and this list never does arithmetic on them.
+ */
+const BRIDGES_KEY = 'cow-drop:bridges:v1'
+
+export interface SavedBridge {
+  /** The source-chain transaction. Unique per send, so it is the identity of the row. */
+  hash: string
+  sourceChainId: number
+  destinationChainId: number
+  /** Where the money is going, and the drop whose order should appear once it lands. */
+  drop: Address
+  label: string
+  route: string
+  sent: { symbol: string; amount: string }
+  expected: { symbol: string; amount: string }
+  sentAt: number
+}
+
+export function listBridges(): SavedBridge[] {
+  try {
+    const raw = localStorage.getItem(BRIDGES_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as SavedBridge[]
+    if (!Array.isArray(parsed)) return []
+    // Newest first: a history is read from the top, and the one you just sent is the one you want.
+    return parsed.filter((row) => typeof row?.hash === 'string').sort((a, b) => b.sentAt - a.sentAt)
+  } catch {
+    return []
+  }
+}
+
+export function saveBridge(bridge: SavedBridge): void {
+  try {
+    // Keyed by hash so a re-render or a retry cannot double-list one send.
+    const kept = listBridges().filter((row) => row.hash.toLowerCase() !== bridge.hash.toLowerCase())
+    localStorage.setItem(BRIDGES_KEY, JSON.stringify([bridge, ...kept]))
+  } catch {
+    // A full or disabled store costs a list, not a transaction.
+  }
+}
+
+export function forgetBridge(hash: string): void {
+  try {
+    const kept = listBridges().filter((row) => row.hash.toLowerCase() !== hash.toLowerCase())
+    localStorage.setItem(BRIDGES_KEY, JSON.stringify(kept))
+  } catch {
+    // As above.
+  }
+}
