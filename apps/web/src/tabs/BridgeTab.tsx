@@ -16,7 +16,15 @@ import {
   sendBridge,
   type BridgePlan,
 } from '../lib/bridge.js'
-import { blockExplorer, chainInfo, isUserRejection, onChainChanged, switchChain, walletChainId } from '../lib/chain.js'
+import {
+  blockExplorer,
+  chainInfo,
+  cowExplorer,
+  isUserRejection,
+  onChainChanged,
+  switchChain,
+  walletChainId,
+} from '../lib/chain.js'
 import { keeperUrl, readKeeperDrop, registerWithKeeper } from '../lib/keeper.js'
 import { markSentToKeeper, readBridgeForm, saveBridgeForm, saveDrop } from '../lib/storage.js'
 import { fetchTokenList, findToken, type TokenInfo } from '../lib/tokenList.js'
@@ -555,17 +563,34 @@ function Bridge({
       {sendError && <p className="error">{sendError}</p>}
 
       {bridgeHash && (
-        <p>
-          Sent.{' '}
-          <a href={bridgeExplorerUrl(bridgeHash)} target="_blank" rel="noreferrer">
-            Track the bridge
-          </a>
-          , then watch{' '}
-          <a href={`${explorer.url}/address/${drop}`} target="_blank" rel="noreferrer">
-            the drop
-          </a>{' '}
-          on {chainName(destinationChain)}.
-        </p>
+        <>
+          <p>
+            Sent. The bridge fills in a few minutes, and the order is placed in the same transaction as
+            the fill — so nothing else is needed from you.
+          </p>
+          {/* Three links because they are three different questions: has the bridge filled, did the
+              money land, and is the order live. The last is the one that says it worked. */}
+          <ul className="hint hint-list">
+            <li>
+              <a href={bridgeExplorerUrl(bridgeHash)} target="_blank" rel="noreferrer">
+                Track the bridge
+              </a>{' '}
+              — the source transaction, until it fills on {chainName(destinationChain)}.
+            </li>
+            <li>
+              <a href={`${explorer.url}/address/${drop}`} target="_blank" rel="noreferrer">
+                The drop on {explorer.name}
+              </a>{' '}
+              — the tokens arriving, and the activation that spends them.
+            </li>
+            <li>
+              <a href={`${cowExplorer(destinationChain)}/address/${drop}`} target="_blank" rel="noreferrer">
+                The order in CoW Explorer
+              </a>{' '}
+              — appears once the fill has activated the drop.
+            </li>
+          </ul>
+        </>
       )}
     </section>
   )
