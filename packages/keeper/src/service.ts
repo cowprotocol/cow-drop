@@ -131,7 +131,7 @@ export async function startKeeperService(options: KeeperServiceOptions): Promise
   })
 
   await new Promise<void>((resolve) => server.listen(port, resolve))
-  logger.info(`keeper listening on :${port} for chain ${chainId}`)
+  logger.info(`up — HTTP on :${port}`)
 
   return {
     server,

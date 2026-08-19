@@ -2,18 +2,13 @@ import type { DropDeployment } from '@cowprotocol/cow-drop-sdk'
 import type { OrderBookApi } from '@cowprotocol/cow-sdk'
 
 import type { ChainReader } from './chain.js'
+import { silentLogger, type Logger } from './logger.js'
 import { memoryCursor, type Cursor } from './cursor.js'
 import { postDiscoveredOrder, type AppDataResolver, type PostResult } from './poster.js'
 import { scanForOrders, type SkippedLog } from './scanner.js'
 
-export interface Logger {
-  info(message: string): void
-  warn(message: string): void
-  error(message: string): void
-}
-
-/** Logs nothing. The default, so the library is silent unless a caller asks otherwise. */
-export const silentLogger: Logger = { info: () => {}, warn: () => {}, error: () => {} }
+export { createLogger, silentLogger } from './logger.js'
+export type { Logger, LoggerOptions } from './logger.js'
 
 export interface WatchTowerOptions {
   reader: ChainReader
@@ -119,6 +114,12 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
 
     const end = start + maxBlockRange - 1n < safeHead ? start + maxBlockRange - 1n : safeHead
 
+    // Counted rather than logged one-per-line. `CowOrderPlaced` is a protocol-wide announcement, so
+    // on a busy chain almost every log in a range belongs to someone else and is skipped — a line
+    // each buries every other message the process will ever print, the boot banner included. Callers
+    // that want the individual logs still get all of them through `onSkip`.
+    const skippedByReason = new Map<string, number>()
+
     const found = await scanForOrders({
       reader,
       deployment,
@@ -126,7 +127,7 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
       toBlock: end,
       onlyDrops,
       onSkip: (skipped) => {
-        logger.warn(`skipped a CowOrderPlaced from ${skipped.log.address}: ${skipped.reason}`)
+        skippedByReason.set(skipped.reason, (skippedByReason.get(skipped.reason) ?? 0) + 1)
         onSkip?.(skipped)
       },
     })
@@ -145,13 +146,17 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
     }
 
     await cursor.set(end)
-    if (found.length > 0) logger.info(`blocks ${start}-${end}: ${found.length} order(s)`)
+
+    const skipped = [...skippedByReason.entries()].map(([reason, count]) => `${count} ${reason}`).join(', ')
+    if (found.length > 0 || skipped) {
+      logger.info(`blocks ${start}-${end}: ${found.length} order(s)${skipped ? ` (skipped ${skipped})` : ''}`)
+    }
 
     return { fromBlock: start, toBlock: end, found: found.length, results, moreToScan: end < safeHead }
   }
 
   async function run(signal?: AbortSignal): Promise<void> {
-    logger.info(`watching chain ${deployment.chainId}${dryRun ? ' (dry run)' : ''}`)
+    logger.info(`watch tower scanning for placed orders${dryRun ? ' (dry run)' : ''}`)
 
     while (!signal?.aborted) {
       let caughtUp = true

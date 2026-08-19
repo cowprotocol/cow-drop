@@ -1,3 +1,6 @@
+# Set the RPC_URL
+RPC_URL=https://gnosis-rpc.publicnode.com
+
 # Run UI
 VITE_KEEPER_URL=http://localhost:8787 pnpm --filter @cowprotocol/cow-drop-web dev
 

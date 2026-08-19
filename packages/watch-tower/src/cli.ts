@@ -5,7 +5,8 @@ import { createPublicClient, http } from 'viem'
 
 import { viemChainReader } from './chain.js'
 import { defaultCursorPath, fileCursor } from './cursor.js'
-import { createWatchTower, type Logger } from './watchTower.js'
+import { createWatchTower } from './watchTower.js'
+import { createLogger } from './logger.js'
 
 const USAGE = `cow-drop-watch-tower — post the discrete CoW orders contracts place on-chain
 
@@ -94,14 +95,23 @@ async function main(): Promise<void> {
   const statePath = str(args, 'state') ?? defaultCursorPath(resolvedChainId)
   const fromBlock = str(args, 'from-block')
 
-  const quiet = args['quiet'] === true
-  const logger: Logger = {
-    info: (message) => !quiet && console.log(message),
-    warn: (message) => !quiet && console.warn(message),
-    error: (message) => console.error(message),
-  }
+  const logger = createLogger({ name: 'watch-tower', quiet: args['quiet'] === true })
 
-  logger.info(`block cursor in ${statePath}`)
+  const confirmations = num(args, 'confirmations') ?? 2
+  const pollSeconds = num(args, 'poll') ?? 15
+  const dryRun = args['dry-run'] === true
+
+  // Said at boot, in full, before anything can fail. Every one of these is a decision that silently
+  // changes what the process does, and the alternative to printing them is an operator inferring the
+  // configuration from the absence of orders half an hour later.
+  logger.info(`starting — chain ${resolvedChainId}, generation ${deployment.generation}`)
+  logger.info(`executor ${deployment.executor}, settlement ${deployment.settlement}`)
+  logger.info(`cursor ${statePath}, resuming from ${fromBlock ?? 'the stored cursor, else latest'}`)
+  logger.info(
+    `${confirmations} confirmation(s) behind head, polling every ${pollSeconds}s, ` +
+      `${args['only-drops'] === true ? 'drops only' : 'every announced pre-signed order'}`,
+  )
+  if (dryRun) logger.warn('dry run: orders will be found and verified, and posted nowhere')
 
   const watchTower = createWatchTower({
     reader: viemChainReader(client),
@@ -112,11 +122,11 @@ async function main(): Promise<void> {
     deployment,
     cursor: fileCursor(statePath, resolvedChainId),
     fromBlock: fromBlock === undefined ? 'latest' : BigInt(fromBlock),
-    confirmations: num(args, 'confirmations') ?? 2,
+    confirmations,
     maxBlockRange: BigInt(str(args, 'max-block-range') ?? 10_000),
-    pollIntervalMs: (num(args, 'poll') ?? 15) * 1000,
+    pollIntervalMs: pollSeconds * 1000,
     onlyDrops: args['only-drops'] === true,
-    dryRun: args['dry-run'] === true,
+    dryRun,
     logger,
   })
 

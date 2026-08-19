@@ -5,7 +5,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 
 import { DEFAULT_POLICY, parsePolicy } from './policy.js'
 import { startKeeperService } from './service.js'
-import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
+import { createLogger } from '@cowprotocol/cow-drop-watch-tower'
 
 const USAGE = `cow-drop-keeper — watch registered drops, activate them, pay the gas
 
@@ -128,17 +128,40 @@ async function main(): Promise<void> {
   const policyPath = str(args, 'policy')
   const policy = policyPath ? parsePolicy(JSON.parse(await readFile(policyPath, 'utf8'))) : DEFAULT_POLICY
 
-  const quiet = args['quiet'] === true
-  const logger: Logger = {
-    info: (message) => !quiet && console.log(message),
-    warn: (message) => !quiet && console.warn(message),
-    error: (message) => console.error(message),
-  }
+  const logger = createLogger({ name: 'keeper', quiet: args['quiet'] === true })
 
   const chainId = num(args, 'chain-id') ?? Number(process.env['CHAIN_ID'] ?? 0)
   const resolvedChainId = chainId || (await chainIdFromRpc(rpcUrl))
 
   const { statePath, cursorPath } = resolvePaths(args, resolvedChainId)
+
+  const port = num(args, 'port') ?? 8787
+  const pollSeconds = num(args, 'poll') ?? 12
+  const dryRun = args['dry-run'] === true
+
+  // The whole configuration, at boot, before the first RPC call that can hang.
+  //
+  // This process spends real money on behalf of whoever can reach it, and every line here changes how
+  // much and for whom. Printing it is what makes a running keeper auditable from its logs alone
+  // rather than from whichever shell invocation someone has since scrolled past.
+  logger.info(`starting — chain ${resolvedChainId}, generation ${num(args, 'generation') ?? 'latest'}`)
+  logger.info(`paying from ${account.address}`)
+  logger.info(`state ${statePath}`)
+  logger.info(`block cursor ${cursorPath}`)
+  logger.info(
+    `policy ${policy.mode}, ${policy.dailyBudgetWei} wei/day` +
+      `${policy.perOwnerDailyBudgetWei > 0n ? `, ${policy.perOwnerDailyBudgetWei} wei/day per owner` : ''}`,
+  )
+  logger.info(`polling every ${pollSeconds}s`)
+  if (policy.mode === 'all') {
+    // Said out loud, because the default is the risky one: `owner` comes from the submitted recipe,
+    // so per-owner caps do not bind and the daily budget is the only thing that does.
+    logger.warn(
+      `subsidising every owner, capped at ${policy.dailyBudgetWei} wei per day. ` +
+        `Anyone who can reach this service can spend that.`,
+    )
+  }
+  if (dryRun) logger.warn('dry run: everything is decided and simulated, nothing is broadcast')
 
   const service = await startKeeperService({
     rpcUrl,
@@ -148,24 +171,13 @@ async function main(): Promise<void> {
     policy,
     statePath,
     cursorPath,
-    port: num(args, 'port') ?? 8787,
+    port,
     allowOrigin: str(args, 'allow-origin') ?? '*',
-    pollIntervalMs: (num(args, 'poll') ?? 12) * 1000,
-    dryRun: args['dry-run'] === true,
+    pollIntervalMs: pollSeconds * 1000,
+    dryRun,
     env: str(args, 'env') === 'staging' ? 'staging' : 'prod',
     logger,
   })
-
-  logger.info(`paying from ${account.address}`)
-  logger.info(`state in ${statePath}, block cursor in ${cursorPath}`)
-  if (policy.mode === 'all') {
-    // Said out loud, because the default is the risky one: `owner` comes from the submitted recipe,
-    // so per-owner caps do not bind and the daily budget is the only thing that does.
-    logger.warn(
-      `subsidising every owner, capped at ${policy.dailyBudgetWei} wei per day. ` +
-        `Anyone who can reach this service can spend that.`,
-    )
-  }
 
   // Stop after the tick in flight, so a run is never cut between broadcasting and recording it.
   const stop = new AbortController()

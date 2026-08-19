@@ -547,7 +547,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     tick,
 
     async run(signal) {
-      logger.info(`keeper watching chain ${chainId}${dryRun ? ' (dry run)' : ''}`)
+      logger.info(`watching for drops ready to activate${dryRun ? ' (dry run)' : ''}`)
 
       while (!signal?.aborted) {
         try {
