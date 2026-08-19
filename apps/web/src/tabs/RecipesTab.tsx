@@ -237,6 +237,7 @@ export function RecipesTab({
   onChainSelected,
   onAddressChanged,
   onSeeAll,
+  onBridge,
 }: {
   /** Whether this is the tab on screen. */
   active: boolean
@@ -258,6 +259,13 @@ export function RecipesTab({
   onAddressChanged: (address: Address | null) => void
   /** Moves to the Drops tab, for the rows only the keeper knows about. */
   onSeeAll: () => void
+  /**
+   * Hands this recipe to the Bridge tab, to be funded from another chain.
+   *
+   * The recipe travels rather than being rebuilt there: bridging is a way of funding a drop, so every
+   * recipe kind is fundable that way and none of this form needs duplicating.
+   */
+  onBridge: (recipe: DropRecipeJson) => void
 }) {
   const [form, setForm] = useState<FormState>(INITIAL)
   const [status, setStatus] = useState<DropStatus | null>(null)
@@ -478,7 +486,7 @@ export function RecipesTab({
    * watching, and must not block the retry either.
    */
   useEffect(() => {
-    if (!compiled.ok || keeperUrl() === null) {
+    if (!compiled.ok || keeperUrl(compiled.value.deployment.chainId) === null) {
       setKeeperWatching(null)
       return
     }
@@ -494,7 +502,7 @@ export function RecipesTab({
     }
 
     let cancelled = false
-    void readKeeperDrop(address)
+    void readKeeperDrop(address, chainId)
       .then((remote) => {
         if (!cancelled) setKeeperWatching(remote?.watching ?? false)
       })
@@ -624,7 +632,7 @@ export function RecipesTab({
       markSentToKeeper({
         address: compiled.value.address,
         chainId: compiled.value.deployment.chainId,
-        url: keeperUrl() ?? '',
+        url: keeperUrl(compiled.value.deployment.chainId) ?? '',
       })
       setSaved(true)
       onDropsChanged()
@@ -1175,6 +1183,10 @@ export function RecipesTab({
                         Hand to keeper
                       </button>
                     ))}
+                  {/* Funding from another chain, as an alternative to sending to the address above. */}
+                  <button onClick={() => onBridge(recipe)} disabled={busy}>
+                    Fund by bridging
+                  </button>
                   <a
                     href={`${cowExplorer(dropChainId)}/address/${compiled.value.address}`}
                     target="_blank"
@@ -1199,6 +1211,11 @@ export function RecipesTab({
                   <li>
                     <strong>Activate drop</strong> — deploy the drop and run its setup yourself, now. Safe
                     to press again: an already-deployed drop just re-runs the setup.
+                  </li>
+                  <li>
+                    <strong>Fund by bridging</strong> — send tokens from another chain instead. The bridge
+                    delivers into this address and runs the recipe in the same transaction, so the order is
+                    live as soon as it fills.
                   </li>
                   {keeperUrl() !== null && (
                     <li>

@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 
 import {CowOrderPoster} from "src/CowOrderPoster.sol";
 import {DropExecutor} from "src/DropExecutor.sol";
+import {DropBungeeReceiver} from "src/bridge/DropBungeeReceiver.sol";
 import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 import {GuardSteps} from "src/steps/GuardSteps.sol";
 import {PresignSteps} from "src/steps/PresignSteps.sol";
@@ -67,6 +68,7 @@ contract DeployScript is Script {
         address twapSteps;
         address stopLossSteps;
         address cowOrderPoster;
+        address bungeeReceiver;
         address composableCow;
         address executor;
     }
@@ -181,6 +183,18 @@ contract DeployScript is Script {
             new CowOrderPoster{salt: SALT}(ISettlementLike(DropConfig.SETTLEMENT));
         }
 
+        // Also outside every drop address, and for a stronger reason than the poster: nothing in a
+        // recipe reaches it *and* nothing in it reaches a recipe — it only ever calls `activate`,
+        // which anyone may. So a new bridge receiver, or a fix to this one, costs no drop address and
+        // no generation. It ships with the generation because a bridge route is quoted against this
+        // address, so it has to be recorded somewhere the SDK can read it.
+        bytes memory bungeeInit = abi.encodePacked(type(DropBungeeReceiver).creationCode, abi.encode(executor));
+        address bungeeReceiver = _create2(bungeeInit);
+        if (bungeeReceiver.code.length == 0) {
+            vm.broadcast();
+            new DropBungeeReceiver{salt: SALT}(DropExecutor(executor));
+        }
+
         return Deployment({
             shedImplementation: implementation,
             factory: factory,
@@ -190,6 +204,7 @@ contract DeployScript is Script {
             twapSteps: twapSteps,
             stopLossSteps: stopLossSteps,
             cowOrderPoster: cowOrderPoster,
+            bungeeReceiver: bungeeReceiver,
             composableCow: composableCow,
             executor: executor
         });
@@ -215,6 +230,7 @@ contract DeployScript is Script {
         console.log("twapSteps          ", d.twapSteps);
         console.log("stopLossSteps      ", d.stopLossSteps);
         console.log("cowOrderPoster     ", d.cowOrderPoster);
+        console.log("bungeeReceiver     ", d.bungeeReceiver);
         console.log("executor           ", d.executor);
     }
 
@@ -243,6 +259,7 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "twapSteps", d.twapSteps);
         vm.serializeAddress(obj, "stopLossSteps", d.stopLossSteps);
         vm.serializeAddress(obj, "cowOrderPoster", d.cowOrderPoster);
+        vm.serializeAddress(obj, "bungeeReceiver", d.bungeeReceiver);
         string memory json = vm.serializeAddress(obj, "executor", d.executor);
 
         // `vm.writeJson` does not create parent directories, so the first run of a new generation would

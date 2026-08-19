@@ -13,11 +13,14 @@ import { recipeFromHash, recipeToHash } from './storage.js'
  * without a browser; `useRoute.ts` owns the reading and writing.
  */
 
-export type Tab = 'recipes' | 'drops' | 'about' | 'sdk'
+export type Tab = 'recipes' | 'bridge' | 'drops' | 'about' | 'sdk'
 
 /** Screen order. Recipes is first because it is what the page is for. */
 export const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'recipes', label: 'Recipes' },
+  // Next to Recipes because it is where a recipe goes once it exists: bridging is how a drop gets
+  // funded, not another kind of drop.
+  { id: 'bridge', label: 'Bridge & Swap' },
   { id: 'drops', label: 'Drops' },
   { id: 'about', label: 'About' },
   { id: 'sdk', label: 'SDK' },
@@ -31,6 +34,7 @@ export interface Route {
 
 const TABS_BY_ID: Record<string, Tab> = {
   recipes: 'recipes',
+  bridge: 'bridge',
   drops: 'drops',
   about: 'about',
   sdk: 'sdk',
@@ -48,7 +52,7 @@ const TABS_BY_ID: Record<string, Tab> = {
  * |---|---|
  * | `#/recipes/<base64url>` | the builder, carrying a recipe |
  * | `#/recipes` | the builder, nothing in the URL yet |
- * | `#/drops`, `#/about`, `#/sdk` | those tabs, which never carry a recipe |
+ * | `#/bridge`, `#/drops`, `#/about`, `#/sdk` | those tabs, which never carry a recipe |
  * | `#<base64url>` | **legacy** — every link shared before there were tabs |
  * | anything else | the builder, empty |
  *

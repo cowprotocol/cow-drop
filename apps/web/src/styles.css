@@ -934,3 +934,50 @@ details.subsection > summary .guard-count {
   opacity: 0.55;
 }
 
+/*
+ * The Bridge & Swap tab.
+ *
+ * Only three things it needs that the rest of the page does not have: a definition list that reads as
+ * a summary rather than as decoded arguments (`.args` is deliberately small and monospace-ish), and
+ * radio options whose label is a sentence rather than a word.
+ */
+.facts {
+  margin: 0 0 1rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.9rem;
+  align-items: baseline;
+}
+
+.facts dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.facts dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+/*
+ * The option is a paragraph, so the control has to sit at the top of it rather than centred against a
+ * block of text — and `align-items: start` on a flex row is what keeps it beside the first line.
+ */
+.radio {
+  display: flex;
+  align-items: start;
+  gap: 0.55rem;
+  margin: 0 0 0.6rem;
+  max-width: 62ch;
+  font-weight: normal;
+}
+
+.radio input {
+  margin-top: 0.2rem;
+  width: auto;
+  flex: none;
+}
+
+.bridge h3 {
+  margin-top: 1.6rem;
+}

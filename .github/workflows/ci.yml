@@ -75,6 +75,13 @@ jobs:
           forge script script/Fixtures.s.sol
           git diff --exit-code -- deployments/derivation-fixtures.json
 
+      # Depends on the SDK's `dist/`, built above — it builds its destination payload with
+      # `bungeeDelivery`, so a change to the delivery encoding surfaces here rather than at a bridge.
+      - name: build and test bridging
+        run: |
+          pnpm --filter @cowprotocol/cow-drop-bridging build
+          pnpm --filter @cowprotocol/cow-drop-bridging test
+
       # Depends on the SDK's `dist/`, built above — it decodes `OrderPlacement` against the ABI the
       # generate step produced, so a change to the event surfaces here as a failing decode.
       - name: build and test the watch tower

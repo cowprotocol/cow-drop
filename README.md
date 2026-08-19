@@ -19,9 +19,10 @@ the flow, because the recipe is committed into the address itself.
 | [docs/RELEASING.md](docs/RELEASING.md)                    | Cutting a release, the published images and package, and how to run them                  |
 | [`contracts/`](contracts/README.md)                       | `DropExecutor` and the step contracts — foundry                                           |
 | [`packages/sdk/`](packages/sdk/README.md)                 | Compile a recipe, get an address, build the activation tx — TypeScript, viem              |
+| [`packages/bridging/`](packages/bridging/README.md)       | Quote a bridge route that delivers into a drop and activates it on arrival                |
 | [`packages/watch-tower/`](packages/watch-tower/README.md) | Index `OrderPlacement` and post the orders to the order book                              |
 | [`packages/keeper/`](packages/keeper/README.md)           | Activate registered drops and pay the gas                                                 |
-| [`apps/web/`](apps/web/README.md)                         | The demo page: a form that turns into an address — Vite, React                            |
+| [`apps/web/`](apps/web/README.md)                         | The demo page: a form that turns into an address, and a tab that funds it across a bridge — Vite, React    |
 | `recipes/`                                                | Example `.drop.json` files                                                                |
 
 ## Build

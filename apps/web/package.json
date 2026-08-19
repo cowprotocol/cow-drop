@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cowprotocol/cow-drop-bridging": "workspace:*",
     "@cowprotocol/cow-drop-sdk": "workspace:*",
     "@cowprotocol/cow-sdk": "^9.2.6",
     "qrcode": "^1.5.4",

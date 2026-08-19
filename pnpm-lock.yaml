@@ -10,6 +10,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@cowprotocol/cow-drop-bridging':
+        specifier: workspace:*
+        version: link:../../packages/bridging
       '@cowprotocol/cow-drop-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -47,6 +50,25 @@ importers:
       vite:
         specifier: ^5.4.10
         version: 5.4.21(@types/node@22.20.1)
+
+  packages/bridging:
+    dependencies:
+      '@cowprotocol/cow-drop-sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      viem:
+        specifier: ^2.21.0
+        version: 2.55.17(typescript@5.9.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.1
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.1)
 
   packages/keeper:
     dependencies:

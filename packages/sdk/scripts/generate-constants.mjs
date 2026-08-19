@@ -78,6 +78,17 @@ const FIELDS = [
   'shedImplementation',
 ]
 
+/**
+ * Recorded when a generation has one, omitted when it predates the contract.
+ *
+ * `bungeeReceiver` is the first of these, and it is optional for a reason worth keeping: it is not an
+ * input to any drop address — no recipe reaches it, it only ever calls `activate` — so it can be added
+ * to a generation that already exists without moving anything. Generation 1's records were written
+ * before it existed and simply do not carry one. Emitting `undefined` for those would put a broken
+ * address in the SDK, and backfilling them would be recording a deployment that never happened.
+ */
+const OPTIONAL_FIELDS = ['bungeeReceiver']
+
 const byGeneration = new Map()
 for (const dir of readdirSync(deploymentsDir)) {
   const generation = /^gen(\d+)$/.exec(dir)
@@ -107,9 +118,13 @@ const latestGeneration = generations[generations.length - 1]
 const addressesByGeneration = new Map()
 for (const generation of generations) {
   const records = byGeneration.get(generation)
-  const addresses = Object.fromEntries(FIELDS.map((field) => [field, records[0][field]]))
+  const addresses = Object.fromEntries(
+    [...FIELDS, ...OPTIONAL_FIELDS].map((field) => [field, records[0][field]]).filter(([, a]) => a !== undefined),
+  )
   for (const record of records.slice(1)) {
-    for (const field of FIELDS) {
+    for (const field of [...FIELDS, ...OPTIONAL_FIELDS]) {
+      // An optional field present in one record of a generation and absent from another is drift, not
+      // an older record: every chain in a generation is deployed from the same script.
       if (record[field] !== addresses[field]) {
         throw new Error(
           `generation ${generation} records disagree on ${field}: ` +
@@ -183,7 +198,10 @@ ${generations
   .map((generation) => {
     const a = addressesByGeneration.get(generation)
     return `  ${generation}: {
-${FIELDS.map((field) => `    ${field}: '${a[field]}',`).join('\n')}
+${[...FIELDS, ...OPTIONAL_FIELDS]
+  .filter((field) => a[field] !== undefined)
+  .map((field) => `    ${field}: '${a[field]}',`)
+  .join('\n')}
   },`
   })
   .join('\n')}

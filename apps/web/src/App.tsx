@@ -6,6 +6,7 @@ import { DEFAULT_CHAIN_ID, connect, onAccountsChanged, readAccount } from './lib
 import { TABS, parseRoute, routeHash } from './lib/route.js'
 import { useExternalRoute, useRoute } from './lib/useRoute.js'
 import { AboutTab } from './tabs/AboutTab.js'
+import { BridgeTab } from './tabs/BridgeTab.js'
 import { DropsTab } from './tabs/DropsTab.js'
 import { RecipesTab } from './tabs/RecipesTab.js'
 import { SdkTab } from './tabs/SdkTab.js'
@@ -40,6 +41,14 @@ export function App() {
    * then disables the button.
    */
   const [dropsRevision, setDropsRevision] = useState(0)
+  /**
+   * The recipe handed to the Bridge tab, which builds none of its own.
+   *
+   * Separate from `imported`, which flows the other way — Drops and the URL hand a recipe *to* the
+   * builder, while this is the builder handing a finished one *on*. Sharing one slot would make
+   * "fund this by bridging" overwrite the form it came from.
+   */
+  const [bridgeRecipe, setBridgeRecipe] = useState<DropRecipeJson | null>(null)
   /** Mirrors of builder state: the chain to connect on, and the address the Drops list marks. */
   const [connectChainId, setConnectChainId] = useState(DEFAULT_CHAIN_ID)
   const [dropAddress, setDropAddress] = useState<Address | null>(null)
@@ -155,11 +164,25 @@ export function App() {
           onChainSelected={setConnectChainId}
           onAddressChanged={setDropAddress}
           onSeeAll={() => navigate('drops')}
+          onBridge={(recipe) => {
+            setBridgeRecipe(recipe)
+            setError(null)
+            navigate('bridge')
+          }}
         />
       </div>
 
-      {/* The other three unmount, because their state is better fresh — the Drops tab re-reads
-          localStorage and re-asks the keeper on every open, which is exactly what you want from it. */}
+      {/* The others unmount, because their state is better fresh — the Drops tab re-reads
+          localStorage and re-asks the keeper on every open, which is exactly what you want from it,
+          and a bridge quote goes stale within minutes so it should never survive a tab switch. */}
+      {route.tab === 'bridge' && (
+        <BridgeTab
+          account={account}
+          recipe={bridgeRecipe}
+          setError={setError}
+          onBuildRecipe={() => navigate('recipes')}
+        />
+      )}
       {route.tab === 'drops' && (
         <DropsTab
           account={account}
