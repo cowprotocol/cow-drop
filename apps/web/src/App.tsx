@@ -176,12 +176,7 @@ export function App() {
           localStorage and re-asks the keeper on every open, which is exactly what you want from it,
           and a bridge quote goes stale within minutes so it should never survive a tab switch. */}
       {route.tab === 'bridge' && (
-        <BridgeTab
-          account={account}
-          recipe={bridgeRecipe}
-          setError={setError}
-          onBuildRecipe={() => navigate('recipes')}
-        />
+        <BridgeTab account={account} recipe={bridgeRecipe} onBuildRecipe={() => navigate('recipes')} />
       )}
       {route.tab === 'drops' && (
         <DropsTab

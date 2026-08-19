@@ -34,12 +34,10 @@ import { fetchTokenList, findToken, type TokenInfo } from '../lib/tokenList.js'
 export function BridgeTab({
   account,
   recipe,
-  setError,
   onBuildRecipe,
 }: {
   account: Address | null
   recipe: DropRecipeJson | null
-  setError: (message: string | null) => void
   onBuildRecipe: () => void
 }) {
   if (!recipe) return <EmptyState onBuildRecipe={onBuildRecipe} />
@@ -53,7 +51,7 @@ export function BridgeTab({
       </section>
     )
   }
-  return <Bridge account={account} recipe={recipe} setError={setError} onBuildRecipe={onBuildRecipe} />
+  return <Bridge account={account} recipe={recipe} onBuildRecipe={onBuildRecipe} />
 }
 
 function EmptyState({ onBuildRecipe }: { onBuildRecipe: () => void }) {
@@ -79,12 +77,10 @@ type KeeperState = 'none' | 'unknown' | 'checking' | 'registered' | 'failed'
 function Bridge({
   account,
   recipe,
-  setError,
   onBuildRecipe,
 }: {
   account: Address
   recipe: DropRecipeJson
-  setError: (message: string | null) => void
   onBuildRecipe: () => void
 }) {
   /** Everything about the destination comes from the recipe, and never quotes. */
@@ -108,6 +104,15 @@ function Bridge({
 
   const [quote, setQuote] = useState<BridgeQuote | null>(null)
   const [quoting, setQuoting] = useState(false)
+  /**
+   * Quote and send failures stay in this tab rather than going to the page banner.
+   *
+   * Both are answers to a button a few lines away — "no route for that pair", "the quote expired" —
+   * and the fix is always to change something right there. Reporting them at the top of the page put
+   * the diagnosis a scroll away from the control that caused it.
+   */
+  const [quoteError, setQuoteError] = useState<string | null>(null)
+  const [sendError, setSendError] = useState<string | null>(null)
   const [allowance, setAllowance] = useState<bigint | null>(null)
   const [busy, setBusy] = useState(false)
   const [bridgeHash, setBridgeHash] = useState<Hex | null>(null)
@@ -152,6 +157,8 @@ function Bridge({
     setQuote(null)
     setAllowance(null)
     setBridgeHash(null)
+    setQuoteError(null)
+    setSendError(null)
   }, [sourceChainId, sourceToken, amountText, onFailure, recipe])
 
   /**
@@ -201,7 +208,7 @@ function Bridge({
 
   const onQuote = async () => {
     if (!amount || !sourceToken) return
-    setError(null)
+    setQuoteError(null)
     setQuoting(true)
     try {
       const quoted = await quoteBridge({
@@ -225,7 +232,7 @@ function Bridge({
         )
       }
     } catch (cause) {
-      setError(describeBridgeError(cause))
+      setQuoteError(describeBridgeError(cause))
     } finally {
       setQuoting(false)
     }
@@ -249,13 +256,13 @@ function Bridge({
 
   const onApprove = async () => {
     if (!quote?.approval) return
-    setError(null)
+    setSendError(null)
     setBusy(true)
     try {
       await approveBridge({ account, chainId: sourceChainId, approval: quote.approval })
       setAllowance(quote.approval.amount)
     } catch (cause) {
-      if (!isUserRejection(cause)) setError(describeBridgeError(cause))
+      if (!isUserRejection(cause)) setSendError(describeBridgeError(cause))
     } finally {
       setBusy(false)
     }
@@ -263,7 +270,7 @@ function Bridge({
 
   const onBridge = async () => {
     if (!quote) return
-    setError(null)
+    setSendError(null)
     setBusy(true)
     try {
       // Before the money moves, never after: the keeper holds the appData pre-images the order book
@@ -271,7 +278,7 @@ function Bridge({
       await ensureRegistered()
       setBridgeHash(await sendBridge({ account, quote }))
     } catch (cause) {
-      if (!isUserRejection(cause)) setError(describeBridgeError(cause))
+      if (!isUserRejection(cause)) setSendError(describeBridgeError(cause))
     } finally {
       setBusy(false)
     }
@@ -382,6 +389,8 @@ function Bridge({
         {quoting ? 'Getting a quote…' : quote ? 'Re-quote' : 'Get a quote'}
       </button>
 
+      {quoteError && <p className="error">{quoteError}</p>}
+
       {quote && (
         <>
           <dl className="facts">
@@ -432,6 +441,8 @@ function Bridge({
       >
         {busy ? 'Sending…' : 'Bridge and activate'}
       </button>
+
+      {sendError && <p className="error">{sendError}</p>}
 
       {bridgeHash && (
         <p>
