@@ -5,6 +5,8 @@ import {
   swapOnArrival,
   twapOnArrival,
   type DropRecipeJson,
+  type DropStepJson,
+  type LimitPriceJson,
 } from '@cowprotocol/cow-drop-sdk'
 import { formatUnits, isAddress, type Address } from 'viem'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -216,6 +218,142 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
   })
 }
 
+/** A unix timestamp back into the local `datetime-local` value that produces it. */
+function toLocalDateTime(seconds: number | string): string {
+  const date = new Date(Number(seconds) * 1000)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/** A limit price the form can hold. It stores a decimal, so an exact fraction is out of reach. */
+function humanPrice(price: LimitPriceJson): string | null {
+  return 'price' in price ? price.price : null
+}
+
+/**
+ * The reverse of `toRecipe`: the form that rebuilds this recipe, or `null` when the form cannot
+ * express it.
+ *
+ * Only the shape the templates emit is recognised — the time guard, an optional wrap, the balance
+ * guard, then exactly one trade step. A file with anything else in it, or with a field the form has
+ * no box for (a custom label, a salt, a TWAP span), falls out here or fails the caller's address
+ * check, and the recipe goes on overriding the form as before.
+ *
+ * Correctness is not this function's job: it proposes, and `matchingForm` compiles the proposal and
+ * refuses it unless it derives the very same address. That is what makes hydrating safe — every way
+ * this could misread a recipe moves the address, and a moved address is not the drop that was
+ * loaded.
+ */
+function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
+  const rest = [...recipe.steps]
+  const base: FormState = { ...INITIAL, chainId: recipe.chainId, owner: recipe.owner }
+
+  if (rest[0]?.type === 'requireTimeWindow') {
+    const guard = rest.shift() as Extract<DropStepJson, { type: 'requireTimeWindow' }>
+    base.notBefore = guard.notBefore === undefined ? '' : toLocalDateTime(guard.notBefore)
+    base.notAfter = guard.notAfter === undefined ? '' : toLocalDateTime(guard.notAfter)
+  }
+
+  if (rest[0]?.type === 'wrapNative') {
+    rest.shift()
+    base.wrapNative = true
+  }
+
+  const balanceGuard = rest[0]?.type === 'requireMinBalance' ? rest.shift() : undefined
+
+  if (rest.length !== 1) return null
+  const trade = rest[0]!
+
+  if (balanceGuard?.type === 'requireMinBalance') {
+    // The form's box is in whole tokens, so a guard that is not a whole number of them has no value
+    // to put in it — and half a token showing as none would move the address without saying so.
+    const unit = 10n ** BigInt(findToken(tokens, balanceGuard.token)?.decimals ?? 18)
+    const amount = BigInt(balanceGuard.minAmount)
+    if (amount % unit !== 0n) return null
+    base.minAmount = (amount / unit).toString()
+  }
+
+  switch (trade.type) {
+    case 'presignSellAll': {
+      const price = humanPrice(trade.limitPrice)
+      if (price === null) return null
+      base.recipeKind = 'swap'
+      base.useOracle = false
+      base.limitPrice = price
+      base.validityMinutes = String(Number(trade.validitySeconds) / 60)
+      break
+    }
+
+    case 'presignSellAllAtOracle': {
+      const price = humanPrice(trade.floorPrice)
+      if (price === null) return null
+      base.recipeKind = 'swap'
+      base.useOracle = true
+      base.limitPrice = price
+      base.validityMinutes = String(Number(trade.validitySeconds) / 60)
+      base.sellOracle = trade.oracle.sellTokenPriceOracle
+      base.buyOracle = trade.oracle.buyTokenPriceOracle
+      base.oracleMaxAgeMinutes = String(Number(trade.oracle.maxAge) / 60)
+      base.oracleHaircutBps = String(trade.oracle.haircutBps)
+      break
+    }
+
+    case 'twapFromBalance': {
+      const price = humanPrice(trade.limitPrice)
+      if (price === null) return null
+      base.recipeKind = 'twap'
+      base.limitPrice = price
+      base.parts = String(trade.parts)
+      base.partMinutes = String(Number(trade.partDuration) / 60)
+      break
+    }
+
+    case 'stopLossFromBalance': {
+      const price = humanPrice(trade.limitPrice)
+      if (price === null) return null
+      base.recipeKind = 'stoploss'
+      base.limitPrice = price
+      base.stopLossDays = String(Number(trade.validitySeconds) / (24 * 3600))
+      base.sellOracle = trade.trigger.sellTokenPriceOracle
+      base.buyOracle = trade.trigger.buyTokenPriceOracle
+      base.strike = String(trade.trigger.strike)
+      base.oracleMaxAgeMinutes = String(Number(trade.trigger.maxTimeSinceLastOracleUpdate) / 60)
+      break
+    }
+
+    default:
+      return null
+  }
+
+  base.sellToken = trade.sellToken
+  base.buyToken = trade.buyToken
+  // The templates always write a receiver, defaulting it to the owner; blank is how the form says
+  // that, and saying it any other way would be a difference the user never typed.
+  base.receiver =
+    trade.receiver && trade.receiver.toLowerCase() !== recipe.owner.toLowerCase() ? trade.receiver : ''
+
+  return base
+}
+
+/**
+ * The form that rebuilds this recipe *exactly*, or `null`.
+ *
+ * The check is the compiled address, because that is the only thing about a drop that has to be
+ * right: it is what the money is sent to. Two recipes that derive it are the same drop whatever
+ * their JSON looks like, and a candidate that derives anything else is a different drop wearing the
+ * loaded one's name.
+ */
+function matchingForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
+  const candidate = toForm(recipe, tokens)
+  if (!candidate) return null
+  try {
+    const rebuilt = compileRecipe(toRecipe(candidate, tokens))
+    return rebuilt.address === compileRecipe(recipe).address ? candidate : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * The builder: the form, and the recipe it builds.
  *
@@ -295,6 +433,16 @@ export function RecipesTab({
   const [quoteError, setQuoteError] = useState<string | null>(null)
   /** Loaded from CoW's token list; the built-in list is the offline fallback. */
   const [tokens, setTokens] = useState<TokenInfo[]>(GNOSIS_TOKENS)
+  /**
+   * Which chain `tokens` was *fetched* for, or `null` while it is still the built-in fallback.
+   *
+   * Only the hydrate below needs it, and it needs it badly. Decimals decide what a limit price
+   * compiles to, so judging a recipe against another chain's list would either reject a drop that is
+   * fine or — worse — accept a form that derives a different address. Null until a list has actually
+   * arrived, for the same reason: the fetch that follows drops any selected token the list does not
+   * know, and a hydrate that raced ahead of it would be quietly undone.
+   */
+  const [tokensChainId, setTokensChainId] = useState<number | null>(null)
   const [walletChain, setWalletChain] = useState<number | null>(null)
   /**
    * Which required contracts are missing on the selected chain — `null` while the answer is still
@@ -445,17 +593,45 @@ export function RecipesTab({
   }
 
   /**
-   * Keep the form in step with an imported recipe.
+   * Take an imported recipe into the form, and let the form own it from then on.
    *
-   * The recipe is mirrored into the URL, so a reload comes back as an import while the form is still
-   * at its initial values — which showed an empty owner field next to an address derived from the
-   * owner you had set before the reload. Only the fields the form can represent faithfully are
-   * hydrated; the rest is why `imported` overrides the form in the first place.
+   * A recipe arrives whole — from the URL, a file, the Drops list — while the form is still at its
+   * initial values, and an import *overrides* the form. So the page showed one drop's address above
+   * another drop's parameters, and the first keystroke anywhere dropped the override and jumped the
+   * address to whatever that stale form happened to compile to.
+   *
+   * Filling the form in is what fixes both: once the fields say what the recipe says, the override
+   * has nothing left to do and is cleared, so editing a field moves the address by that field alone.
+   * Cleared only on an exact match — `matchingForm` compiles its candidate and compares addresses —
+   * because a form that *nearly* reproduces the recipe is a quieter version of the same bug.
+   *
+   * A recipe the form cannot hold (a hand-written file, anything the step builder added) still falls
+   * back to hydrating the two fields that are always faithful, and goes on overriding the form.
+   *
+   * Re-runs as the token list arrives: decimals are half of what a limit price compiles to, so a
+   * recipe for a chain whose list is still loading cannot be judged yet. The partial hydrate below
+   * sets the chain, which is what fetches that list and brings us back here.
    */
   useEffect(() => {
     if (!imported) return
-    setForm((previous) => ({ ...previous, owner: imported.owner, chainId: imported.chainId }))
-  }, [imported])
+
+    if (tokensChainId === imported.chainId) {
+      const hydrated = matchingForm(imported, tokens)
+      if (hydrated) {
+        setForm(hydrated)
+        setImported(null)
+        // A guard is a reason the address is where it is, so it must not arrive collapsed.
+        if (hydrated.minAmount || hydrated.notBefore || hydrated.notAfter) setGuardsOpen(true)
+        return
+      }
+    }
+
+    setForm((previous) =>
+      previous.owner === imported.owner && previous.chainId === imported.chainId
+        ? previous
+        : { ...previous, owner: imported.owner, chainId: imported.chainId },
+    )
+  }, [imported, tokens, tokensChainId, setImported])
 
   /*
    * The recipe lives in the URL, so a bookmark, a pasted link or a plain reload is enough to get it
@@ -528,6 +704,7 @@ export function RecipesTab({
       if (cancelled) return
 
       setTokens(loaded)
+      setTokensChainId(chainId)
 
       // Token addresses are chain-specific, so the previous chain's selection is meaningless here.
       // Left alone, the picker would read blank while the recipe silently compiled with an address
