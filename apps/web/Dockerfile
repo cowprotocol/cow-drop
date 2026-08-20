@@ -23,6 +23,7 @@ WORKDIR /app
 # --frozen-lockfile fails, even for members this image does not build.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/sdk/package.json packages/sdk/
+COPY packages/bridging/package.json packages/bridging/
 COPY packages/watch-tower/package.json packages/watch-tower/
 COPY packages/keeper/package.json packages/keeper/
 COPY apps/web/package.json apps/web/
@@ -31,9 +32,13 @@ RUN pnpm install --frozen-lockfile
 # `packages/sdk/src/generated/` is committed, so no foundry toolchain is needed to build the SDK
 # here. CI is what guarantees the committed copy matches the contracts.
 COPY packages/sdk/ packages/sdk/
+COPY packages/bridging/ packages/bridging/
 COPY apps/web/ apps/web/
-RUN pnpm --filter @cowprotocol/cow-drop-sdk build && \
-    pnpm --filter @cowprotocol/cow-drop-web build
+
+# The `...` suffix builds the page's workspace dependencies first, in topological order. Both of them
+# resolve to `dist/`, so naming only the page here would compile against packages that were never
+# built — and this way a dependency added later needs no change to the line.
+RUN pnpm --filter "@cowprotocol/cow-drop-web..." build
 
 FROM nginx:stable-alpine AS runtime
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
