@@ -195,8 +195,15 @@ export interface SavedBridgeForm {
   sourceToken: Address
   amountText: string
   onFailure: string
-  /** `direct` or `atomic`. Absent on records written before the choice existed, which read as direct. */
-  mode?: string
+  /**
+   * Which bridge provider was selected.
+   *
+   * Note what is deliberately *not* here: the delivery mode. This record is a half-finished decision
+   * about how to fund one drop, and a delivery mode is not that — it is a safety posture. Restoring
+   * `atomic` because it was used once, silently, months ago, re-arms the riskier path without anyone
+   * choosing it again. A provider is a preference; a mode is a decision, and it gets made each time.
+   */
+  provider?: string
 }
 
 export function readBridgeForm(drop: Address): SavedBridgeForm | null {
@@ -239,6 +246,8 @@ export interface SavedBridge {
   hash: string
   /** How it was delivered — `direct` or `atomic`. Absent on rows written before the choice existed. */
   mode?: string
+  /** Which provider quoted it. Absent on rows written before there was more than one. */
+  provider?: string
   sourceChainId: number
   destinationChainId: number
   /** Where the money is going, and the drop whose order should appear once it lands. */

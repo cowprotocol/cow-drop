@@ -1,4 +1,5 @@
 import { BridgeError } from '../errors.js'
+import type { DestinationExecution } from './capability.js'
 import {
   BUNGEE_API_PATH,
   BUNGEE_BASE_URL,
@@ -6,7 +7,6 @@ import {
   type BungeeBuildTxResponseWire,
   type BungeeQuoteRequestWire,
   type BungeeQuoteResponseWire,
-  type BungeeRouteWire,
   type BungeeTokenListResponseWire,
   type BungeeTokenWire,
   type BridgeName,
@@ -23,14 +23,25 @@ export interface BungeeApiOptions {
   baseUrl?: string
   manualBaseUrl?: string
   /**
-   * Restrict the bridges Bungee may route through, overriding the per-quote choice.
+   * Narrow the bridges Bungee may route through.
    *
-   * Left unset by default, because the right answer depends on the delivery and not on the client:
-   * a quote that carries a destination payload must be limited to bridges that run one, and a plain
-   * transfer must not be limited at all. `BungeeDropProvider` decides that per call — see there.
+   * **No longer a safety mechanism.** It used to be the only one, and that was the defect: a request
+   * parameter cannot protect anything, because nothing ever confronts it with the response. Safety is
+   * now the capability registry plus a verdict that makes an unsafe transaction unobtainable, and this
+   * is what it always should have been — a preference about reach and latency.
    */
   includeBridges?: readonly BridgeName[]
   fetch?: typeof globalThis.fetch
+  /** Injected so expiry checks are deterministic in tests. Defaults to the wall clock. */
+  now?: () => number
+  /**
+   * Override the destination-execution registry.
+   *
+   * The only way to exercise the code that runs when atomic delivery *is* available, since nothing is
+   * observed yet. Application code must never set it: an `observed` entry with no evidence behind it
+   * is precisely the belief this whole layer exists to delete.
+   */
+  capabilityOverrides?: Readonly<Record<string, DestinationExecution>>
 }
 
 export class BungeeApi {
@@ -70,13 +81,20 @@ export class BungeeApi {
   }
 
   /**
-   * A quote, reduced to its best manual route.
+   * A quote, with every manual route it offered.
    *
-   * "Best" is largest output. Bungee returns the routes unordered and the difference between them is
-   * fees and time; a bridge that is feeding a limit order wants the most tokens to arrive, and the
-   * order's own `validTo` is what bounds the time.
+   * This used to reduce the routes to the single largest output and throw the rest away, here in the
+   * API layer where the provider could never see them. That was two bugs in one line. It meant the
+   * provider structurally *could not* compare a route against a policy, because by the time it was
+   * asked there was only one route left and no alternative to prefer. And it hid the routes a user
+   * most needs to see: the disabled ones, which are the only explanation for why a delivery mode is
+   * unavailable. A list where every row says why it cannot be used is a designed refusal; an empty
+   * screen is an apparent outage.
+   *
+   * Selection is the caller's job now. `no-routes` still belongs here, because "Bungee offered
+   * nothing" is a fact about the response rather than a policy decision.
    */
-  async getQuote(request: BungeeQuoteRequestWire): Promise<{ route: BungeeRouteWire; input: BungeeTokenWire }> {
+  async getQuote(request: BungeeQuoteRequestWire): Promise<BungeeQuoteResponseWire['result']> {
     const response = await this.get<BungeeQuoteResponseWire>(this.baseUrl, '/quote', {
       ...request,
       includeBridges: request.includeBridges ?? this.includeBridges?.join(','),
@@ -84,20 +102,20 @@ export class BungeeApi {
 
     if (!response.success) throw new BridgeError('quote-failed', 'Bungee rejected the quote request', response)
 
-    const routes = response.result.manualRoutes ?? []
-    const best = routes.reduce<BungeeRouteWire | undefined>(
-      (winner, route) => (winner && BigInt(winner.output.amount) >= BigInt(route.output.amount) ? winner : route),
-      undefined,
-    )
-
-    if (!best) {
+    if ((response.result.manualRoutes ?? []).length === 0) {
       throw new BridgeError('no-routes', 'Bungee has no route for this pair and amount', response.result)
     }
 
-    return { route: best, input: response.result.input.token }
+    return response.result
   }
 
-  /** The source-chain transaction for a quoted route. */
+  /**
+   * The source-chain transaction for a quoted route.
+   *
+   * Note what this does *not* do: it never re-quotes. A silent re-quote would build a route the user
+   * saw no verdict for, which is the exact class of substitution the verification layer exists to
+   * catch. An expired quoteId is a `build-failed` for the caller to turn into a rebuild.
+   */
   async getBuildTx(quoteId: string): Promise<BungeeBuildTxResponseWire['result']> {
     const response = await this.get<BungeeBuildTxResponseWire>(this.baseUrl, '/build-tx', { quoteId })
 

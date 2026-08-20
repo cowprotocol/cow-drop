@@ -423,6 +423,11 @@ export function createKeeperServer(options: ServerOptions): Server {
       maxCostPerActivationWei: policy.maxCostPerActivationWei.toString(),
       dailyBudgetWei: policy.dailyBudgetWei.toString(),
       remainingTodayWei: max(policy.dailyBudgetWei - spend.totalWei, 0n).toString(),
+      // Both halves of the refusal that is hardest to read from outside. `subsidising: false` used to
+      // be the only sign of it, with neither the floor nor the balance shown — so the one question an
+      // operator has ("how much short am I?") could not be answered from this endpoint at all.
+      minPayerBalanceWei: policy.minPayerBalanceWei.toString(),
+      payerBalanceWei: balance.toString(),
       // What `paying` mode requires, stated up front. Without this the UI would have to offer
       // "and it pays the gas" and only discover otherwise after the user had committed.
       fee:

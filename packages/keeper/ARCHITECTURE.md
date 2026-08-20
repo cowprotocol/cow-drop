@@ -247,12 +247,26 @@ convention shows up as several orders of magnitude rather than as a subtle loss.
 }
 ```
 
-Two things about this are worth reading twice.
+Three things about this are worth reading twice.
+
+**Two of these numbers are defaults sized from the chain, not constants.** `minPayerBalanceWei` and
+`maxCostPerActivationWei` default to twenty activations, computed at boot from `eth_gasPrice` and the
+measured ~420k gas an activation burns. The values above are what a caller with no chain information
+falls back to, and they are Ethereum-shaped because a chain-blind constant has to be shaped like some
+chain. As frozen constants they were wrong on every chain at once, in opposite directions: 0.02 native
+is five activations of reserve on Ethereum and six thousand on Base — where it refused to pay for a
+drop out of a wallet holding a thousand times the gas it needed — while a 0.01 native per-activation cap
+is three thousand times the real cost on Base and silently refuses every Ethereum activation above
+roughly 24 gwei. A file that sets only some fields inherits the chain-sized rest.
 
 **The per-activation cap is in wei, not gas units.** A units cap does not bound the spend: the same
 300k gas costs thirty times more in a fee spike, and a cap that moves with the gas price is not a cap.
 `maxFeePerGasWei` is the separate breaker that pauses the keeper in a spike rather than draining it one
-capped transaction at a time.
+capped transaction at a time. Sizing the *default* from the gas price is not the same thing — it is
+picked once at boot and then holds still, so it remains a cap.
+
+Budgets stay absolute for a reason worth stating: `dailyBudgetWei` is risk appetite, and scaling it by
+gas price would raise the ceiling on the chain where a mistake costs most.
 
 **`perOwnerDailyBudgetWei` barely binds in `mode: "all"`.** `owner` is a field of a recipe anyone may
 submit, and minting a fresh one per registration is free. So in `all` mode the only cap that really

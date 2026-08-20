@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { bridgeExplorerUrl } from '../lib/bridge.js'
-import { blockExplorer, chainInfo, cowExplorer } from '../lib/chain.js'
+import { blockExplorer, chainLabel, cowExplorer } from '../lib/chain.js'
 import { forgetBridge, listBridges, type SavedBridge } from '../lib/storage.js'
 
 /**
@@ -45,7 +45,7 @@ export function BridgeHistory({ revision }: { revision: number }) {
                 {bridge.sent.amount} {bridge.sent.symbol}
               </strong>
               <span className="muted">
-                {chainName(bridge.sourceChainId)} → {chainName(bridge.destinationChainId)} · {bridge.route} ·{' '}
+                {chainLabel(bridge.sourceChainId)} → {chainLabel(bridge.destinationChainId)} · {bridge.route} ·{' '}
                 {bridge.mode === 'atomic' ? 'atomic' : 'direct'} · {new Date(bridge.sentAt).toLocaleString()}
               </span>
             </div>
@@ -53,7 +53,13 @@ export function BridgeHistory({ revision }: { revision: number }) {
               for <code>{bridge.label}</code>, expecting ~{bridge.expected.amount} {bridge.expected.symbol}
             </div>
             <div className="bridge-history-row">
-              <a href={bridgeExplorerUrl(bridge.hash as `0x${string}`)} target="_blank" rel="noreferrer">
+              {/* Through the provider that quoted it: a row from another one would otherwise be sent
+                  to the wrong tracker. Rows written before there was a choice fall back to the default. */}
+              <a
+                href={bridgeExplorerUrl(bridge.hash as `0x${string}`, bridge.provider)}
+                target="_blank"
+                rel="noreferrer"
+              >
                 Bridge
               </a>
               <a
@@ -87,15 +93,7 @@ export function BridgeHistory({ revision }: { revision: number }) {
   )
 }
 
-/** Both of these fall back rather than throw: a stored row may name a chain this build dropped. */
-function chainName(chainId: number): string {
-  try {
-    return chainInfo(chainId).label
-  } catch {
-    return `chain ${chainId}`
-  }
-}
-
+/** Falls back rather than throwing: a stored row may name a chain this build dropped. */
 function explorerUrl(chainId: number): string {
   try {
     return blockExplorer(chainId).url

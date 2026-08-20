@@ -1014,3 +1014,49 @@ label.radio input {
 .bridge-history-row .muted {
   color: var(--muted);
 }
+
+/*
+ * A verification check is a verdict plus the comparison that produced it, so the detail sits *under*
+ * the verdict rather than beside it — the sentence is the evidence, and somebody deciding whether to
+ * sign needs both without a second click. Tighter than a free-standing `.hint`, which is spaced to
+ * follow a paragraph rather than to hang off the line above it. Scoped to `.status` so every other
+ * hint on the page keeps its spacing.
+ */
+.status .hint {
+  margin-top: 0.15rem;
+  max-width: 74ch;
+}
+
+/*
+ * Blocking or advisory, on the verdict's own line. `.keeper-tag` is this page's only badge and it is
+ * sized for a grid cell, so inline beside text it needs the gap the grid used to supply — and the
+ * nudge, because an uppercase tag on a sentence sits a shade too high.
+ */
+.status .keeper-tag {
+  display: inline-block;
+  margin-left: 0.45rem;
+  vertical-align: 0.05em;
+}
+
+/*
+ * The failure branch belongs to the atomic option above it rather than to the delivery choice as a
+ * whole, so it is indented to the width of `label.radio`'s own control column — the radio plus its
+ * gap — and capped to the same measure, so it reads as part of that option's sentence rather than as
+ * a third choice.
+ */
+.bridge fieldset.delivery-failure {
+  margin-left: 1.6rem;
+  max-width: 62ch;
+}
+
+/*
+ * Sub-headings inside the review step. It is the one step with enough in it to need dividing, and its
+ * parts are not numbered choices — so they sit a step below `h3` rather than continuing the sequence.
+ */
+.bridge h4 {
+  margin: 1.2rem 0 0.5rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}

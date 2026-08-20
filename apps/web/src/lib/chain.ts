@@ -163,6 +163,20 @@ export function blockExplorer(chainId: number): { name: string; url: string } {
   return chainInfo(chainId).blockExplorer
 }
 
+/**
+ * A chain's name, or its number when this build has never heard of it.
+ *
+ * cow-sdk knows every chain the app offers, so the fallback is for the cases where a *stored* record
+ * or a bridge route names one it does not — and there, falling back beats throwing inside a render.
+ */
+export function chainLabel(chainId: number): string {
+  try {
+    return chainInfo(chainId).label
+  } catch {
+    return `chain ${chainId}`
+  }
+}
+
 /** The wrapped native token's address, so a natively funded drop can trade. */
 export function wrappedNative(chainId: number): Address {
   return wrappedNativeToken(chainId).address

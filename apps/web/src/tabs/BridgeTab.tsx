@@ -1,26 +1,41 @@
-import type { BridgeQuote } from '@cowprotocol/cow-drop-bridging'
 import { ON_FAILURE, type DropRecipeJson, type OnFailure } from '@cowprotocol/cow-drop-sdk'
 import { formatUnits, parseUnits, type Address, type Hex } from 'viem'
 import { useEffect, useMemo, useState } from 'react'
 
 import { BridgeHistory } from '../components/BridgeHistory.js'
+import { BridgeProviderPicker } from '../components/BridgeProviderPicker.js'
+import { BridgeReview } from '../components/BridgeReview.js'
+import { BridgeRouteList } from '../components/BridgeRouteList.js'
 import { TokenPicker } from '../components/TokenPicker.js'
 import {
   BRIDGE_SOURCE_CHAINS,
+  DEFAULT_BRIDGE_PROVIDER,
   approveBridge,
   bridgeExplorerUrl,
+  buildAndVerifyRoute,
+  capabilityOf,
   deliverableTokens,
+  describeBridgeError,
+  describeExecution,
+  isQuoteExpired,
+  listBridgeRoutes,
+  summarise,
   planFrom,
-  quoteBridge,
+  providerInfo,
   readBridgeAllowance,
   readTokenBalance,
   sendBridge,
+  simulationCheck,
+  walletChecks,
   type BridgePlan,
+  type BridgeQuote,
+  type BridgeRoutes,
+  type CheckOutcome,
   type DeliveryMode,
 } from '../lib/bridge.js'
 import {
   blockExplorer,
-  chainInfo,
+  chainLabel,
   cowExplorer,
   isUserRejection,
   onChainChanged,
@@ -36,12 +51,13 @@ import { fetchTokenList, findToken, type TokenInfo } from '../lib/tokenList.js'
  *
  * This tab builds no recipe. Bridging is a way of *funding* a drop, not a kind of drop, so the recipe
  * arrives from the builder and any of them works — a swap, a TWAP, a stop-loss. What is chosen here is
- * only where the money comes from.
+ * only where the money comes from, which route carries it, and — the part this tab now spends most of
+ * its space on — whether the transaction the bridge built actually does what it says.
  *
- * The order of operations is the load-bearing part, and it is why the bridge button does more than one
- * thing: the keeper must hold the recipe *before* the money leaves. It is the only holder of the
- * appData pre-images the order book needs, and it is the fallback that activates when the atomic path
- * declines — and neither is any use if it learns about the drop after the fill.
+ * The order of operations is load-bearing twice over. The keeper must hold the recipe *before* the
+ * money leaves: it is the only holder of the appData pre-images the order book needs. And nothing may
+ * be signed before it has been checked, which is why routes are listed before one is built, and built
+ * before it is reviewed.
  */
 export function BridgeTab({
   account,
@@ -52,7 +68,33 @@ export function BridgeTab({
   recipe: DropRecipeJson | null
   onBuildRecipe: () => void
 }) {
-  if (!recipe) return <EmptyState onBuildRecipe={onBuildRecipe} />
+  /**
+   * Everything about the destination comes from the recipe, and never from a quote.
+   *
+   * Hoisted out of the form below so it can key the remount. It is pure and cheap, so computing it
+   * here costs nothing and buys the guarantee that no form state outlives the drop it was typed for.
+   */
+  const plan = useMemo<{ ok: true; value: BridgePlan } | { ok: false; error: string } | null>(() => {
+    if (!recipe) return null
+    try {
+      return { ok: true, value: planFrom(recipe) }
+    } catch (cause) {
+      return { ok: false, error: cause instanceof Error ? cause.message : String(cause) }
+    }
+  }, [recipe])
+
+  if (!recipe || !plan) return <EmptyState onBuildRecipe={onBuildRecipe} />
+
+  if (!plan.ok) {
+    return (
+      <section>
+        <h2>Bridge &amp; Swap</h2>
+        <p className="error">{plan.error}</p>
+        <button onClick={onBuildRecipe}>Back to Recipes</button>
+      </section>
+    )
+  }
+
   // A quote is priced for a sender, and the transaction is sent from one, so there is nothing useful
   // to show before there is an account — unlike the builder, which is pure arithmetic without a wallet.
   if (!account) {
@@ -62,12 +104,28 @@ export function BridgeTab({
 
         <section>
           <h2>Bridge &amp; Swap</h2>
-          <p>Connect a wallet to quote a route and send the bridge transaction.</p>
+          <p>Connect a wallet to list routes and send the bridge transaction.</p>
         </section>
       </>
     )
   }
-  return <Bridge account={account} recipe={recipe} onBuildRecipe={onBuildRecipe} />
+
+  return (
+    /*
+     * Keyed on the drop, so changing which recipe is being funded remounts the whole form.
+     *
+     * Without it, `readBridgeForm` runs once for whichever drop was first and every field keeps the
+     * previous drop's value — which the save effect then writes back under the *new* drop's key. One
+     * line here is worth more than seven careful resets.
+     */
+    <Bridge
+      key={plan.value.drop}
+      account={account}
+      plan={plan.value}
+      recipe={recipe}
+      onBuildRecipe={onBuildRecipe}
+    />
+  )
 }
 
 function EmptyState({ onBuildRecipe }: { onBuildRecipe: () => void }) {
@@ -97,32 +155,30 @@ type KeeperState = 'none' | 'unknown' | 'checking' | 'registered' | 'failed'
 
 function Bridge({
   account,
+  plan,
   recipe,
   onBuildRecipe,
 }: {
   account: Address
+  plan: BridgePlan
   recipe: DropRecipeJson
   onBuildRecipe: () => void
 }) {
-  /** Everything about the destination comes from the recipe, and never quotes. */
-  const plan = useMemo<{ ok: true; value: BridgePlan } | { ok: false; error: string }>(() => {
-    try {
-      return { ok: true, value: planFrom(recipe) }
-    } catch (cause) {
-      return { ok: false, error: cause instanceof Error ? cause.message : String(cause) }
-    }
-  }, [recipe])
-
-  const destinationChainId = plan.ok ? plan.value.destinationChainId : null
+  const { compiled, drop, deliveredToken } = plan
+  const destinationChain = plan.destinationChainId
 
   /**
    * What this browser was last setting up for *this* drop.
    *
-   * Read once, during the first render, so the fields never flash a default before being corrected —
-   * and so the token-list effect below sees the restored token rather than racing it.
+   * Read once during the first render, so the fields never flash a default before being corrected —
+   * and so the token-list effect below sees the restored token rather than racing it. Safe to read once
+   * now that the component is keyed on the drop.
    */
-  const [restored] = useState(() => (plan.ok ? readBridgeForm(plan.value.drop) : null))
+  const [restored] = useState(() => readBridgeForm(drop))
 
+  const [providerKey, setProviderKey] = useState<string>(() =>
+    restored?.provider && providerInfo(restored.provider) ? restored.provider : DEFAULT_BRIDGE_PROVIDER,
+  )
   const [sourceChainId, setSourceChainId] = useState<number>(
     () => restored?.sourceChainId ?? BRIDGE_SOURCE_CHAINS.find((id) => id !== recipe.chainId) ?? 1,
   )
@@ -132,22 +188,34 @@ function Bridge({
   const [onFailure, setOnFailure] = useState<OnFailure>(
     restored?.onFailure === 'refund-owner' ? 'refund-owner' : 'leave-at-drop',
   )
-  /**
-   * Direct unless deliberately changed. It works with every bridge and has nothing to steal, which is
-   * worth more than the latency atomic buys — see `docs/BRIDGING.md`.
-   */
-  const [mode, setMode] = useState<DeliveryMode>(restored?.mode === 'atomic' ? 'atomic' : 'direct')
 
-  const [quote, setQuote] = useState<BridgeQuote | null>(null)
-  const [quoting, setQuoting] = useState(false)
   /**
-   * Quote and send failures stay in this tab rather than going to the page banner.
+   * Always direct until deliberately changed, and never restored from storage.
    *
-   * Both are answers to a button a few lines away — "no route for that pair", "the quote expired" —
-   * and the fix is always to change something right there. Reporting them at the top of the page put
-   * the diagnosis a scroll away from the control that caused it.
+   * The delivery mode is a safety posture rather than a half-typed form field. Restoring `atomic`
+   * because it was chosen once, silently, would re-arm the riskier path without anyone deciding to.
    */
-  const [quoteError, setQuoteError] = useState<string | null>(null)
+  const [mode, setMode] = useState<DeliveryMode>('direct')
+
+  const capability = useMemo(() => capabilityOf(providerKey), [providerKey])
+
+  const [routes, setRoutes] = useState<BridgeRoutes | null>(null)
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
+  const [built, setBuilt] = useState<BridgeQuote | null>(null)
+  const [expired, setExpired] = useState(false)
+  const [simulation, setSimulation] = useState<CheckOutcome | null>(null)
+  const [listing, setListing] = useState(false)
+  const [building, setBuilding] = useState(false)
+
+  /**
+   * Failures stay next to the button that caused them.
+   *
+   * Each is an answer to a control a few lines away — "no route for that pair", "the quote expired" —
+   * and the fix is always to change something right there. Reporting them at the top of the page put
+   * the diagnosis a scroll away from its cause.
+   */
+  const [routesError, setRoutesError] = useState<string | null>(null)
+  const [buildError, setBuildError] = useState<string | null>(null)
   const [sendError, setSendError] = useState<string | null>(null)
   const [allowance, setAllowance] = useState<bigint | null>(null)
   const [busy, setBusy] = useState(false)
@@ -156,12 +224,13 @@ function Bridge({
   const [walletChain, setWalletChain] = useState<number | null>(null)
   /** null while unread — an unreadable balance must not read as zero. */
   const [balance, setBalance] = useState<bigint | null>(null)
-  /** true/false once Bungee has answered, null while unknown or unasked. */
+  /** true/false once the provider has answered, null while unknown or unasked. */
   const [reachable, setReachable] = useState<boolean | null>(null)
   /** Bumped on a send, so the list below re-reads without polling localStorage. */
   const [historyRevision, setHistoryRevision] = useState(0)
 
   const decimals = findToken(tokens, sourceToken ?? '')?.decimals ?? 18
+  const symbol = findToken(tokens, sourceToken ?? '')?.symbol ?? ''
 
   /** The amount, or null while it is unparseable — an empty box is not an error to shout about. */
   const amount = useMemo(() => {
@@ -222,41 +291,139 @@ function Bridge({
    *
    * The chain list is far more permissive than the routes behind it, so this is asked up front rather
    * than discovered as an empty route list after the user has picked an amount. Advisory: an
-   * unanswered lookup leaves this null and quoting still goes ahead.
+   * unanswered lookup leaves this null and listing routes still goes ahead.
    */
   useEffect(() => {
-    if (!sourceToken || destinationChainId === null) return
+    if (!sourceToken) return
     let cancelled = false
     setReachable(null)
     void deliverableTokens({
       sellChainId: sourceChainId,
       sellToken: sourceToken,
-      buyChainId: destinationChainId,
+      buyChainId: destinationChain,
       mode,
-    }).then((tokens) => {
-      if (cancelled || tokens === null) return
-      const wanted = plan.ok ? plan.value.deliveredToken.toLowerCase() : ''
-      setReachable(tokens.some((token) => token.address.toLowerCase() === wanted))
+      providerKey,
+    }).then((delivered) => {
+      if (cancelled || delivered === null) return
+      const wanted = deliveredToken.toLowerCase()
+      setReachable(delivered.some((token) => token.address.toLowerCase() === wanted))
     })
     return () => {
       cancelled = true
     }
-  }, [sourceChainId, sourceToken, destinationChainId, plan, mode])
+  }, [sourceChainId, sourceToken, destinationChain, deliveredToken, mode, providerKey])
 
-  /** Remember the choices, so a reload mid-setup does not start over. */
+  /** Remember the choices, so a reload mid-setup does not start over. Never the delivery mode. */
   useEffect(() => {
-    if (!plan.ok || !sourceToken) return
-    saveBridgeForm(plan.value.drop, { sourceChainId, sourceToken, amountText, onFailure, mode })
-  }, [plan, sourceChainId, sourceToken, amountText, onFailure, mode])
+    if (!sourceToken) return
+    saveBridgeForm(drop, { sourceChainId, sourceToken, amountText, onFailure, provider: providerKey })
+  }, [drop, sourceChainId, sourceToken, amountText, onFailure, providerKey])
 
-  /** A quote is for one route, amount and destination. Any of them moving makes it stale. */
+  /**
+   * A route set is for one provider, pair, amount and destination. Any of them moving makes it stale.
+   *
+   * `account` is in here for two independent reasons, and its absence was a real defect: the routes are
+   * priced for a sender, and the built transaction is the transaction *that account* sends. The wallet
+   * can switch accounts without remounting this component, so nothing else would have cleared it.
+   */
   useEffect(() => {
-    setQuote(null)
+    setRoutes(null)
+    setSelectedRouteId(null)
+    setBuilt(null)
+    setExpired(false)
+    setSimulation(null)
     setAllowance(null)
     setBridgeHash(null)
-    setQuoteError(null)
+    setRoutesError(null)
+    setBuildError(null)
     setSendError(null)
-  }, [sourceChainId, sourceToken, amountText, onFailure, mode, recipe])
+  }, [providerKey, sourceChainId, sourceToken, amountText, onFailure, mode, account])
+
+  /**
+   * Build and check the selected route.
+   *
+   * Selecting is what triggers this, so only the route a person actually chose is ever built — and a
+   * disabled route is refused by the library before any request goes out.
+   */
+  useEffect(() => {
+    if (!routes || !selectedRouteId) return
+
+    let cancelled = false
+    setBuilding(true)
+    setBuildError(null)
+    setBuilt(null)
+    setSimulation(null)
+    setExpired(false)
+
+    void buildAndVerifyRoute({ routes, routeId: selectedRouteId, providerKey })
+      .then((quote) => {
+        if (cancelled) return
+        setBuilt(quote)
+        setExpired(isQuoteExpired(quote))
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setBuildError(describeBridgeError(cause))
+      })
+      .finally(() => {
+        if (!cancelled) setBuilding(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [routes, selectedRouteId, providerKey])
+
+  /** The allowance for whatever the built route actually asked for, which is per-route. */
+  useEffect(() => {
+    const approval = built?.approval
+    if (!approval) {
+      setAllowance(null)
+      return
+    }
+
+    let cancelled = false
+    void readBridgeAllowance({
+      chainId: sourceChainId,
+      token: approval.token,
+      owner: account,
+      spender: approval.spender,
+    }).then((allowed) => {
+      if (!cancelled) setAllowance(allowed)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [built, sourceChainId, account])
+
+  /** Does the source chain accept it? Advisory, and it says nothing about the destination chain. */
+  useEffect(() => {
+    if (!built) return
+    let cancelled = false
+    void simulationCheck({ quote: built, account }).then((check) => {
+      if (!cancelled) setSimulation(check)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [built, account])
+
+  /**
+   * Notice the moment the quote goes stale.
+   *
+   * One timeout at the expiry instant rather than a ticking interval — nothing else in this app polls,
+   * and a single timer honours that. `onBridge` re-checks at click time anyway, because a laptop that
+   * sleeps through the timer wakes up with a stale quote and a live button.
+   */
+  useEffect(() => {
+    if (!built) return
+    const remaining = built.expiresAt * 1000 - Date.now()
+    if (remaining <= 0) {
+      setExpired(true)
+      return
+    }
+    const timer = setTimeout(() => setExpired(true), remaining)
+    return () => clearTimeout(timer)
+  }, [built])
 
   /**
    * Does the destination keeper already hold this recipe?
@@ -267,15 +434,14 @@ function Bridge({
    * blocking on.
    */
   useEffect(() => {
-    if (destinationChainId === null) return
-    if (keeperUrl(destinationChainId) === null) {
+    if (keeperUrl(destinationChain) === null) {
       setKeeperState('none')
       return
     }
 
     let cancelled = false
     setKeeperState('checking')
-    void readKeeperDrop(plan.ok ? plan.value.drop : '0x', destinationChainId)
+    void readKeeperDrop(drop, destinationChain)
       .then((held) => {
         if (!cancelled) setKeeperState(held ? 'registered' : 'unknown')
       })
@@ -285,56 +451,88 @@ function Bridge({
     return () => {
       cancelled = true
     }
-  }, [destinationChainId, plan])
+  }, [destinationChain, drop])
 
-  if (!plan.ok) {
-    return (
-      <section>
-        <h2>Bridge &amp; Swap</h2>
-        <p className="error">{plan.error}</p>
-        <button onClick={onBuildRecipe}>Back to Recipes</button>
-      </section>
-    )
-  }
-
-  const { compiled, drop, deliveredToken } = plan.value
-  const destinationChain = destinationChainId as number
   const wrongNetwork = walletChain !== null && walletChain !== sourceChainId
-  const symbol = findToken(tokens, sourceToken ?? '')?.symbol ?? ''
   const overBalance = amount !== null && balance !== null && amount > balance
-  const needsApproval =
-    quote?.approval != null && allowance !== null && allowance < quote.approval.amount
 
-  const onQuote = async () => {
+  /**
+   * The whole verdict, library and app together, through the library's own `summarise`.
+   *
+   * Merged rather than displayed in two places because a person deciding whether to sign should read
+   * one list — three of these can only be answered with an RPC or the wallet, which is why they cannot
+   * live in the library, not a reason to put them somewhere else on screen.
+   *
+   * Re-summarised rather than re-derived. Spelling the rule out here as `state !== 'pass'` is what made
+   * every direct-mode send impossible: it counted `not-applicable` — "this mode has no payload, so
+   * there is nothing to look for" — as a failure, while the library called the same quote sendable. One
+   * function owns the rule, so the button and the evidence beside it cannot tell different stories.
+   */
+  const verification = useMemo(() => {
+    if (!built) return null
+    return summarise([
+      ...built.verification.checks,
+      ...walletChecks({
+        quote: built,
+        walletChainId: walletChain,
+        balance,
+        sellAmount: amount ?? 0n,
+        allowance,
+        symbol,
+      }),
+      ...(simulation ? [simulation] : []),
+    ])
+  }, [built, walletChain, balance, amount, allowance, symbol, simulation])
+
+  const checks: readonly CheckOutcome[] = verification?.checks ?? []
+  const blocking = verification?.blocking ?? []
+  const approval = built?.approval ?? null
+  const needsApproval = approval !== null && allowance !== null && allowance < approval.amount
+  /**
+   * An unreadable allowance is not permission.
+   *
+   * This used to require `allowance !== null` to be true before it could ask for an approval, so an RPC
+   * that would not answer enabled a send that then reverted. Unknown blocks the bridge and *offers* the
+   * approval: approving unnecessarily costs a click, and not approving costs a failed bridge.
+   */
+  const allowanceUnknown = approval !== null && allowance === null
+
+  const canSend =
+    built !== null &&
+    blocking.length === 0 &&
+    !expired &&
+    !busy &&
+    !wrongNetwork &&
+    !needsApproval &&
+    !allowanceUnknown &&
+    bridgeHash === null
+
+  const onFindRoutes = async () => {
     if (!amount || !sourceToken) return
-    setQuoteError(null)
-    setQuoting(true)
+    setRoutesError(null)
+    setListing(true)
+    setRoutes(null)
+    setSelectedRouteId(null)
+    setBuilt(null)
     try {
-      const quoted = await quoteBridge({
-        plan: plan.value,
+      const found = await listBridgeRoutes({
+        plan,
         sender: account,
         sellChainId: sourceChainId,
         sellToken: sourceToken,
         sellAmount: amount,
         mode,
         onFailure,
+        providerKey,
       })
-      setQuote(quoted)
-
-      if (quoted.approval) {
-        setAllowance(
-          await readBridgeAllowance({
-            chainId: sourceChainId,
-            token: quoted.approval.token,
-            owner: account,
-            spender: quoted.approval.spender,
-          }),
-        )
-      }
+      setRoutes(found)
+      // Pre-select the best allowed one, because that is the choice a person would make anyway — but
+      // only after they can see what was refused and why.
+      setSelectedRouteId(found.routes.find((route) => route.allowed)?.id ?? null)
     } catch (cause) {
-      setQuoteError(describeBridgeError(cause))
+      setRoutesError(describeBridgeError(cause))
     } finally {
-      setQuoting(false)
+      setListing(false)
     }
   }
 
@@ -355,12 +553,12 @@ function Bridge({
   }
 
   const onApprove = async () => {
-    if (!quote?.approval) return
+    if (!approval) return
     setSendError(null)
     setBusy(true)
     try {
-      await approveBridge({ account, chainId: sourceChainId, approval: quote.approval })
-      setAllowance(quote.approval.amount)
+      await approveBridge({ account, chainId: sourceChainId, approval })
+      setAllowance(approval.amount)
     } catch (cause) {
       if (!isUserRejection(cause)) setSendError(describeBridgeError(cause))
     } finally {
@@ -368,33 +566,41 @@ function Bridge({
     }
   }
 
+  const onRebuild = () => {
+    // Re-selecting the same route re-runs the build effect, which is the natural refresh gesture.
+    const current = selectedRouteId
+    setSelectedRouteId(null)
+    setTimeout(() => setSelectedRouteId(current), 0)
+  }
+
   const onBridge = async () => {
-    if (!quote) return
+    if (!built) return
     setSendError(null)
     setBusy(true)
     try {
       // Before the money moves, never after: the keeper holds the appData pre-images the order book
-      // needs, and is the fallback if the atomic activation declines.
+      // needs, and in direct mode it is the only thing that will activate the drop at all.
       await ensureRegistered()
-      const hash = await sendBridge({ account, quote })
+      const hash = await sendBridge({ account, quote: built })
       setBridgeHash(hash)
 
       // Written straight after the wallet returns, so a reload before the bridge fills still finds it.
       saveBridge({
         hash,
         mode,
+        provider: providerKey,
         sourceChainId,
         destinationChainId: destinationChain,
         drop,
         label: recipe.label,
-        route: quote.route.name,
+        route: built.route.name,
         sent: {
-          symbol: quote.input.token.symbol,
-          amount: formatUnits(quote.input.amount, quote.input.token.decimals),
+          symbol: built.input.token.symbol,
+          amount: formatUnits(built.input.amount, built.input.token.decimals),
         },
         expected: {
-          symbol: quote.output.token.symbol,
-          amount: formatUnits(quote.output.amount, quote.output.token.decimals),
+          symbol: built.output.token.symbol,
+          amount: formatUnits(built.output.amount, built.output.token.decimals),
         },
         sentAt: Date.now(),
       })
@@ -416,16 +622,18 @@ function Bridge({
         <h2>Bridge &amp; Swap</h2>
         <p className="hint">
           {mode === 'direct'
-            ? `The bridge pays the drop address on ${chainName(destinationChain)} directly. The keeper activates it once the money lands, and your order goes live then.`
-            : `The bridge pays a receiver contract on ${chainName(destinationChain)}, which forwards the tokens to the drop and runs its recipe in the same transaction. Your order is live as soon as the bridge fills.`}
+            ? `The bridge pays the drop address on ${chainLabel(destinationChain)} directly. The keeper activates it once the money lands, and your order goes live then.`
+            : `The bridge pays a receiver contract on ${chainLabel(destinationChain)}, which forwards the tokens to the drop and runs its recipe in the same transaction.`}
         </p>
+
+        <BridgeProviderPicker value={providerKey} onChange={setProviderKey} busy={busy} />
 
         <h3>1 · The drop you are funding</h3>
         <dl className="facts">
           <dt>Recipe</dt>
           <dd>{recipe.label}</dd>
           <dt>Lands on</dt>
-          <dd>{chainName(destinationChain)}</dd>
+          <dd>{chainLabel(destinationChain)}</dd>
           <dt>Drop address</dt>
           <dd>
             <a href={`${explorer.url}/address/${drop}`} target="_blank" rel="noreferrer">
@@ -454,7 +662,7 @@ function Bridge({
           >
             {BRIDGE_SOURCE_CHAINS.filter((id) => id !== destinationChain).map((id) => (
               <option key={id} value={id}>
-                {chainName(id)}
+                {chainLabel(id)}
               </option>
             ))}
           </select>
@@ -482,7 +690,7 @@ function Bridge({
         </label>
         <p className="hint">
           {balance === null ? (
-            'Balance unavailable — this chain\u2019s public RPC did not answer. You can still enter an amount.'
+            'Balance unavailable — this chain’s public RPC did not answer. You can still enter an amount.'
           ) : (
             <>
               Balance {formatUnits(balance, decimals)} {symbol}
@@ -501,30 +709,15 @@ function Bridge({
             </>
           )}
         </p>
-        {overBalance && <p className="error">That is more than you hold on {chainName(sourceChainId)}.</p>}
+        {overBalance && <p className="error">That is more than you hold on {chainLabel(sourceChainId)}.</p>}
 
-        {/*
-          Two different findings wearing one sentence before this was split. In atomic mode the pair may
-          be perfectly bridgeable and merely unable to run a payload — in which case the fix is to switch
-          mode, not to switch chain, and saying "this pair will not work" sent people the wrong way.
-        */}
-        {reachable === false &&
-          (mode === 'atomic' ? (
-            <p className="error">
-              No bridge that runs a destination payload can deliver <code>{deliveredToken}</code> on{' '}
-              {chainName(destinationChain)} from {chainName(sourceChainId)}. Switching to{' '}
-              <button className="link" onClick={() => setMode('direct')}>
-                straight to the drop
-              </button>{' '}
-              usually fixes this — it works with every bridge — or pick another source chain.
-            </p>
-          ) : (
-            <p className="error">
-              Bungee cannot deliver <code>{deliveredToken}</code> on {chainName(destinationChain)} from{' '}
-              {chainName(sourceChainId)} through any bridge. Pick another source chain, or a recipe whose
-              sell token this bridge can deliver there.
-            </p>
-          ))}
+        {reachable === false && (
+          <p className="error">
+            {providerInfo(providerKey)?.name ?? 'This bridge'} cannot deliver <code>{deliveredToken}</code>{' '}
+            on {chainLabel(destinationChain)} from {chainLabel(sourceChainId)} through any bridge. Pick
+            another source chain, or a recipe whose sell token can be delivered there.
+          </p>
+        )}
 
         {/*
           Here rather than only beside the send button. The source chain is chosen just above, and the
@@ -533,10 +726,10 @@ function Bridge({
         */}
         {wrongNetwork && (
           <p className="hint">
-            Your wallet is on {chainName(walletChain as number)}, so the bridge transaction cannot be
+            Your wallet is on {chainLabel(walletChain as number)}, so the bridge transaction cannot be
             sent yet.{' '}
             <button className="link" onClick={() => void switchChain(sourceChainId)}>
-              Switch to {chainName(sourceChainId)}
+              Switch to {chainLabel(sourceChainId)}
             </button>
           </p>
         )}
@@ -563,19 +756,40 @@ function Bridge({
             name="mode"
             checked={mode === 'atomic'}
             onChange={() => setMode('atomic')}
-            disabled={busy}
+            disabled={busy || !capability.atomicAvailable}
           />
           <span>
-            <strong>Activate inside the bridge transaction.</strong> The order is live the instant the
-            bridge fills, and the relayer pays the activation gas. Only bridges that run a destination
-            payload can do this, so fewer routes — and if the delivery fails to execute, the tokens sit in
-            a shared contract that anyone may sweep.
+            <strong>Activate inside the bridge transaction.</strong>{' '}
+            {!capability.atomicAvailable && <em>Not available.</em>} The order would be live the instant
+            the bridge fills, and the relayer would pay the activation gas — but that needs a bridge
+            that really runs a destination payload, and no quote can tell you whether one does: a route
+            that ignores the payload quotes identically to one that honours it.
           </span>
         </label>
 
+        {!capability.atomicAvailable && (
+          <div className="hint warn-box">
+            <p>
+              No bridge has been watched running a destination payload on-chain, so there is nothing
+              here we can offer honestly. A delivery that is not executed sits in a contract shared by
+              everyone, which forwards its whole balance to whichever drop its caller names — so anyone
+              may sweep it, and they do.
+            </p>
+            <ul className="hint hint-list">
+              {capability.known.map(({ name, execution }) => (
+                <li key={name}>{describeExecution(name, execution)}</li>
+              ))}
+            </ul>
+            <p>
+              Deliver straight to the drop instead. It reaches more routes, and there is nothing in the
+              path to redirect. See <code>docs/BRIDGING.md</code>.
+            </p>
+          </div>
+        )}
+
         {mode === 'atomic' && (
-          <>
-            <h3>4 · If the recipe will not run</h3>
+          <fieldset className="subsection delivery-failure">
+            <legend>If the recipe will not run</legend>
             <p className="hint">
               A recipe can legitimately decline — a minimum-balance guard refusing a bridge&apos;s first
               tranche is the guard working. The tokens have arrived either way, so this is where they go.
@@ -604,59 +818,70 @@ function Bridge({
                 )}
               </label>
             ))}
-          </>
+          </fieldset>
         )}
 
-        <h3>{mode === 'atomic' ? '5' : '4'} · Route</h3>
-        <button onClick={onQuote} disabled={!amount || !sourceToken || overBalance || quoting || busy}>
-          {quoting ? 'Getting a quote…' : quote ? 'Re-quote' : 'Get a quote'}
+        <h3>4 · Routes</h3>
+        <button
+          onClick={() => void onFindRoutes()}
+          disabled={!amount || !sourceToken || overBalance || listing || busy}
+        >
+          {listing ? 'Finding routes…' : routes ? 'Find routes again' : 'Find routes'}
         </button>
 
-        {quoteError && <p className="error">{quoteError}</p>}
+        {routesError && <p className="error">{routesError}</p>}
 
-        {quote && (
-          <>
-            <dl className="facts">
-              <dt>Bridge</dt>
-              <dd>
-                {quote.route.name} · about {Math.round(quote.route.estimatedSeconds / 60)} min
-              </dd>
-              <dt>Sending</dt>
-              <dd>
-                {formatUnits(quote.input.amount, quote.input.token.decimals)} {quote.input.token.symbol}
-              </dd>
-              <dt>Delivered</dt>
-              <dd>
-                ~{formatUnits(quote.output.amount, quote.output.token.decimals)} {quote.output.token.symbol}
-                <span className="hint">
-                  {' '}
-                  (at least {formatUnits(quote.output.minAmount, quote.output.token.decimals)})
-                </span>
-              </dd>
-            </dl>
-            <p className="hint">
-              The drop&apos;s own minimum lives in the recipe, not in this quote — it is part of the drop
-              address, so taking it from a route that changes on every refresh would move the address the
-              bridge is aimed at.
-            </p>
-          </>
+        {routes && (
+          <BridgeRouteList
+            listing={routes}
+            selectedId={selectedRouteId}
+            onSelect={setSelectedRouteId}
+            busy={busy || building}
+          />
         )}
 
-        <h3>{mode === 'atomic' ? '6' : '5'} · Send it</h3>
+        <h3>5 · Review what you are signing</h3>
+        {!routes ? (
+          <p className="hint">Find routes first, then pick one to see exactly what it would do.</p>
+        ) : building ? (
+          <p className="hint">Building the transaction and checking it…</p>
+        ) : buildError ? (
+          <p className="error">{buildError}</p>
+        ) : !built ? (
+          <p className="hint">Pick a route above.</p>
+        ) : (
+          <BridgeReview quote={built} checks={checks} compiled={compiled} expired={expired} />
+        )}
+
+        {expired && built && (
+          <p className="hint">
+            <button className="link" onClick={onRebuild} disabled={busy}>
+              Get a fresh transaction
+            </button>{' '}
+            for the same route. Nothing else on this page changes.
+          </p>
+        )}
+
+        <h3>6 · Send it</h3>
         <KeeperNote state={keeperState} chainId={destinationChain} mode={mode} />
 
-        {needsApproval && (
+        {(needsApproval || allowanceUnknown) && (
           <button onClick={() => void onApprove()} disabled={busy || wrongNetwork}>
-            Approve {quote?.input.token.symbol}
+            Approve {symbol}
           </button>
         )}
 
-        <button
-          onClick={() => void onBridge()}
-          disabled={!quote || busy || wrongNetwork || needsApproval || bridgeHash !== null}
-        >
+        <button onClick={() => void onBridge()} disabled={!canSend}>
           {busy ? 'Sending…' : 'Bridge and activate'}
         </button>
+
+        {built && blocking.length > 0 && (
+          <p className="error">
+            {blocking.length === 1 ? 'One check did not pass' : `${blocking.length} checks did not pass`}
+            , so this cannot be sent. There is no override: a check that fails means the bytes above do
+            not do what this page says they do.
+          </p>
+        )}
 
         {sendError && <p className="error">{sendError}</p>}
 
@@ -665,16 +890,16 @@ function Bridge({
             <p>
               {mode === 'direct'
                 ? 'Sent. The bridge fills in a few minutes; the keeper then activates the drop and places the order. Nothing else is needed from you.'
-                : 'Sent. The bridge fills in a few minutes, and the order is placed in the same transaction as the fill — so nothing else is needed from you.'}
+                : 'Sent. The bridge fills in a few minutes, and the order is placed in the same transaction as the fill.'}
             </p>
             {/* Three links because they are three different questions: has the bridge filled, did the
                 money land, and is the order live. The last is the one that says it worked. */}
             <ul className="hint hint-list">
               <li>
-                <a href={bridgeExplorerUrl(bridgeHash)} target="_blank" rel="noreferrer">
+                <a href={bridgeExplorerUrl(bridgeHash, providerKey)} target="_blank" rel="noreferrer">
                   Track the bridge
                 </a>{' '}
-                — the source transaction, until it fills on {chainName(destinationChain)}.
+                — the source transaction, until it fills on {chainLabel(destinationChain)}.
               </li>
               <li>
                 <a href={`${explorer.url}/address/${drop}`} target="_blank" rel="noreferrer">
@@ -687,7 +912,7 @@ function Bridge({
                 <a href={`${cowExplorer(destinationChain)}/address/${drop}`} target="_blank" rel="noreferrer">
                   The order in CoW Explorer
                 </a>{' '}
-                — appears once the fill has activated the drop.
+                — appears once the drop has been activated.
               </li>
             </ul>
           </>
@@ -699,20 +924,20 @@ function Bridge({
 
 function KeeperNote({ state, chainId, mode }: { state: KeeperState; chainId: number; mode: DeliveryMode }) {
   if (state === 'registered') {
-    return <p className="hint">The {chainName(chainId)} keeper already holds this recipe.</p>
+    return <p className="hint">The {chainLabel(chainId)} keeper already holds this recipe.</p>
   }
   if (state === 'none') {
     // In direct mode the keeper is the *only* thing that will activate, so this stops being a caveat
     // and becomes the reason nothing will happen.
     return mode === 'direct' ? (
       <p className="error">
-        No keeper is configured for {chainName(chainId)}, and in this mode the keeper is the only thing
+        No keeper is configured for {chainLabel(chainId)}, and in this mode the keeper is the only thing
         that activates the drop. The money will arrive safely and then sit there until you press
         Activate yourself.
       </p>
     ) : (
       <p className="hint">
-        No keeper is configured for {chainName(chainId)}. The bridge still activates the drop on
+        No keeper is configured for {chainLabel(chainId)}. The bridge still activates the drop on
         arrival, but nothing will retry if the recipe declines, and an order with custom appData may be
         rejected by the order book because nobody holds the pre-image.
       </p>
@@ -723,31 +948,7 @@ function KeeperNote({ state, chainId, mode }: { state: KeeperState; chainId: num
   }
   return (
     <p className="hint">
-      The recipe is handed to the {chainName(chainId)} keeper first, before anything is sent.
+      The recipe is handed to the {chainLabel(chainId)} keeper first, before anything is sent.
     </p>
   )
-}
-
-/** cow-sdk knows every chain here; fall back to the number rather than throwing inside a render. */
-function chainName(chainId: number): string {
-  try {
-    return chainInfo(chainId).label
-  } catch {
-    return `chain ${chainId}`
-  }
-}
-
-function describeBridgeError(cause: unknown): string {
-  if (cause && typeof cause === 'object' && 'code' in cause) {
-    const code = (cause as { code: unknown }).code
-    // Bungee answering "no routes" is a successful response, not a failed one — say so, or the next
-    // move looks like "retry" when it is actually "pick a different chain or token".
-    if (code === 'no-routes') {
-      return 'Bungee answered, with nothing to offer: no bridge it has covers this pair at this amount. Try another source chain, another token, or a larger amount.'
-    }
-    if (code === 'quote-failed') return 'Bungee rejected the quote request — the pair or amount may be unsupported'
-    if (code === 'build-failed') return 'the quote expired before it could be built — get a fresh one'
-    if (code === 'unreachable') return 'the bridge API could not be reached'
-  }
-  return cause instanceof Error ? cause.message : String(cause)
 }

@@ -176,15 +176,9 @@ So a stranded balance is not merely stuck. It is a public bounty: anyone can cal
 payload naming a drop of *their* own and take everything sitting there. They do not need to see your
 transaction — the balance is visible on-chain the moment it lands.
 
-That is what happened, on Gnosis, on 20 August 2026:
-
-| Block 47813145 | | |
-|---|---|---|
-| index **0** | `0x4190f1bc…` | A bot swept 0.0195 WETH out of the receiver into its own drop |
-| index **16** | `0x60c76883…` | The recovery transaction ran, found a zero balance, and emitted `DropRefunded` having moved nothing |
-
-Same block. The recovery was not slow; it was simply second, and one transaction position was the whole
-difference.
+That is not hypothetical. It has happened: a stranded balance was swept into a stranger's drop, and the
+recovery transaction landed in the *same block*, one transaction position later, and found nothing left
+to move. The recovery was not slow; it was simply second.
 
 The design note in `DropDelivery.sol` called this "inherent to a permissionless delivery endpoint". That
 was wrong, and it is worth being precise about why: permissionless *entry* is genuinely required, but
@@ -204,21 +198,27 @@ The trade is latency: the order is live one keeper tick after the money lands, r
 itself.
 
 Direct mode also has a bonus that matters right now. Because it asks nothing of the bridge, **every**
-bridge qualifies — including the ones that ignore payloads. Atomic mode must be restricted to bridges
-that actually execute (`DESTINATION_EXECUTING_BRIDGES`), and with that restriction Gnosis is reachable
-only from Ethereum. In direct mode, Base→Gnosis works.
+bridge qualifies — including the ones that ignore payloads. Atomic mode can only use a bridge that has
+been *watched* running a destination payload, and none has been, so atomic currently has no route at
+all. In direct mode, Base→Gnosis works.
 
 ## Options to improve
 
 | | Option | Closes the theft? | What it costs |
 |---|---|---|---|
-| **A** | Allowlist bridges that really execute payloads *(done)* | **No** — a revert still strands funds | Far fewer routes. Gnosis only from Ethereum |
+| **A** | Allowlist bridges that really execute payloads *(withdrawn)* | **No** — and it was worse than nothing | Far fewer routes, and a false sense of safety. See below |
 | **B** | Restrict `executeData` to known bridge callers, plus an owner-only `rescue` | Yes | A per-chain immutable holding each bridge's executor address — which must be found, and stays correct only until a bridge redeploys. Fails closed, but silently |
 | **C** | A per-drop receiver at `CREATE2(owner, setupData)`, whose code can only ever pay that one drop | Yes | One extra deploy per drop on the destination chain, before bridging. Needs no external address to stay true |
-| **D** | Make direct delivery the default, atomic opt-in | Removes the exposure for anyone who does not opt in | Loses atomicity — a keeper tick, not instant |
+| **D** | Make direct delivery the default, atomic opt-in *(done)* | Removes the exposure for anyone who does not opt in | Loses atomicity — a keeper tick, not instant |
+| **E** | Verify the provider's answer, and make an unverified transaction unobtainable *(done)* | **No** — but it makes both failure modes visible before signing | A blocking check on a response encoding is a hard dependency on that encoding |
 
-A is already done and is necessary but not sufficient: it stops the *Symbiosis* failure and does nothing
-about a revert.
+**A was tried and withdrawn, and the way it failed is the most useful thing in this document.** It was a
+constant naming three bridges believed to execute payloads. Nothing ever compared it to a response, two
+of the three had never been observed working, and the third could not work at all — its destination ABI
+is `onTokenBridged(address,uint256,bytes)` on the recipient, which can never reach the receiver's
+`executeData(bytes32,uint256[],address[],bytes)`. Since it was also the only entry serving
+Ethereum→Gnosis, the single pair the allowlist claimed to protect was the pair it silently broke. A
+safety mechanism that cannot fail visibly is worse than none, because it is trusted.
 
 B is the conventional fix and the cheapest. Its weakness is that its correctness lives outside the
 contract, in an address that some other team controls.
@@ -230,16 +230,26 @@ bridge's call hits an address with no code and we are back to a plain transfer.
 
 D costs nothing and helps immediately.
 
+E is what replaced A, and it is worth being exact about what it does and does not do. It cannot make
+atomic delivery safe — a bridge that reverts on arrival still strands the tokens, and no quote-time check
+can see that coming. What it does is refuse to let anything be signed that has not been checked against
+the request that produced it: every route carries a verdict with its reason, the transaction's bytes are
+searched for the destination and the payload, and `sendableTransaction()` is the only route from a quote
+to a wallet. The registry behind it records *observations* rather than beliefs — an entry cannot be
+promoted without a transaction hash — which is precisely what A lacked.
+
 ## Recommendation
 
-**Do D now.** It is free, it takes the default path off the shared receiver entirely, and it unblocks
-Base→Gnosis for the demo. Atomic stays available for anyone who wants the latency, clearly labelled.
+**D and E are done.** Direct delivery is the default and the only mode currently on offer, because no
+bridge has been watched running a destination payload; the registry is empty of observations, and that is
+the honest state rather than a gap to be filled by assertion.
 
-**Then C for the atomic path**, if atomic is worth keeping. Its correctness is self-contained, which for
-a contract holding other people's money in transit is worth more than the deploy it costs. B is the
-fallback if the per-drop deploy proves too awkward in practice.
+**Then C, if atomic is worth keeping.** Its correctness is self-contained, which for a contract holding
+other people's money in transit is worth more than the deploy it costs. B is the fallback if the per-drop
+deploy proves too awkward in practice. Either way, an `observed` entry in the registry should come from
+watching a real fill, not from reasoning about one.
 
-Until one of them ships, treat any balance sitting at `DropBungeeReceiver` as **actively contested** — it
-will be taken, and quickly. Recovering one means racing a bot, so send the recovery through
+Until then, treat any balance sitting at `DropBungeeReceiver` as **actively contested** — it will be
+taken, and quickly. Recovering one means racing a bot, so send the recovery through
 [Gnosis's Shutter encrypted mempool](https://docs.gnosischain.com/shutterized-gc/)
 (`https://erpc.gnosis.shutter.network`, minimum 1 gwei priority fee) rather than the public one.

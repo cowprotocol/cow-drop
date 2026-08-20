@@ -8,7 +8,15 @@ export { balancesDigest, deriveHints, HINTS_VERSION, pollTargets } from './hints
 export { createKeeper } from './keeper.js'
 export type { Keeper, KeeperOptions, KeeperTickResult } from './keeper.js'
 export { forwardOrderResults } from './orders.js'
-export { DEFAULT_POLICY, evaluatePolicy, nextUtcMidnight, parsePolicy } from './policy.js'
+export {
+  DEFAULT_POLICY,
+  TYPICAL_ACTIVATION_GAS,
+  activationCostAt,
+  defaultPolicyFor,
+  evaluatePolicy,
+  nextUtcMidnight,
+  parsePolicy,
+} from './policy.js'
 export { registerDrop, unregisterDrop } from './registry.js'
 export type { RegistrationError, RegistrationResult } from './registry.js'
 export { asFraction, feeValueWei, orderBookPrices } from './revenue.js'

@@ -65,8 +65,24 @@ the one route that needs the internet — `/v1/openapi.json` is served locally a
 ```
 
 `--min-balance` is advisory: it warns while the keeper can still pay. The hard floor is the policy's
-`minPayerBalanceWei` (default 0.02 native), below which every activation is refused outright — the
-boot banner reports that case as an error rather than a warning.
+`minPayerBalanceWei`, below which every activation is refused outright — the boot banner reports that
+case as an error rather than a warning.
+
+**The floor and the per-activation cap default to twenty activations, sized from the chain's own gas
+price at boot**, not to a fixed amount of native token. They have to be: 0.02 native is about five
+activations of reserve on Ethereum and six thousand on Base, and a flat 0.01 native per-activation cap
+is three thousand times the real cost on Base while refusing every Ethereum activation above roughly
+24 gwei. The boot banner prints the derived numbers in both units, so a `payer-balance-low` refusal can
+be read against them:
+
+```
+one activation costs about 0.0000032 native here, so the floor is 0.0000646 (20 activations)
+and one activation may cost up to 0.0000646
+```
+
+Budgets are deliberately *not* scaled. `dailyBudgetWei` is risk appetite — a sum of money you are
+willing to lose in a day — and scaling it by gas price would raise the ceiling on the chain where
+mistakes cost most. Set it yourself if the default does not match your appetite.
 
 ## Docs
 

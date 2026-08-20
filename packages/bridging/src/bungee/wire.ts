@@ -12,24 +12,18 @@
 export type BridgeName = string
 
 /**
- * The bridges that actually run a destination payload — and the default, because the alternative
- * silently loses money.
+ * There was a `DESTINATION_EXECUTING_BRIDGES` allowlist here. It is now `bungee/capability.ts`.
  *
- * **Bungee gives no signal for this.** A quote for a route that ignores destination execution looks
- * identical to one for a route that honours it: `destinationExec` in the response is a verbatim echo
- * of what you sent (send `0xdeadbeef` and it comes back), and no field on the route says whether the
- * bridge will do anything with it.
+ * Worth knowing why, because the shape of the mistake is easy to make again. It was three bridge
+ * names in a `const`, asserted to run a destination payload, and **Bungee gives no signal for that**:
+ * `destinationExec` in a response is a verbatim echo of what you sent (send `0xdeadbeef` and
+ * `0xdeadbeef` comes back), and no field on a route says whether the bridge will do anything with it.
+ * So the list was a belief with nothing to confront it — and it was wrong about the one name that
+ * mattered.
  *
- * So an unfiltered quote is not "more routes", it is a coin flip. Symbiosis quotes Base to Gnosis
- * happily, and then delivers with a plain transfer: the tokens land at the receiver, `executeData` is
- * never called, no drop is funded and no order is placed. The money is recoverable — anyone may call
- * `executeData` and sweep the balance into the drop it names — but until someone does, it is sitting
- * in a permissionless contract where *anyone* may sweep it into a drop of their own.
- *
- * An allowlist is therefore the only safe default, and narrowing the reachable pairs is the price.
- * Widen it only for a bridge whose destination execution you have watched work on-chain.
+ * A list of names has nowhere to put the transaction that would prove an entry, which is exactly why
+ * it stayed unproven. The registry demands the transaction.
  */
-export const DESTINATION_EXECUTING_BRIDGES: readonly BridgeName[] = ['across', 'cctp', 'gnosis-native-bridge']
 
 export const BUNGEE_BASE_URL = 'https://public-backend.bungee.exchange'
 export const BUNGEE_API_PATH = '/api/v1/bungee'

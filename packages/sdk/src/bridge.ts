@@ -1,6 +1,8 @@
 import { decodeAbiParameters, encodeAbiParameters, type Address, type Hex } from 'viem'
 
+import { isSameAddress } from './address.js'
 import { describeRecipe } from './describe.js'
+import { deriveDropAddress } from './encoding.js'
 import type { CompiledRecipe } from './recipe.js'
 import type { DropDeployment } from './types.js'
 
@@ -176,6 +178,86 @@ export function directDelivery(compiled: CompiledRecipe): DestinationTarget {
     predictedAddress: compiled.address,
     gasLimit: 0,
   }
+}
+
+/**
+ * Why a `DestinationTarget` does not belong to the recipe it claims to fund.
+ *
+ * Discriminated and carrying the values that disagreed, the way `RegistrationError`'s
+ * `address-mismatch` carries `supplied` and `derived` — so a caller writes its own sentence and a
+ * test asserts on the fact rather than on prose.
+ */
+export type DeliveryTargetProblem =
+  /** Direct mode: the bridge would pay something that is not the drop. The exposure direct mode exists to avoid. */
+  | { error: 'receiver-not-the-drop'; receiver: Address; drop: Address }
+  /** Atomic mode: the receiver belongs to another generation, whose contracts may not even be deployed. */
+  | { error: 'receiver-not-this-generation'; receiver: Address; expected: Address; generation: number }
+  /** The two halves of the target disagree about where the money ends up. */
+  | { error: 'predicted-not-the-drop'; predicted: Address; drop: Address }
+  /** The payload cannot be read, so there is no saying what would run on arrival. */
+  | { error: 'payload-undecodable'; message: string }
+  /** The payload's `(owner, setupData)` derives a different address than the one being funded. */
+  | { error: 'payload-names-another-drop'; inPayload: Address; drop: Address }
+
+/**
+ * Does this destination really point at this recipe?
+ *
+ * The deep leg of bridge verification, and it lives here rather than in the bridging package because
+ * it needs a `DropDeployment` to re-derive an address — and handing a bridge provider a deployment
+ * would undo the seam that lets one Bungee implementation serve any destination. A provider does the
+ * cheap 20-byte comparisons; this does the one that requires knowing how a drop address is built.
+ *
+ * The check that matters is the last one. In atomic mode the payload is what the receiver will act
+ * on, so a payload naming a different drop sends the money to an address the user never saw, while
+ * every field they *did* see agrees. Re-deriving from the payload's own bytes is the only way to
+ * catch it, and it is the same supplied-versus-derived shape the keeper's registry uses.
+ *
+ * Returns `null` when the target is sound.
+ */
+export function checkDeliveryTarget(
+  target: DestinationTarget,
+  compiled: CompiledRecipe,
+): DeliveryTargetProblem | null {
+  // Both modes promise the funds end up at the drop, so this one is unconditional.
+  if (!isSameAddress(target.predictedAddress, compiled.address)) {
+    return { error: 'predicted-not-the-drop', predicted: target.predictedAddress, drop: compiled.address }
+  }
+
+  // An empty payload is the signal for direct delivery, and there the receiver *is* the drop.
+  if (target.payload === '0x') {
+    return isSameAddress(target.receiver, compiled.address)
+      ? null
+      : { error: 'receiver-not-the-drop', receiver: target.receiver, drop: compiled.address }
+  }
+
+  const expected = compiled.deployment.bungeeReceiver
+  if (!isSameAddress(target.receiver, expected)) {
+    return {
+      error: 'receiver-not-this-generation',
+      receiver: target.receiver,
+      // The zero address rather than `undefined`: a generation with no receiver at all is a
+      // mismatch like any other, and the caller should not have to handle a second shape for it.
+      expected: expected ?? '0x0000000000000000000000000000000000000000',
+      generation: compiled.deployment.generation,
+    }
+  }
+
+  let decoded: DeliveryPayload
+  try {
+    decoded = decodeDeliveryPayload(target.payload)
+  } catch (cause) {
+    return { error: 'payload-undecodable', message: cause instanceof Error ? cause.message : String(cause) }
+  }
+
+  const inPayload = deriveDropAddress({
+    deployment: compiled.deployment,
+    owner: decoded.owner,
+    setupData: decoded.setupData,
+  })
+
+  return isSameAddress(inPayload, compiled.address)
+    ? null
+    : { error: 'payload-names-another-drop', inPayload, drop: compiled.address }
 }
 
 /**

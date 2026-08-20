@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
 
+import { isSameAddress } from './address.js'
 import {
   DEFAULT_DESTINATION_GAS_LIMIT,
   bungeeDelivery,
+  checkDeliveryTarget,
   directDelivery,
   bungeeReceiverOf,
   decodeDeliveryPayload,
@@ -130,6 +132,100 @@ describe('bungeeReceiverOf', () => {
 
     expect(compiled.deployment.bungeeReceiver).toBeUndefined()
     expect(() => bungeeReceiverOf(compiled.deployment)).toThrow(/generation 1 has no Bungee receiver/)
+  })
+})
+
+describe('isSameAddress', () => {
+  it('folds case, because EIP-55 casing is display metadata rather than identity', () => {
+    expect(isSameAddress(COW, COW.toLowerCase())).toBe(true)
+    expect(isSameAddress(COW, WXDAI)).toBe(false)
+  })
+
+  /**
+   * The reason this helper exists rather than another inline `toLowerCase()` pair. Two absent values
+   * are not an agreement, and `a?.toLowerCase() === b?.toLowerCase()` says they are — which in a
+   * blocking check reads as "this field matches" when neither side has a value to match.
+   */
+  it('treats an absent address as equal to nothing, including another absence', () => {
+    expect(isSameAddress(undefined, undefined)).toBe(false)
+    expect(isSameAddress(null, null)).toBe(false)
+    expect(isSameAddress(COW, undefined)).toBe(false)
+    expect(isSameAddress(undefined, COW)).toBe(false)
+    expect(isSameAddress('', '')).toBe(false)
+  })
+})
+
+describe('checkDeliveryTarget', () => {
+  it('passes the targets the SDK builds, in both modes', () => {
+    const compiled = compileRecipe(swapRecipe())
+
+    expect(checkDeliveryTarget(directDelivery(compiled), compiled)).toBeNull()
+    expect(checkDeliveryTarget(bungeeDelivery(compiled), compiled)).toBeNull()
+  })
+
+  /**
+   * Direct delivery's entire safety claim is that the bridge pays an address belonging to one recipe.
+   * A receiver that is not the drop is the shared-receiver exposure direct mode exists to avoid, and
+   * it is only ever reachable by hand-building a target or crossing the modes.
+   */
+  it('catches a direct target whose receiver is not the drop', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const crossed = { ...directDelivery(compiled), receiver: COW }
+
+    expect(checkDeliveryTarget(crossed, compiled)).toEqual({
+      error: 'receiver-not-the-drop',
+      receiver: COW,
+      drop: compiled.address,
+    })
+  })
+
+  it('catches an atomic target aimed at another generation’s receiver', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const stale = { ...bungeeDelivery(compiled), receiver: COW }
+
+    expect(checkDeliveryTarget(stale, compiled)).toMatchObject({
+      error: 'receiver-not-this-generation',
+      receiver: COW,
+      generation: compiled.deployment.generation,
+    })
+  })
+
+  it('catches a target that would deliver somewhere other than the drop', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const moved = { ...bungeeDelivery(compiled), predictedAddress: COW }
+
+    expect(checkDeliveryTarget(moved, compiled)).toEqual({
+      error: 'predicted-not-the-drop',
+      predicted: COW,
+      drop: compiled.address,
+    })
+  })
+
+  /**
+   * The one that needs a re-derivation, and the only reason this function is in the SDK. Every field
+   * a user can see still agrees — the receiver is right, the predicted address is right — and the
+   * payload the receiver will actually act on names somebody else's drop.
+   */
+  it('catches a payload that names another drop', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const other = compileRecipe(swapRecipe({ owner: COW }))
+    const swapped = {
+      ...bungeeDelivery(compiled),
+      payload: encodeDeliveryPayload({ owner: other.owner, setupData: other.setupData }),
+    }
+
+    expect(checkDeliveryTarget(swapped, compiled)).toEqual({
+      error: 'payload-names-another-drop',
+      inPayload: other.address,
+      drop: compiled.address,
+    })
+  })
+
+  it('reports an unreadable payload rather than throwing on it', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const garbled = { ...bungeeDelivery(compiled), payload: '0xdeadbeef' as const }
+
+    expect(checkDeliveryTarget(garbled, compiled)).toMatchObject({ error: 'payload-undecodable' })
   })
 })
 
