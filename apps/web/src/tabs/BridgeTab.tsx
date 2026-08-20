@@ -59,8 +59,8 @@ export function BridgeTab({
     return (
       <section>
         <h2>Bridge &amp; Swap</h2>
-        <p>Connect a wallet to quote a route and send the bridge transaction.</p>
         <BridgeHistory revision={0} />
+        <p>Connect a wallet to quote a route and send the bridge transaction.</p>
       </section>
     )
   }
@@ -76,11 +76,11 @@ function EmptyState({ onBuildRecipe }: { onBuildRecipe: () => void }) {
         triggers its recipe in the same transaction, so the CoW order is live the moment the bridge
         fills — no keeper wait, and no gas of yours on the destination chain.
       </p>
+      <BridgeHistory revision={0} />
       <p>
         There is no recipe to fund yet. Build one on the Recipes tab, then press <em>Fund by bridging</em>.
       </p>
       <button onClick={onBuildRecipe}>Go to Recipes</button>
-      <BridgeHistory revision={0} />
     </section>
   )
 }
@@ -410,6 +410,8 @@ function Bridge({
           : `The bridge pays a receiver contract on ${chainName(destinationChain)}, which forwards the tokens to the drop and runs its recipe in the same transaction. Your order is live as soon as the bridge fills.`}
       </p>
 
+      <BridgeHistory revision={historyRevision} />
+
       <h3>1 · The drop you are funding</h3>
       <dl className="facts">
         <dt>Recipe</dt>
@@ -682,8 +684,6 @@ function Bridge({
           </ul>
         </>
       )}
-
-      <BridgeHistory revision={historyRevision} />
     </section>
   )
 }

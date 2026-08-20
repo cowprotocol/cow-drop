@@ -14,6 +14,10 @@ import { forgetBridge, listBridges, type SavedBridge } from '../lib/storage.js'
  *
  * Shown whether or not a recipe is loaded, because checking on a bridge from an hour ago is exactly the
  * case where you arrive with nothing else on screen.
+ *
+ * Framed exactly like `SavedDrops` in the builder — same `details.saved` shell, same "name (count)"
+ * summary, same place at the top of the tab. The two lists answer the same kind of question, and a
+ * reader should not have to learn two shapes to read them.
  */
 export function BridgeHistory({ revision }: { revision: number }) {
   const [bridges, setBridges] = useState<SavedBridge[]>([])
@@ -23,8 +27,11 @@ export function BridgeHistory({ revision }: { revision: number }) {
   if (bridges.length === 0) return null
 
   return (
-    <section>
-      <h3>Bridges you have sent</h3>
+    // Collapsed by default, unlike the builder's list: a bridge in flight needs no attention, so this
+    // is somewhere to look rather than something to read on the way past.
+    <details className="saved">
+      <summary>Bridging history ({bridges.length})</summary>
+
       <p className="hint">
         Kept in this browser. The order appears in CoW Explorer once the bridge fills and the drop
         activates — nothing here needs an action from you.
@@ -76,7 +83,7 @@ export function BridgeHistory({ revision }: { revision: number }) {
           </li>
         ))}
       </ul>
-    </section>
+    </details>
   )
 }
 
