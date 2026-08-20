@@ -154,7 +154,7 @@ check the recipe's effects or watch for `SetupSkipped`.
 | | |
 |---|---|
 | [`contracts/ARCHITECTURE.md`](../contracts/ARCHITECTURE.md) | Every contract, the step catalogue, why the split is what it is, and how an order is announced |
-| [DEPLOYMENTS.md](DEPLOYMENTS.md) | Addresses, generations, and verification |
+| [DEPLOYMENTS.md](DEPLOYMENTS.md) | Generations, what is deployed where, and verification |
 | [BRIDGING.md](BRIDGING.md) | Funding a drop from another chain |
 | [`packages/sdk/API.md`](../packages/sdk/API.md) | The function reference |
 | [`packages/watch-tower/ARCHITECTURE.md`](../packages/watch-tower/ARCHITECTURE.md) | How on-chain orders get to the order book |
