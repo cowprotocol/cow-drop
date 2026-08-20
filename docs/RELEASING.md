@@ -18,20 +18,28 @@ place. See [DEPLOYMENTS.md](DEPLOYMENTS.md).
 
 ## Cutting a release
 
-A tag is the entire process:
+Draft a [new release](https://github.com/cowprotocol/cow-drop/releases/new) on GitHub, give it a
+**semver** tag — `v0.1.0`, `v1.2.3`, `v0.2.0-rc.1` — created on `main`, and publish it. That is the
+entire process; everything downstream is automatic.
+
+The tag is what the automation watches, so pushing one by hand does the same thing if you would
+rather not use the UI:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-That fires two workflows:
+Either way, the tag fires two workflows:
 
 - [`release.yml`](../.github/workflows/release.yml) — re-checks the address derivation against the
-  contracts, publishes the SDK to npm with a provenance attestation, and opens the GitHub release
-  with generated notes.
-- [`docker.yml`](../.github/workflows/docker.yml) — builds and pushes both images, tagged `0.1.0`,
-  `0.1`, `latest` and `sha-<commit>`.
+  contracts, publishes the SDK to [npm](https://www.npmjs.com/package/@cowprotocol/cow-drop-sdk)
+  with a provenance attestation, and — only if the tag arrived without one — opens the GitHub
+  release itself, with generated notes. A release you published from the UI is left exactly as you
+  wrote it.
+- [`docker.yml`](../.github/workflows/docker.yml) — builds and pushes both images to
+  [GHCR](https://github.com/orgs/cowprotocol/packages?repo_name=cow-drop), tagged `0.1.0`, `0.1`,
+  `latest` and `sha-<commit>`.
 
 The two run in parallel off the same tag, and neither waits on the other: a failed npm publish still
 leaves the images pushed, and vice versa. Both are re-runnable — see below.
@@ -39,18 +47,17 @@ leaves the images pushed, and vice versa. Both are re-runnable — see below.
 The tag is the only place the version lives. `packages/sdk/package.json` carries a placeholder for local
 installs which the workflow overwrites before packing, so there is no version bump to forget.
 
-Creating the release from the GitHub UI works too — that also pushes the tag, and `release.yml` leaves an
-existing release's notes alone.
-
 ### Prereleases
 
-A prerelease suffix routes everything away from the defaults: npm gets dist-tag `next` instead of
-`latest`, the GitHub release is marked prerelease, and the images do **not** get `latest`.
+Give the release a semver prerelease suffix — `v0.2.0-rc.1`, `v0.2.0-beta.3` — and the published
+artifacts route away from the defaults on their own: npm gets dist-tag `next` instead of `latest`,
+and the images do **not** get `latest`. Both read it off the tag, so there is nothing to configure.
 
-```bash
-git tag v0.2.0-rc.1 && git push origin v0.2.0-rc.1
-# consumers: pnpm add @cowprotocol/cow-drop-sdk@next
-```
+Consumers then take it with `pnpm add @cowprotocol/cow-drop-sdk@next`.
+
+The one thing the suffix does not set for you is the **release's own** prerelease flag when you
+create it in the UI — tick *Set as a pre-release* there yourself. `release.yml` marks it only for a
+tag it created the release from.
 
 ### If a release fails halfway
 

@@ -127,11 +127,10 @@ pnpm --filter @cowprotocol/cow-drop-sdk generate
 
 ## Release
 
-Tag it. That publishes the SDK to npm and pushes both images to GHCR:
-
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
+Cut a [new release](https://github.com/cowprotocol/cow-drop/releases/new) with a semver tag —
+`v0.1.0`, `v0.2.0-rc.1`. That is the whole process: the tag publishes the SDK to
+[npm](https://www.npmjs.com/package/@cowprotocol/cow-drop-sdk) and pushes both images to
+[GHCR](https://github.com/orgs/cowprotocol/packages?repo_name=cow-drop) on its own.
 
 | | |
 | --- | --- |
