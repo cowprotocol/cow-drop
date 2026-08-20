@@ -1,9 +1,23 @@
 # Web app architecture
 
-What the page does, panel by panel, and the decisions behind it. Running it is covered in the
-[README](README.md).
+What the page does, tab by tab and then panel by panel, and the decisions behind it. Running it is
+covered in the [README](README.md).
 
-## What the page does
+## The four tabs
+
+| | |
+|---|---|
+| **Recipes** | The builder: a form that turns into an address. The default, and what the page is for. |
+| **Drops** | Every drop associated with the connected account, from this browser *and* from the keeper. |
+| **About** | What a drop is, and what the keeper this page points at will actually do. |
+| **SDK** | The same thing in code, for someone who would rather not use the form. |
+
+Only one of these is new work in any real sense. The other three are surfaces for things the project
+already had and never showed: the keeper has served `/v1/about`, `/v1/policy` and `/v1/health` all along
+and the page called none of them, `packages/sdk` has a full reference nobody using the page could find,
+and the drop list was folded into a `<details>` above the form.
+
+### Recipes
 
 Eight panels, top to bottom, in the order you'd actually use them:
 
@@ -90,7 +104,14 @@ takes over.
 
 | | |
 |---|---|
-| `src/App.tsx` | The form, and the recipe it builds. `toRecipe` is pure, which is what makes the address update as you type. |
+| `src/App.tsx` | The shell: the error banner, the header and wallet, the tab bar. Nothing about recipes. |
+| `src/tabs/RecipesTab.tsx` | The form, and the recipe it builds. `toRecipe` is pure, which is what makes the address update as you type. |
+| `src/tabs/DropsTab.tsx` | The three groups, the empty states, and the one-chain footer. |
+| `src/tabs/AboutTab.tsx` | What a drop is, plus the keeper's own `/v1/about`, `/v1/policy` and `/v1/health`. |
+| `src/tabs/SdkTab.tsx` | Copyable snippets, grouped as `packages/sdk/API.md` groups them. |
+| `src/lib/route.ts` | Fragment ⇄ tab + recipe. Pure, so it can be reasoned about without a browser. |
+| `src/lib/useRoute.ts` | The fragment as an external store, and the one place that writes it. |
+| `src/lib/dropList.ts` | Merging what this browser saved with what the keeper holds. Pure. |
 | `src/lib/drop.ts` | Reading drop status, activating, and posting placed orders. |
 | `src/lib/chain.ts` | Public client, injected wallet, chain switching. |
 | `src/lib/tokenList.ts` | Loads the token lists cowswap enables by default, per chain, and merges them by priority. |
@@ -107,8 +128,8 @@ The call is idempotent, so a retry after a timeout is safe.
 
 Saved drops then carry a tag, and it is deliberately **not** the local flag rendered as fact. The
 browser only knows what it *sent*; the keeper's own state is the truth, and its `--state` defaults to
-memory only, so a restart can lose every registration. The list asks the keeper on open and shows four
-distinct answers:
+memory only, so a restart can lose every registration. The list asks the keeper on open and shows one of
+these:
 
 | tag | meaning |
 |---|---|
@@ -117,9 +138,72 @@ distinct answers:
 | `keeper holds, not watching` | held but retired — the recipe is kept, nothing is polling |
 | `sent, keeper has no record` | **we sent it and the keeper does not have it.** The one that needs acting on |
 | `sent, keeper unreachable` | the keeper is down; unknown rather than bad |
+| `keeper is on another chain` | sent, but this keeper serves a different chain, so it cannot answer |
+| `keeper only — no recipe here` | the keeper has it and this browser does not, so nothing here can act on it |
+| `sent, not checked` | sent, but the listing was filtered by another owner, so it proves nothing either way |
 
-The last two are separate on purpose: a keeper that is down and a keeper that has forgotten call for
-opposite reactions.
+`sent, keeper has no record` and `sent, keeper unreachable` are separate on purpose: a keeper that is
+down and a keeper that has forgotten call for opposite reactions.
+
+`keeper is on another chain` exists because the alternative was a lie. The keeper's store is
+chain-scoped, so a drop registered on one chain and checked against a keeper for another answers 404 —
+and that used to render as `sent, keeper has no record`, the loudest tag here, for a drop that was
+perfectly fine. The last two tags are the same principle: never derive an alarm from a silence that had
+an innocent explanation.
+
+## The Drops tab
+
+Two sources, and neither is complete. This browser holds the **recipes**, which are the only thing that
+can activate or rescue a drop — but it only knows what *it* saved. The keeper knows what was registered
+from anywhere, and hands out **no recipes at all**. So the tab shows both and says which is which,
+rather than merging them into one list that implies more than it can do.
+
+Three groups:
+
+- **Your drops** — saved here, owned by the connected account. Load, Forget, everything.
+- **The keeper for <chain> also has** — registered under this account and *not* in this browser. Listed
+  and linked, with no Load, Forget or activate control anywhere on the row. That absence is the truth
+  rather than a gap: all three need the recipe bytes, and only their hash is on-chain.
+- **Other accounts in this browser** — collapsed, and deliberately **shown rather than hidden**. With
+  several accounts you would otherwise watch a drop you funded vanish the moment you switched wallets,
+  which is the exact failure this page exists to prevent. The recipe is here, so the controls stay.
+
+Two things the tab has to say out loud. The keeper is **per-chain** while localStorage spans every
+chain, so its answer is scoped and a drop elsewhere must read as out of scope rather than missing. And a
+keeper row is **not proof of ownership**: registration is open and `owner` is a field of the submitted
+recipe, so anyone can put a labelled row in anyone's listing. It means *someone registered a recipe
+naming you*, never *you made this* — which is why that group warns against funding anything from it.
+
+## Where a tab lives, and why the URL carries it
+
+The fragment was already carrying the recipe, and it never reaches a server, so the tab rides the same
+private channel: no server rewrite, no assumption about the deploy path, and no router dependency in an
+app that deliberately has none.
+
+`#/recipes/<recipe>` is the canonical form; `#/drops`, `#/about` and `#/sdk` carry nothing. A fragment
+that does **not** start with `/` is read as a bare recipe on the Recipes tab, which is how every link
+shared before the tabs existed still opens. That is an invariant rather than a heuristic: `recipeToHash`
+maps `/` to `_`, so the payload alphabet is `[A-Za-z0-9_-]` and **every `/` in a fragment is
+structural**.
+
+Push for a tab, replace for a keystroke — Back should move between tabs and must not fill up with every
+character typed. The recipe mirror is gated on the Recipes tab being the one on screen, because
+`#/drops` must not be rewritten by a form nobody is looking at, and `pushState`/`replaceState` do not
+fire `hashchange`, which is what keeps that mirror from reading back its own write.
+
+The tabs are **links with `aria-current`**, not an ARIA tablist. They really are pages: bookmarkable,
+Back moves between them, About and SDK are worth sending to someone. A tablist would misdescribe
+navigation as a widget and oblige us to reimplement its roving-tabindex keyboard model by hand — and a
+row of `role="tab"` without that model is worse for a screen-reader user than plain links. It would also
+collide with the recipe-kind switch in panel 1, which genuinely *is* an in-page control.
+
+The builder **stays mounted** while another tab shows, hidden with the `hidden` attribute. Unmounting
+would throw away a half-filled form, and the URL could not bring it back because `#/drops` carries no
+recipe by design. It costs nothing to keep: nothing in this app polls, so every effect there is
+dependency-driven and a hidden panel is idle. `hidden` specifically, because it removes the subtree from
+the accessibility tree *and* the tab order — anything less leaves thirty invisible focusable inputs
+between the nav and the visible panel. The accepted cost: a *reload* while parked on another tab loses
+an unsaved recipe, since it is only in memory there.
 
 ## Never lose a recipe
 
@@ -129,13 +213,16 @@ Funding an address and losing its recipe therefore destroys the money, with no o
 
 So the page treats the recipe as a key rather than a document:
 
-- it is kept in the **URL fragment**, so a bookmark, a pasted link or a plain reload restores it (and a
-  fragment never reaches a server);
+- it is kept in the **URL fragment** while the Recipes tab is showing, so a bookmark, a pasted link or a
+  plain reload restores it (and a fragment never reaches a server) — the tab is what the fragment
+  carries otherwise;
 - it is saved to **localStorage** at every point where funding is plausibly next — copying the address,
   downloading the file, activating — not only on an explicit save, because the failure to prevent is
   someone copying an address and closing the tab;
-- **Saved drops** at the top of the page lists them, and says plainly that clearing site data loses
-  them, so the downloaded `.drop.json` is still the durable copy;
+- **Drops** gets its own tab, *and* the list stays folded above the form, because the moment you need it
+  is the moment you have already funded something and cannot remember what with — a tab away is fine,
+  out of sight on the page where the funding happens is not. Both render the same rows from the same
+  code, so the wording that says clearing site data loses them cannot drift between the two;
 - the address panel states the consequence, and shows whether the current recipe is saved yet.
 
 ## Tokens and logos

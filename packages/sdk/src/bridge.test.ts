@@ -1,0 +1,252 @@
+import { describe, expect, it } from 'vitest'
+import type { Address } from 'viem'
+
+import { isSameAddress } from './address.js'
+import {
+  DEFAULT_DESTINATION_GAS_LIMIT,
+  bungeeDelivery,
+  checkDeliveryTarget,
+  directDelivery,
+  bungeeReceiverOf,
+  decodeDeliveryPayload,
+  encodeDeliveryPayload,
+} from './bridge.js'
+import { getDeployment } from './generated/deployments.js'
+import { compileRecipe, type DropRecipeJson } from './recipe.js'
+import { swapOnArrival } from './templates.js'
+
+const OWNER: Address = '0x1111111111111111111111111111111111111111'
+const ZERO: Address = '0x0000000000000000000000000000000000000000'
+const WXDAI: Address = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d'
+const COW: Address = '0x177127622c4A00F3d409B75571e12cB3c8973d3c'
+const GNOSIS = 100
+
+function swapRecipe(overrides: Partial<Parameters<typeof swapOnArrival>[0]> = {}): DropRecipeJson {
+  return swapOnArrival({
+    chainId: GNOSIS,
+    owner: OWNER,
+    sellToken: WXDAI,
+    buyToken: COW,
+    limitPrice: { price: '0.02', sellDecimals: 18, buyDecimals: 18 },
+    ...overrides,
+  })
+}
+
+describe('bungeeDelivery', () => {
+  it('names the receiver, the drop, and a gas limit', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const target = bungeeDelivery(compiled)
+
+    expect(target.receiver).toBe(getDeployment(GNOSIS).bungeeReceiver)
+    // The funds end up at the drop; the receiver only ever passes them through.
+    expect(target.predictedAddress).toBe(compiled.address)
+    expect(target.gasLimit).toBe(DEFAULT_DESTINATION_GAS_LIMIT)
+  })
+
+  it('carries the recipe the drop address already commits to', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const decoded = decodeDeliveryPayload(bungeeDelivery(compiled).payload)
+
+    expect(decoded.setupData).toBe(compiled.setupData)
+    expect(decoded.owner.toLowerCase()).toBe(OWNER.toLowerCase())
+    expect(decoded.onFailure).toBe('leave-at-drop')
+  })
+
+  /**
+   * The property the whole quoting order depends on: a bridge quote can be refreshed as often as the
+   * user likes without the destination address moving underneath it. Nothing in the payload is a
+   * function of the amount or the route.
+   */
+  it('does not depend on the amount or the route', () => {
+    const compiled = compileRecipe(swapRecipe())
+    expect(bungeeDelivery(compiled)).toEqual(bungeeDelivery(compiled))
+  })
+
+  it('takes an explicit gas limit and failure mode', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const target = bungeeDelivery(compiled, { onFailure: 'refund-owner', gasLimit: 900_000 })
+
+    expect(target.gasLimit).toBe(900_000)
+    expect(decodeDeliveryPayload(target.payload).onFailure).toBe('refund-owner')
+  })
+
+  /**
+   * Two individually sensible settings that are a bug together. The guard exists so a tranche-paying
+   * bridge accumulates; `refund-owner` reads the guard's refusal as a broken recipe and sends the
+   * tranche back, so every tranche bounces and the drop never fills.
+   */
+  it('refuses refund-owner on a recipe that is waiting for more money', () => {
+    const compiled = compileRecipe(swapRecipe({ minAmount: 1000n }))
+
+    expect(() => bungeeDelivery(compiled, { onFailure: 'refund-owner' })).toThrow(/requireMinBalance/)
+    // ...and the same recipe is fine on the mode that lets the tranches gather.
+    expect(() => bungeeDelivery(compiled, { onFailure: 'leave-at-drop' })).not.toThrow()
+  })
+
+  it('refuses a refund when there is no owner to refund', () => {
+    const compiled = compileRecipe(swapRecipe({ owner: ZERO }))
+
+    expect(() => bungeeDelivery(compiled, { onFailure: 'refund-owner' })).toThrow(/zero address/)
+    // A zero-owner drop is a legitimate recipe, so the safe mode still works.
+    expect(() => bungeeDelivery(compiled)).not.toThrow()
+  })
+})
+
+describe('directDelivery', () => {
+  it('points the bridge straight at the drop, with nothing to execute', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const target = directDelivery(compiled)
+
+    // Receiver and destination are the same address: there is no contract in between, which is the
+    // whole point — nothing shared means nothing for anyone else to redirect.
+    expect(target.receiver).toBe(compiled.address)
+    expect(target.predictedAddress).toBe(compiled.address)
+    expect(target.payload).toBe('0x')
+    expect(target.gasLimit).toBe(0)
+  })
+
+  /**
+   * The empty payload is the signal downstream: it is what tells a provider not to ask for destination
+   * execution and not to restrict the route to bridges that support it.
+   */
+  it('is distinguishable from an atomic delivery by its payload alone', () => {
+    const compiled = compileRecipe(swapRecipe())
+
+    expect(directDelivery(compiled).payload).toBe('0x')
+    expect(bungeeDelivery(compiled).payload).not.toBe('0x')
+  })
+
+  it('works with a recipe that atomic delivery would refuse', () => {
+    // `refund-owner` plus a guard is rejected for atomic, because every tranche would bounce. Direct
+    // delivery has no failure branch at all, so a guarded recipe is simply fine.
+    const compiled = compileRecipe(swapRecipe({ minAmount: 1000n }))
+
+    expect(() => bungeeDelivery(compiled, { onFailure: 'refund-owner' })).toThrow()
+    expect(() => directDelivery(compiled)).not.toThrow()
+  })
+})
+
+describe('bungeeReceiverOf', () => {
+  it('explains itself on a generation cut before the receiver existed', () => {
+    const compiled = compileRecipe({ ...swapRecipe(), generation: 1 }, getDeployment(GNOSIS, 1))
+
+    expect(compiled.deployment.bungeeReceiver).toBeUndefined()
+    expect(() => bungeeReceiverOf(compiled.deployment)).toThrow(/generation 1 has no Bungee receiver/)
+  })
+})
+
+describe('isSameAddress', () => {
+  it('folds case, because EIP-55 casing is display metadata rather than identity', () => {
+    expect(isSameAddress(COW, COW.toLowerCase())).toBe(true)
+    expect(isSameAddress(COW, WXDAI)).toBe(false)
+  })
+
+  /**
+   * The reason this helper exists rather than another inline `toLowerCase()` pair. Two absent values
+   * are not an agreement, and `a?.toLowerCase() === b?.toLowerCase()` says they are — which in a
+   * blocking check reads as "this field matches" when neither side has a value to match.
+   */
+  it('treats an absent address as equal to nothing, including another absence', () => {
+    expect(isSameAddress(undefined, undefined)).toBe(false)
+    expect(isSameAddress(null, null)).toBe(false)
+    expect(isSameAddress(COW, undefined)).toBe(false)
+    expect(isSameAddress(undefined, COW)).toBe(false)
+    expect(isSameAddress('', '')).toBe(false)
+  })
+})
+
+describe('checkDeliveryTarget', () => {
+  it('passes the targets the SDK builds, in both modes', () => {
+    const compiled = compileRecipe(swapRecipe())
+
+    expect(checkDeliveryTarget(directDelivery(compiled), compiled)).toBeNull()
+    expect(checkDeliveryTarget(bungeeDelivery(compiled), compiled)).toBeNull()
+  })
+
+  /**
+   * Direct delivery's entire safety claim is that the bridge pays an address belonging to one recipe.
+   * A receiver that is not the drop is the shared-receiver exposure direct mode exists to avoid, and
+   * it is only ever reachable by hand-building a target or crossing the modes.
+   */
+  it('catches a direct target whose receiver is not the drop', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const crossed = { ...directDelivery(compiled), receiver: COW }
+
+    expect(checkDeliveryTarget(crossed, compiled)).toEqual({
+      error: 'receiver-not-the-drop',
+      receiver: COW,
+      drop: compiled.address,
+    })
+  })
+
+  it('catches an atomic target aimed at another generation’s receiver', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const stale = { ...bungeeDelivery(compiled), receiver: COW }
+
+    expect(checkDeliveryTarget(stale, compiled)).toMatchObject({
+      error: 'receiver-not-this-generation',
+      receiver: COW,
+      generation: compiled.deployment.generation,
+    })
+  })
+
+  it('catches a target that would deliver somewhere other than the drop', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const moved = { ...bungeeDelivery(compiled), predictedAddress: COW }
+
+    expect(checkDeliveryTarget(moved, compiled)).toEqual({
+      error: 'predicted-not-the-drop',
+      predicted: COW,
+      drop: compiled.address,
+    })
+  })
+
+  /**
+   * The one that needs a re-derivation, and the only reason this function is in the SDK. Every field
+   * a user can see still agrees — the receiver is right, the predicted address is right — and the
+   * payload the receiver will actually act on names somebody else's drop.
+   */
+  it('catches a payload that names another drop', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const other = compileRecipe(swapRecipe({ owner: COW }))
+    const swapped = {
+      ...bungeeDelivery(compiled),
+      payload: encodeDeliveryPayload({ owner: other.owner, setupData: other.setupData }),
+    }
+
+    expect(checkDeliveryTarget(swapped, compiled)).toEqual({
+      error: 'payload-names-another-drop',
+      inPayload: other.address,
+      drop: compiled.address,
+    })
+  })
+
+  it('reports an unreadable payload rather than throwing on it', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const garbled = { ...bungeeDelivery(compiled), payload: '0xdeadbeef' as const }
+
+    expect(checkDeliveryTarget(garbled, compiled)).toMatchObject({ error: 'payload-undecodable' })
+  })
+})
+
+describe('encodeDeliveryPayload', () => {
+  it('round-trips both modes', () => {
+    for (const onFailure of ['leave-at-drop', 'refund-owner'] as const) {
+      const payload = encodeDeliveryPayload({ owner: OWNER, setupData: '0xdeadbeef', onFailure })
+      expect(decodeDeliveryPayload(payload).onFailure).toBe(onFailure)
+    }
+  })
+
+  it('defaults to the mode that is safe with any recipe', () => {
+    const payload = encodeDeliveryPayload({ owner: OWNER, setupData: '0xdeadbeef' })
+    expect(decodeDeliveryPayload(payload).onFailure).toBe('leave-at-drop')
+  })
+
+  it('rejects a failure code the contract does not define', () => {
+    const payload = encodeDeliveryPayload({ owner: OWNER, setupData: '0xdeadbeef' })
+    // The `uint8` is the third head word: address, offset-to-bytes, then this. Set it to a 7.
+    const tampered = `${payload.slice(0, 192)}07${payload.slice(194)}` as `0x${string}`
+
+    expect(() => decodeDeliveryPayload(tampered)).toThrow(/unknown onFailure code/)
+  })
+})

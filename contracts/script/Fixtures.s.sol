@@ -4,6 +4,7 @@ pragma solidity ^0.8.25;
 import {Script} from "forge-std/Script.sol";
 
 import {DropExecutor} from "src/DropExecutor.sol";
+import {DropDelivery} from "src/bridge/DropDelivery.sol";
 import {Orders} from "src/lib/Orders.sol";
 
 import {COWShed} from "cow-shed/COWShed.sol";
@@ -89,7 +90,27 @@ contract FixturesScript is Script {
             uids[i] = vm.serializeBytes(obj, "expected", Orders.packUid(digest, owner, order.validTo));
         }
 
-        string memory json = vm.serializeString(root, "orderUids", uids);
+        vm.serializeString(root, "orderUids", uids);
+
+        // The bridge delivery payload. Trivial to encode and easy to get subtly wrong: `onFailure` is
+        // a Solidity enum, so its meaning is its *declaration order*, and nothing in the ABI carries
+        // that. Reordering `DropDelivery.OnFailure` would leave the SDK cheerfully encoding a 1 that
+        // now means something else — a refund where the recipe wanted patience, on a bridge that has
+        // already paid out. These cases pin the numbering across the two languages.
+        string[] memory payloads = new string[](_payloadCaseCount());
+        for (uint256 i; i < _payloadCaseCount(); i++) {
+            (address owner, bytes memory setupData, DropDelivery.OnFailure onFailure, string memory name) =
+                _payloadCase(i);
+
+            string memory obj = string.concat("payload", vm.toString(i));
+            vm.serializeString(obj, "name", name);
+            vm.serializeAddress(obj, "owner", owner);
+            vm.serializeBytes(obj, "setupData", setupData);
+            vm.serializeString(obj, "onFailure", _onFailureName(onFailure));
+            payloads[i] = vm.serializeBytes(obj, "expected", abi.encode(owner, setupData, onFailure));
+        }
+
+        string memory json = vm.serializeString(root, "deliveryPayloads", payloads);
         vm.writeJson(json, "./deployments/derivation-fixtures.json");
     }
 
@@ -158,6 +179,30 @@ contract FixturesScript is Script {
 
     function _caseCount() internal pure returns (uint256) {
         return 8;
+    }
+
+    function _payloadCaseCount() internal pure returns (uint256) {
+        return 3;
+    }
+
+    /// @dev The names the SDK uses, so the fixture pins the mapping rather than the number alone.
+    function _onFailureName(DropDelivery.OnFailure onFailure) internal pure returns (string memory) {
+        return onFailure == DropDelivery.OnFailure.LeaveAtDrop ? "leave-at-drop" : "refund-owner";
+    }
+
+    /// @dev Both modes over a real recipe, plus the zero owner — which is a legitimate recipe (a drop
+    ///      nobody can interfere with) and therefore has to encode, even though pairing it with a
+    ///      refund is what the SDK refuses.
+    function _payloadCase(uint256 i)
+        internal
+        pure
+        returns (address owner, bytes memory setupData, DropDelivery.OnFailure onFailure, string memory name)
+    {
+        (address caseOwner, bytes memory caseSetupData,) = _case(i == 2 ? 1 : 0);
+
+        if (i == 0) return (caseOwner, caseSetupData, DropDelivery.OnFailure.LeaveAtDrop, "leave at drop");
+        if (i == 1) return (caseOwner, caseSetupData, DropDelivery.OnFailure.RefundOwner, "refund owner");
+        return (address(0), caseSetupData, DropDelivery.OnFailure.LeaveAtDrop, "zero owner, leave at drop");
     }
 
     function _orderCaseCount() internal pure returns (uint256) {

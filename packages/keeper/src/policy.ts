@@ -3,30 +3,87 @@ import type { Address } from 'viem'
 import type { PolicyVerdict, SubsidyPolicy } from './types.js'
 
 /**
+ * What a cold activation burns.
+ *
+ * Measured, not guessed: `test_gas_aFirstDeliveryFitsInTheQuotedLimit` puts a delivery that deploys
+ * the drop *and* signs the order a little over 400k, and observed activations land near 370k. Used
+ * only to size defaults — the real gas comes from simulating the actual drop.
+ */
+export const TYPICAL_ACTIVATION_GAS = 420_000n
+
+/**
+ * How many activations of headroom the defaults keep, and allow per transaction.
+ *
+ * Twenty is chosen so a keeper is never stranded mid-run by its own floor, and so a twenty-fold fee
+ * spike pauses it rather than draining it. Both numbers are only meaningful in activations, which is
+ * the whole point of `defaultPolicyFor`.
+ */
+const DEFAULT_HEADROOM = 20n
+
+/**
+ * The defaults, sized to what an activation actually costs on *this* chain.
+ *
+ * Two of these limits are only meaningful relative to the cost of the thing they limit, and shipping
+ * them as one frozen constant made them wrong on every chain at once — in opposite directions.
+ * `minPayerBalanceWei` at a flat 0.02 native is five activations of reserve on Ethereum and **six
+ * thousand** on Base, where it refused to pay for a drop out of a wallet holding a thousand times the
+ * gas it needed. `maxCostPerActivationWei` at a flat 0.01 native is three thousand times the real cost
+ * on Base, and on Ethereum it silently refuses every activation above roughly 24 gwei — a keeper that
+ * looks configured and does nothing.
+ *
+ * Note what is *not* scaled. `dailyBudgetWei` and `perOwnerDailyBudgetWei` stay absolute because they
+ * are risk appetite rather than a technical threshold: "how much am I willing to lose in a day" is a
+ * sum of money, and scaling it by gas price would quietly raise the ceiling on an expensive chain,
+ * which is exactly backwards. `maxFeePerGasWei` stays absolute too — it is an anomaly guard, and a
+ * tight one stalls a keeper for no safety gain since the cost cap already bounds the spend.
+ */
+export function defaultPolicyFor(activationCostWei: bigint): SubsidyPolicy {
+  return {
+    ...DEFAULT_POLICY,
+    maxCostPerActivationWei: DEFAULT_HEADROOM * activationCostWei,
+    minPayerBalanceWei: DEFAULT_HEADROOM * activationCostWei,
+  }
+}
+
+/** One activation's cost at this gas price, for `defaultPolicyFor`. */
+export function activationCostAt(maxFeePerGasWei: bigint): bigint {
+  return TYPICAL_ACTIVATION_GAS * maxFeePerGasWei
+}
+
+/**
  * Subsidise everything, within budgets small enough to lose.
  *
  * `all` is the useful demo posture and the risky one: see the note on `SubsidyPolicy`, and treat
  * `dailyBudgetWei` as the only cap that really binds until the owner set is fixed by configuration.
+ *
+ * The two gas-sensitive numbers here are Ethereum-shaped, because a chain-blind constant has to be
+ * shaped like *some* chain. Prefer `defaultPolicyFor` wherever the gas price is known — this is the
+ * fallback for a caller that cannot ask.
  */
 export const DEFAULT_POLICY: SubsidyPolicy = {
   mode: 'all',
   allowlist: [],
   denylist: [],
-  maxCostPerActivationWei: 10n ** 16n, // 0.01 native
+  maxCostPerActivationWei: 10n ** 16n, // 0.01 native — ~2.4 activations at 10 gwei
   maxFeePerGasWei: 500n * 10n ** 9n, // 500 gwei
   dailyBudgetWei: 25n * 10n ** 16n, // 0.25 native
   perOwnerDailyBudgetWei: 5n * 10n ** 16n, // 0.05 native
-  minPayerBalanceWei: 2n * 10n ** 16n, // 0.02 native
+  minPayerBalanceWei: 2n * 10n ** 16n, // 0.02 native — ~4.8 activations at 10 gwei
   minFeeBps: 1,
   minRevenueRatio: 1.5,
 }
 
-/** Config comes in as JSON, so every wei field arrives as a string. Addresses are lowercased here. */
-export function parsePolicy(raw: unknown): SubsidyPolicy {
+/**
+ * Config comes in as JSON, so every wei field arrives as a string. Addresses are lowercased here.
+ *
+ * `defaults` is what an omitted field falls back to. Pass the chain-sized policy, so that a file which
+ * sets only `mode` still gets limits that fit the chain rather than Ethereum's.
+ */
+export function parsePolicy(raw: unknown, defaults: SubsidyPolicy = DEFAULT_POLICY): SubsidyPolicy {
   if (typeof raw !== 'object' || raw === null) throw new Error('policy must be a JSON object')
   const input = raw as Record<string, unknown>
 
-  const mode = input['mode'] ?? DEFAULT_POLICY.mode
+  const mode = input['mode'] ?? defaults.mode
   if (mode !== 'all' && mode !== 'allowlist' && mode !== 'paying') {
     throw new Error(`policy.mode must be "all", "allowlist" or "paying", got ${JSON.stringify(mode)}`)
   }
@@ -40,14 +97,14 @@ export function parsePolicy(raw: unknown): SubsidyPolicy {
     mode,
     allowlist: addresses(input['allowlist'], 'allowlist'),
     denylist: addresses(input['denylist'], 'denylist'),
-    maxCostPerActivationWei: wei(input, 'maxCostPerActivationWei', DEFAULT_POLICY.maxCostPerActivationWei),
-    maxFeePerGasWei: wei(input, 'maxFeePerGasWei', DEFAULT_POLICY.maxFeePerGasWei),
-    dailyBudgetWei: wei(input, 'dailyBudgetWei', DEFAULT_POLICY.dailyBudgetWei),
-    perOwnerDailyBudgetWei: wei(input, 'perOwnerDailyBudgetWei', DEFAULT_POLICY.perOwnerDailyBudgetWei),
-    minPayerBalanceWei: wei(input, 'minPayerBalanceWei', DEFAULT_POLICY.minPayerBalanceWei),
+    maxCostPerActivationWei: wei(input, 'maxCostPerActivationWei', defaults.maxCostPerActivationWei),
+    maxFeePerGasWei: wei(input, 'maxFeePerGasWei', defaults.maxFeePerGasWei),
+    dailyBudgetWei: wei(input, 'dailyBudgetWei', defaults.dailyBudgetWei),
+    perOwnerDailyBudgetWei: wei(input, 'perOwnerDailyBudgetWei', defaults.perOwnerDailyBudgetWei),
+    minPayerBalanceWei: wei(input, 'minPayerBalanceWei', defaults.minPayerBalanceWei),
     feeRecipient: feeRecipient === undefined ? undefined : (feeRecipient.toLowerCase() as Address),
-    minFeeBps: positive(input, 'minFeeBps', DEFAULT_POLICY.minFeeBps),
-    minRevenueRatio: positive(input, 'minRevenueRatio', DEFAULT_POLICY.minRevenueRatio),
+    minFeeBps: positive(input, 'minFeeBps', defaults.minFeeBps),
+    minRevenueRatio: positive(input, 'minRevenueRatio', defaults.minRevenueRatio),
   }
 }
 

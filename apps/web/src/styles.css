@@ -96,6 +96,18 @@ header {
     width: 64px;
     height: 64px;
   }
+
+  .tab-nav {
+    margin-bottom: 1.1rem;
+    /* Bleeds to the edges of `main`'s padding, so a scrolled row does not look clipped mid-word. */
+    margin-inline: -1.25rem;
+    padding-inline: 1.25rem;
+  }
+
+  .tab-nav a {
+    padding: 0.5rem 0.6rem;
+    font-size: 0.85rem;
+  }
 }
 
 section {
@@ -136,6 +148,83 @@ button.active {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
+}
+
+/*
+ * Page-level navigation, deliberately *not* styled like `.tabs` above it. Both are rows of choices, and
+ * once the recipe-kind buttons sit inside a tab's panel, styling the two alike made the recipe kinds
+ * read as a second row of pages. So these are underlined links on a rule and `.tabs` stays a row of
+ * buttons: different shape, different level.
+ *
+ * Links rather than buttons because these really are pages — they change the URL, Back moves between
+ * them, and About and SDK are worth sending to someone. That also leaves the keyboard model the
+ * platform's, instead of an ARIA tablist's roving tabindex reimplemented by hand.
+ */
+.tab-nav {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0 0 1.5rem;
+  border-bottom: 1px solid var(--border);
+  /* Scrolls rather than wraps: four items reflowing onto two rows read as two separate bars. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-nav a {
+  flex: 0 0 auto;
+  padding: 0.55rem 0.9rem;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-bottom: 2px solid transparent;
+  /* Pulls the marker onto the container's own rule, so the active tab sits on the line, not above it. */
+  margin-bottom: -1px;
+}
+
+.tab-nav a:hover {
+  color: var(--text);
+}
+
+/* `aria-current` is the state, so it is also the selector — no class can fall out of step with it. */
+.tab-nav a[aria-current='page'] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.tab-nav a:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -3px;
+  border-radius: 6px 6px 0 0;
+}
+
+/*
+ * The builder stays mounted while another tab shows, so a trip to Drops does not throw away a
+ * half-filled form or a request in flight. `hidden` does the hiding — it takes the whole subtree out of
+ * the accessibility tree *and* the tab order, which a CSS-only class would not — and this rule is only
+ * here so a future `display` on `.tab-panel` cannot quietly defeat it.
+ */
+.tab-panel[hidden] {
+  display: none;
+}
+
+/* A button that reads as a link, for the pointer from the builder's list to the Drops tab. */
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+button.link:hover {
+  border: none;
 }
 
 .grid {
@@ -824,6 +913,8 @@ details.subsection > summary .guard-count {
  * is the one where nobody is watching a drop the user believes is handled.
  */
 .keeper-tag {
+  /* Every tag carries a `title`, so say so — otherwise the sentence behind it is only found by accident. */
+  cursor: help;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -841,4 +932,131 @@ details.subsection > summary .guard-count {
 
 .keeper-tag.muted {
   opacity: 0.55;
+}
+
+/*
+ * The Bridge & Swap tab.
+ *
+ * Only three things it needs that the rest of the page does not have: a definition list that reads as
+ * a summary rather than as decoded arguments (`.args` is deliberately small and monospace-ish), and
+ * radio options whose label is a sentence rather than a word.
+ */
+.facts {
+  margin: 0 0 1rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.9rem;
+  align-items: baseline;
+}
+
+.facts dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.facts dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+/*
+ * The option is a paragraph, so the control has to sit at the top of it rather than centred against a
+ * block of text — and `align-items: start` on a flex row is what keeps it beside the first line.
+ */
+label.radio {
+  /* `label` is a column by default, which is right for a field and wrong for a choice — the same
+     reason `label.checkbox` above exists. `start` rather than `center` because the option is a
+     sentence, so the control belongs beside its first line. */
+  flex-direction: row;
+  align-items: start;
+  gap: 0.55rem;
+  margin: 0 0 0.6rem;
+  max-width: 62ch;
+  font-weight: normal;
+}
+
+label.radio input {
+  margin-top: 0.15rem;
+  width: auto;
+  flex: none;
+}
+
+.bridge h3 {
+  margin-top: 1.6rem;
+}
+
+/* The sent-bridge list: one block per send, with its three links on their own line. */
+.bridge-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.bridge-history > li {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.bridge-history-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.bridge-history-row.muted,
+.bridge-history-row .muted {
+  color: var(--muted);
+}
+
+/*
+ * A verification check is a verdict plus the comparison that produced it, so the detail sits *under*
+ * the verdict rather than beside it — the sentence is the evidence, and somebody deciding whether to
+ * sign needs both without a second click. Tighter than a free-standing `.hint`, which is spaced to
+ * follow a paragraph rather than to hang off the line above it. Scoped to `.status` so every other
+ * hint on the page keeps its spacing.
+ */
+.status .hint {
+  margin-top: 0.15rem;
+  max-width: 74ch;
+}
+
+/*
+ * Blocking or advisory, on the verdict's own line. `.keeper-tag` is this page's only badge and it is
+ * sized for a grid cell, so inline beside text it needs the gap the grid used to supply — and the
+ * nudge, because an uppercase tag on a sentence sits a shade too high.
+ */
+.status .keeper-tag {
+  display: inline-block;
+  margin-left: 0.45rem;
+  vertical-align: 0.05em;
+}
+
+/*
+ * The failure branch belongs to the atomic option above it rather than to the delivery choice as a
+ * whole, so it is indented to the width of `label.radio`'s own control column — the radio plus its
+ * gap — and capped to the same measure, so it reads as part of that option's sentence rather than as
+ * a third choice.
+ */
+.bridge fieldset.delivery-failure {
+  margin-left: 1.6rem;
+  max-width: 62ch;
+}
+
+/*
+ * Sub-headings inside the review step. It is the one step with enough in it to need dividing, and its
+ * parts are not numbered choices — so they sit a step below `h3` rather than continuing the sequence.
+ */
+.bridge h4 {
+  margin: 1.2rem 0 0.5rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
 }

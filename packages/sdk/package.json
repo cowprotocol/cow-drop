@@ -1,12 +1,32 @@
 {
   "name": "@cowprotocol/cow-drop-sdk",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Compute drop addresses and compile drop recipes",
+  "license": "GPL-3.0-or-later",
+  "author": "CoW Protocol",
+  "homepage": "https://github.com/cowprotocol/cow-drop/tree/main/packages/sdk#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cowprotocol/cow-drop.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/cowprotocol/cow-drop/issues"
+  },
+  "keywords": [
+    "cow-protocol",
+    "cow-shed",
+    "cow-drop",
+    "ethereum",
+    "create2",
+    "viem",
+    "defi"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -15,8 +35,24 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "API.md"
   ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { keccak256 } from 'viem'
 
 import { createEventBus } from './events.js'
-import { CHAIN_ID, deployment, fakeSubmitter, recipeJson, registered } from './fixtures.js'
+import { CHAIN_ID, OWNER, deployment, fakeSubmitter, recipeJson, registered } from './fixtures.js'
 import { DEFAULT_POLICY } from './policy.js'
 import { createKeeperServer, openApiDocument, ROUTES, type ServerOptions } from './server.js'
 import { memoryStore } from './store.js'
@@ -233,6 +233,109 @@ describe('GET /v1/drops/:address', () => {
   })
 })
 
+describe('GET /v1/drops?owner=', () => {
+  it('400s without an owner, rather than dumping every drop it holds', async () => {
+    // The filter is the design, not a convenience: unfiltered, this is every recipe the keeper holds —
+    // labels, token hints, balances and activation history for everybody.
+    const { base } = await serve()
+    const response = await fetch(`${base}/v1/drops`)
+
+    expect(response.status).toBe(400)
+    expect((await json(response)).error).toBe('invalid-request')
+  })
+
+  it('400s a malformed owner rather than answering that it has none', async () => {
+    // A typo and an empty registry must not read the same: the page asking this exists to tell
+    // "you have nothing" from "we asked wrong".
+    const { base } = await serve()
+    expect((await fetch(`${base}/v1/drops?owner=0xnope`)).status).toBe(400)
+  })
+
+  it('lists an owner\'s drops, newest first', async () => {
+    const { base } = await serve()
+    // Distinct labels give distinct addresses, so these are two drops rather than one registered twice.
+    await post(base, '/v1/drops', { recipe: recipeJson({ label: 'older' }) })
+    await post(base, '/v1/drops', { recipe: recipeJson({ label: 'newer' }) })
+
+    const body = await json(await fetch(`${base}/v1/drops?owner=${OWNER}`))
+
+    expect(body.total).toBe(2)
+    expect(body.truncated).toBe(false)
+    expect(body.drops).toHaveLength(2)
+    expect(body.drops.map((drop: any) => drop.label)).toContain('newer')
+  })
+
+  it('answers an owner it has never seen with an empty list, and still names the chain', async () => {
+    // The chain assertion is the point: the empty answer is the only one carrying no drops to read it
+    // from, and it is exactly when the UI must say "this keeper has nothing for you".
+    const { base } = await serve()
+    const body = await json(await fetch(`${base}/v1/drops?owner=0x${'11'.repeat(20)}`))
+
+    expect(body.drops).toEqual([])
+    expect(body.total).toBe(0)
+    expect(body.chainId).toBe(CHAIN_ID)
+  })
+
+  it('does not serve one owner\'s drops to another', async () => {
+    const { base } = await serve()
+    const other = `0x${'33'.repeat(20)}` as const
+    await post(base, '/v1/drops', { recipe: recipeJson() })
+    await post(base, '/v1/drops', { recipe: recipeJson({ owner: other }) })
+
+    const mine = await json(await fetch(`${base}/v1/drops?owner=${OWNER}`))
+    const theirs = await json(await fetch(`${base}/v1/drops?owner=${other}`))
+
+    expect(mine.drops).toHaveLength(1)
+    expect(theirs.drops).toHaveLength(1)
+    expect(mine.drops[0].address).not.toBe(theirs.drops[0].address)
+  })
+
+  it('matches an owner whatever its casing', async () => {
+    // Registration lowercases the owner, so a checksummed query has to find it anyway.
+    const { base } = await serve()
+    await post(base, '/v1/drops', { recipe: recipeJson() })
+
+    const shouted = `0x${OWNER.slice(2).toUpperCase()}`
+    expect((await json(await fetch(`${base}/v1/drops?owner=${shouted}`))).drops).toHaveLength(1)
+  })
+
+  it('includes retired drops, because the drop nothing is watching is the one worth seeing', async () => {
+    // It may still be holding money, and the owner is the person who needs to know.
+    const { base } = await serve()
+    const recipe = recipeJson()
+    await post(base, '/v1/drops', { recipe })
+    await post(base, '/v1/drops/unregister', { recipe })
+
+    const body = await json(await fetch(`${base}/v1/drops?owner=${OWNER}`))
+
+    expect(body.drops).toHaveLength(1)
+    expect(body.drops[0]).toMatchObject({ watching: false, retiredReason: 'unregistered' })
+  })
+
+  it('never serves the recipe or setupData', async () => {
+    // The privacy guarantee as an assertion: `setupData` is the activation authority, and this route is
+    // enumerable by guessing an address. Fails loudly the day someone widens `toWire`.
+    const { base } = await serve()
+    await post(base, '/v1/drops', { recipe: recipeJson() })
+
+    const drop = (await json(await fetch(`${base}/v1/drops?owner=${OWNER}`))).drops[0]
+    expect(drop.recipe).toBeUndefined()
+    expect(drop.setupData).toBeUndefined()
+  })
+
+  it('caps the list and says so rather than truncating silently', async () => {
+    const { base } = await serve({ maxListed: 1 })
+    await post(base, '/v1/drops', { recipe: recipeJson({ label: 'one' }) })
+    await post(base, '/v1/drops', { recipe: recipeJson({ label: 'two' }) })
+
+    const body = await json(await fetch(`${base}/v1/drops?owner=${OWNER}`))
+
+    expect(body.drops).toHaveLength(1)
+    expect(body.total).toBe(2)
+    expect(body.truncated).toBe(true)
+  })
+})
+
 describe('CORS', () => {
   it('answers the preflight a JSON POST always triggers', async () => {
     // The web app has no dev proxy, so this is on the critical path rather than an afterthought.
@@ -417,13 +520,28 @@ describe('GET /v1/openapi.json', () => {
       { name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' } },
     ])
   })
+
+  it('declares the owner query parameter, without claiming the POST takes one', async () => {
+    // `/v1/drops` carries two methods now. The last assertion is the one that matters: it catches the
+    // path item being overwritten rather than merged, which would publish only whichever route came
+    // last — and it pins the parameter to the GET, so a generated client does not send `owner` on a
+    // registration.
+    const document = openApiDocument(100, 2) as any
+
+    expect(document.paths['/v1/drops'].get.parameters).toEqual([
+      { name: 'owner', in: 'query', required: true, schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' } },
+    ])
+    expect(document.paths['/v1/drops'].post).toBeDefined()
+    expect(document.paths['/v1/drops'].post.parameters).toBeUndefined()
+  })
 })
 
 describe('ROUTES', () => {
   it('lists only routes the router actually serves', async () => {
     // The table feeds both the OpenAPI document and the boot banner, and it is maintained by hand.
     // This is what stops it drifting into advertising a route that 404s. A documented route may answer
-    // 400 or 503 here — what it must never do is claim not to exist.
+    // 400 or 503 here — what it must never do is claim not to exist. `GET /v1/drops` answers 400,
+    // because it requires an `owner` and this walk sends none.
     //
     // Seeded with a real drop because `GET /v1/drops/<address>` answers 404 for an address it does not
     // hold, which is a missing *record* rather than a missing route. Only a registered address

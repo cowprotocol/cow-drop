@@ -16,11 +16,14 @@ the flow, because the recipe is committed into the address itself.
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | [docs/DESIGN.md](docs/DESIGN.md)                          | How it works: the commitment, the two order paths, the recipe format, security and rescue |
 | [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)                | Addresses, generations, and verification                                                  |
+| [docs/BRIDGING.md](docs/BRIDGING.md)                      | Funding a drop from another chain: the two delivery modes, how one got stolen, and the fixes |
+| [docs/RELEASING.md](docs/RELEASING.md)                    | Cutting a release, the published images and package, and how to run them                  |
 | [`contracts/`](contracts/README.md)                       | `DropExecutor` and the step contracts — foundry                                           |
 | [`packages/sdk/`](packages/sdk/README.md)                 | Compile a recipe, get an address, build the activation tx — TypeScript, viem              |
+| [`packages/bridging/`](packages/bridging/README.md)       | Quote a bridge route that delivers into a drop and activates it on arrival                |
 | [`packages/watch-tower/`](packages/watch-tower/README.md) | Index `OrderPlacement` and post the orders to the order book                              |
 | [`packages/keeper/`](packages/keeper/README.md)           | Activate registered drops and pay the gas                                                 |
-| [`apps/web/`](apps/web/README.md)                         | The demo page: a form that turns into an address — Vite, React                            |
+| [`apps/web/`](apps/web/README.md)                         | The demo page: a form that turns into an address, and a tab that funds it across a bridge — Vite, React    |
 | `recipes/`                                                | Example `.drop.json` files                                                                |
 
 ## Build
@@ -119,3 +122,21 @@ Regenerate the SDK's constants afterwards:
 ```bash
 pnpm --filter @cowprotocol/cow-drop-sdk generate
 ```
+
+## Release
+
+Tag it. That publishes the SDK to npm and pushes the three images to GHCR:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+| | |
+| --- | --- |
+| `@cowprotocol/cow-drop-sdk` | `pnpm add @cowprotocol/cow-drop-sdk` |
+| `ghcr.io/cowprotocol/cow-drop/keeper` | Activates drops, pays the gas. Needs a hot key and a policy. |
+| `ghcr.io/cowprotocol/cow-drop/watch-tower` | Posts on-chain orders to the order book. No key. |
+| `ghcr.io/cowprotocol/cow-drop/web` | This page, static behind nginx. |
+
+See [docs/RELEASING.md](docs/RELEASING.md) for the prerelease flow, the repository secrets it needs,
+and how to run each image.

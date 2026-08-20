@@ -40,6 +40,7 @@ export const GENERATIONS: Record<number, DropAddresses> = {
     settlement: '0x9008D19f58AAbD9eD0D60971565AA8510560ab41',
     composableCow: '0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74',
     shedImplementation: '0x1c4b988481d945c98a21446AB2960000d290aB22',
+    bungeeReceiver: '0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C',
   },
 }
 
@@ -48,7 +49,7 @@ export const LATEST_GENERATION = 2
 
 /**
  * The latest generation's addresses.
- * Recorded from: chain 1, chain 100, chain 11155111.
+ * Recorded from: chain 1, chain 100, chain 11155111, chain 8453.
  */
 export const ADDRESSES = GENERATIONS[LATEST_GENERATION]!
 

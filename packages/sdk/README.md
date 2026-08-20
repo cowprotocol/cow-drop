@@ -7,6 +7,17 @@ network. You give it a recipe, it gives you an address and calldata. Its only de
 anything that talks to CoW is [`@cowprotocol/cow-sdk`](https://www.npmjs.com/package/@cowprotocol/cow-sdk)'s
 job, and `apps/web` uses both.
 
+> **Unaudited, and it depends on an unmerged cow-shed PR stack. Do not put real money in it yet.**
+
+## Install
+
+```bash
+pnpm add @cowprotocol/cow-drop-sdk viem
+```
+
+`viem` is a direct dependency, not a peer — the addresses this derives have to come from one copy of
+its ABI encoders, not whichever version a consumer happens to hoist.
+
 ## Build
 
 ```bash
@@ -34,4 +45,4 @@ const tx = buildActivateTx({ deployment, owner, setupData })      // anyone can 
 | | |
 |---|---|
 | [API.md](API.md) | Every exported function, the rescue paths, generations, and the two things that will bite you |
-| [docs/DESIGN.md](../../docs/DESIGN.md) | The commitment scheme and the recipe format |
+| [docs/DESIGN.md](https://github.com/cowprotocol/cow-drop/blob/main/docs/DESIGN.md) | The commitment scheme and the recipe format |

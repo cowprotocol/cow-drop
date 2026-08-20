@@ -22,6 +22,11 @@
     />
     <meta property="og:image" content="/logo-512.png" />
     <meta name="twitter:card" content="summary" />
+
+    <!-- Deployment configuration, rewritten from the environment every time the container starts (see
+         apps/web/docker-entrypoint.d/10-runtime-config.sh). Classic, not a module, so it executes
+         before the bundle rather than being deferred. See src/lib/runtimeConfig.ts. -->
+    <script src="/config.js"></script>
   </head>
   <body>
     <div id="root"></div>

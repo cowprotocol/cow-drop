@@ -14,6 +14,7 @@ import {
   packOrderUid,
   type CowOrderData,
 } from './orderUid.js'
+import { decodeDeliveryPayload, encodeDeliveryPayload, type OnFailure } from './bridge.js'
 import { conditionalOrderParamsHash } from './tx.js'
 
 interface Fixtures {
@@ -32,6 +33,7 @@ interface Fixtures {
     digest: Hex
     expected: Hex
   }>
+  deliveryPayloads: Array<{ name: string; owner: Address; setupData: Hex; onFailure: OnFailure; expected: Hex }>
 }
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -159,4 +161,34 @@ describe('order hashing matches the contract', () => {
     // for a different order.
     expect(() => packOrderUid(`0x${'ab'.repeat(32)}`, `0x${'11'.repeat(20)}`, 2 ** 32)).toThrow(/uint32/)
   })
+})
+
+/**
+ * The bridge delivery payload, encoded on both sides of the wire.
+ *
+ * The encoding itself is unremarkable — `abi.encode(address, bytes, uint8)` — and that is exactly why
+ * it is worth pinning. The `uint8` is a Solidity enum, so its meaning is its declaration order and
+ * nothing in the ABI records that. Reordering `DropDelivery.OnFailure` would leave this SDK encoding
+ * a number that still decodes and now means the opposite, on a delivery whose money has already
+ * crossed a bridge.
+ */
+describe('delivery payloads match the contract', () => {
+  for (const fixture of fixtures.deliveryPayloads) {
+    it(fixture.name, () => {
+      expect(
+        encodeDeliveryPayload({
+          owner: fixture.owner,
+          setupData: fixture.setupData,
+          onFailure: fixture.onFailure,
+        }),
+      ).toBe(fixture.expected)
+    })
+
+    it(`${fixture.name}, decoded back`, () => {
+      const decoded = decodeDeliveryPayload(fixture.expected)
+      expect(getAddress(decoded.owner)).toBe(getAddress(fixture.owner))
+      expect(decoded.setupData).toBe(fixture.setupData)
+      expect(decoded.onFailure).toBe(fixture.onFailure)
+    })
+  }
 })

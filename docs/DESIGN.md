@@ -106,6 +106,51 @@ To emit it, redeclare the interface, or call `CowOrderPoster`: `presignAndAnnoun
 delegatecall, or `setPreSignature` yourself and then `announce`, which refuses to emit an order that is
 not really signed.
 
+## Bridging in
+
+Funding a drop from another chain is the case the whole design is shaped around — an address that
+commits to a rule rather than an amount is exactly what you want behind a payout whose size and timing
+you do not control. There are two ways to do it, and the first needs no new code at all.
+
+**Name the drop as the bridge's recipient.** The address exists as a destination before it exists as a
+contract, so any bridge can pay it, and a keeper activates once the balance arrives. Nothing on this
+page is required for that.
+
+**Or deliver through `DropBungeeReceiver`.** A bridge that supports a destination payload can pay the
+receiver instead, with `abi.encode(owner, setupData, onFailure)` as the payload. It forwards the
+tokens to `dropOf(owner, setupData)` and calls `activate` — so the CoW order is live in the *same
+transaction* as the bridge fill, and the relayer's gas pays for the activation rather than a keeper's.
+
+Three decisions in that contract are worth stating, because each one is a place the obvious choice is
+wrong:
+
+- **It cannot be a method on `DropExecutor`.** That contract's address is both the `trustedExecutor`
+  and the `setupTarget` in every drop's CREATE2 preimage, so adding an entry point to it would move
+  every drop address and force a generation. As a separate contract it is outside the commitment
+  entirely — which means new bridges, or fixes to old ones, cost no drop address and no generation.
+- **A recipe that declines is not a failure.** A `requireMinBalance` guard refusing a bridge's first
+  tranche is the guard working. So the forwarding and the activation happen together in an external
+  self-call under `try/catch`: a failed activation rolls the forwarding back with it, and the catch
+  branch still holds the tokens to place. `onFailure` then picks — leave them at the drop to
+  accumulate (the default, safe with any recipe), or return them to the owner.
+- **It forwards the balance it holds, not the amounts the bridge reported.** A pass-through that keeps
+  a remainder is a pass-through anyone can sweep. It is also guarded against reentrancy, for the one
+  window where it genuinely holds funds: part-way through a multi-token delivery, a hostile token's
+  transfer hook could otherwise redirect the remainder.
+
+A malformed payload reverts, and that is safe rather than reckless: the bridge's transfer and its call
+are one transaction, so reverting rolls the transfer back and the funds never leave the bridge.
+
+Off-chain, `bungeeDelivery()` in the SDK builds the payload and
+[`packages/bridging`](../packages/bridging/README.md) quotes the route. Note what the payload does
+*not* contain — an amount — so re-quoting a route can never move the address the quote is aimed at.
+
+**Direct delivery is the default, and this section is the reason.** The receiver is shared by everyone
+and forwards its whole balance to whichever drop its caller names, so a delivery that fails to execute
+there is not merely stuck — it is a public bounty, and one has already been taken. Paying the drop
+address instead gives up atomicity and gives up nothing else. The whole argument, the incident and the
+options for fixing the atomic path are in [BRIDGING.md](BRIDGING.md).
+
 ## Source layout
 
 ```
@@ -118,17 +163,27 @@ contracts/        lib/cow-shed pinned to cow-shed#78 (feat/owner-deploy-without-
     CowOrder.sol          pre-sign an order and announce it as OrderPlacement
   src/interfaces/ICoWSwapOnchainOrders.sol   CoW's own event, redeclared
   src/CowOrderPoster.sol  the deployed helper, for third-party contracts placing an order
+  src/bridge/             bridge receivers: an address, but not one any drop commits to
+    DropDelivery.sol      the shared half — forward, activate, and what to do if it declines
+    DropBungeeReceiver.sol  Bungee's executeData, translated
     Errors.sol            the errors more than one step contract raises
 packages/sdk/src/
   recipe.ts               compileRecipe: recipe file -> address + committed bytes
   encoding.ts             the CREATE2 derivation, off-chain
   steps.ts                the step registry (extension point)
   templates.ts            swapOnArrival, twapOnArrival
+  bridge.ts               the delivery payload, and the destination a bridge is aimed at
+packages/bridging/src/
+  types.ts                the provider seam: a bridge, reduced to what a drop needs from one
+  bungee/                 the Bungee API, and the provider over it
 packages/watch-tower/src/
   scanner.ts              find OrderPlacement anywhere on the chain, and verify it
   poster.ts               forward one order to the order book
   watchTower.ts           the loop, and where the block cursor advances
-apps/web/src/App.tsx      the form, and the recipe it builds
+apps/web/src/
+  App.tsx                 the shell: wallet, error banner, tab bar
+  tabs/RecipesTab.tsx     the form, and the recipe it builds
+  tabs/BridgeTab.tsx      funding a recipe from another chain
 ```
 
 ## The recipe format
@@ -278,6 +333,14 @@ Never discover a user's drop from `ownerOf` or `COWShedBuilt`: `initializeProxyW
 permissionless, so anyone can create a shed that reports someone else as its owner. Always recompute
 the address client-side from the intended parameters before funding it.
 
+The keeper's `GET /v1/drops?owner=…` is not an exception to this, and not a hole in it either. It can
+only name addresses whose recipe the keeper compiled itself, so the address, the recipe and the `owner`
+it reports are one internally consistent triple rather than a claim a stranger attached to a deployed
+shed. But registration is open and `owner` is a field of the *submitted* recipe, so a row still means
+"someone registered a recipe that would make you the owner", never "you made this". A listing may tell
+you where to look; the address you *fund* is still only ever one your own browser recomputed from a
+recipe you chose.
+
 **Unaudited, and it depends on an unmerged four-deep PR stack.** Do not put real money in it yet.
 
 ## Status
@@ -322,5 +385,14 @@ Not done yet:
   same problem with a narrower commitment: the address commits to exactly one order, via a bespoke
   per-order contract. cow-drop generalizes that to any recipe and reuses cow-shed instead. Worth
   deciding whether one subsumes the other for the single-order case.
+
+  `DropBungeeReceiver` is modelled directly on its `OrderFlowFactory.executeData`, and the mapping is
+  one-to-one: `getOrderFlowAddress` is `dropOf`, `triggerOrderCreation` is `activate`. The difference
+  is what the address commits to — one order there, any recipe here — which is why a drop can be
+  bridged into and then run a TWAP, and why the receiver needs no per-order deployment.
+- [cow-sdk#845](https://github.com/cowprotocol/cow-sdk/pull/845) adds a `BridgeThenSwapProvider`
+  abstraction with a Bungee implementation, aimed at `OrderFlow`. `packages/bridging` deliberately
+  mirrors its shape with the destination replaced by a `DestinationTarget` value, which is the
+  generalization that would let one implementation serve both.
 - [`approve-and-bridge`](https://github.com/cowprotocol/approve-and-bridge) is the outbound mirror
   (swap then bridge, as a post-hook) and already uses cow-shed as its delegatecall context.

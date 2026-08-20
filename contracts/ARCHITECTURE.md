@@ -17,6 +17,9 @@ src/steps/             each has an address, named by a recipe as a step's target
 src/lib/               code with no address of its own: inlined libraries, and the abstract
                        base the ComposableCoW steps inherit. Never deployed, so nothing
                        here can ever move a drop address
+src/bridge/            has an address, and no drop commits to it: nothing in a recipe reaches
+                       a receiver, and all a receiver does is call `activate`, which anyone
+                       may. So a new bridge costs no drop address and no generation
 src/interfaces/        the slices of external protocols the steps call
 ```
 

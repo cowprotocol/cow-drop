@@ -1,4 +1,6 @@
 export * from './types.js'
+export * from './address.js'
+export * from './bridge.js'
 export * from './chains.js'
 export * from './encoding.js'
 export * from './describe.js'

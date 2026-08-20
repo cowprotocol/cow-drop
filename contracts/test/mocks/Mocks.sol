@@ -3,6 +3,8 @@ pragma solidity ^0.8.25;
 
 import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
 
+import {IBungeeExecutor} from "src/interfaces/IBungeeExecutor.sol";
+
 /// @dev Records who called it, so tests can prove a call ran *as the shed*.
 contract Recorder {
     address public lastCaller;
@@ -37,7 +39,7 @@ contract MockERC20 {
         return true;
     }
 
-    function transfer(address to, uint256 amount) external returns (bool) {
+    function transfer(address to, uint256 amount) public virtual returns (bool) {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
@@ -154,5 +156,69 @@ contract MockReadable {
 
     function boom() external pure returns (uint256) {
         revert("nope");
+    }
+}
+
+/// @dev The destination side of a bridge, reduced to the one property the receivers are built on:
+///      the tokens move and the payload is delivered **in the same transaction**. A mock that
+///      transferred in a separate call would quietly make every "reverting is safe" claim untestable.
+contract MockBungeeRouter {
+    /// @dev Deliberately not `IBungeeExecutor`-shaped itself. This is the relayer, not the receiver;
+    ///      it holds the tokens beforehand the way a real one holds its inventory.
+    function deliver(address receiver, address[] memory tokens, uint256[] memory amounts, bytes memory payload)
+        external
+        payable
+    {
+        for (uint256 i; i < tokens.length; ++i) {
+            if (tokens[i] == address(0) || tokens[i] == 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE) continue;
+            // forge-lint: disable-next-line(erc20-unchecked-transfer)
+            MockERC20(tokens[i]).transfer(receiver, amounts[i]);
+        }
+
+        IBungeeExecutor(receiver).executeData{value: msg.value}(keccak256("request"), amounts, tokens, payload);
+    }
+}
+
+/// @dev Rejects native transfers, for the refund path that has nowhere to send them.
+contract MockRejectsNative {
+    receive() external payable {
+        revert("no");
+    }
+}
+
+/// @dev A token whose `transfer` calls back into the receiver, to prove the delivery cannot be
+///      re-entered part-way through forwarding — the one moment a pass-through actually holds funds.
+///
+///      The reentry is swallowed rather than bubbled, so the test observes the guard doing its job
+///      instead of the whole delivery reverting for a second reason.
+contract MockReentrantERC20 is MockERC20 {
+    address public receiver;
+    bytes public payload;
+    bool public reentryReverted;
+    bool private attacking;
+
+    function arm(address receiver_, bytes memory payload_) external {
+        receiver = receiver_;
+        payload = payload_;
+    }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        if (receiver != address(0) && !attacking) {
+            attacking = true;
+            address[] memory tokens = new address[](1);
+            tokens[0] = address(this);
+            uint256[] memory amounts = new uint256[](1);
+            amounts[0] = amount;
+            try IBungeeExecutor(receiver).executeData(keccak256("reentry"), amounts, tokens, payload) {
+                reentryReverted = false;
+            } catch {
+                reentryReverted = true;
+            }
+            attacking = false;
+        }
+
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
     }
 }

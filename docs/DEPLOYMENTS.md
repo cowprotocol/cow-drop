@@ -41,7 +41,15 @@ generate` pick the new directory up — it reads every `gen*/` and emits them al
 | `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | **not yet broadcast** | same |
 | `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | **not yet broadcast** | same |
 | `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | **not yet broadcast** | **moved** |
+| `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | **not yet broadcast** | new |
 | `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis | same |
+
+`DropBungeeReceiver` was added to generation 2 rather than starting a generation 3, and that is safe
+for a reason worth spelling out: **no drop address depends on it.** Nothing in a recipe reaches a
+receiver, and all a receiver does is call `activate`, which is permissionless anyway — so it is not an
+input to any CREATE2 preimage, and adding one moves nothing. It is recorded here because a bridge route
+is quoted against its address, which has to be findable. `DropAddresses.bungeeReceiver` is optional in
+the SDK for the same reason: generation 1 was cut before it existed and legitimately has none.
 
 Generation 2 exists because `PresignSteps` and `CowOrderPoster` now announce an order as CoW's own
 `OrderPlacement` rather than a `CowOrderPlaced` of this repository's invention, which changes their

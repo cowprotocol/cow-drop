@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { formatEther, parseEther } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
-import { DEFAULT_POLICY, parsePolicy } from './policy.js'
+import { DEFAULT_POLICY, TYPICAL_ACTIVATION_GAS, activationCostAt, defaultPolicyFor, parsePolicy } from './policy.js'
 import { startKeeperService } from './service.js'
 import { createLogger } from '@cowprotocol/cow-drop-watch-tower'
 
@@ -25,7 +25,8 @@ Options:
   --chain-id <id>            Defaults to $CHAIN_ID, else whatever the RPC says.
   --generation <n>           Contract generation. Defaults to the SDK's latest.
   --private-key-file <path>  File holding the hot key. Defaults to $KEEPER_PRIVATE_KEY.
-  --policy <path>            JSON subsidy policy. Defaults to subsidise-all with small budgets.
+  --policy <path>            JSON subsidy policy. Omitted fields fall back to limits sized from
+                             this chain's gas price. Default: subsidise-all within those limits.
   --state <path>             Registry and spend ledger. Default out/keeper/state-<chainId>.json.
   --cursor <path>            Watch tower block cursor. Default out/keeper/cursor-<chainId>.json.
   --port <n>                 HTTP port. Default 8787.
@@ -132,11 +133,18 @@ async function main(): Promise<void> {
 
   const account = privateKeyToAccount(await loadPrivateKey(args))
 
-  const policyPath = str(args, 'policy')
-  const policy = policyPath ? parsePolicy(JSON.parse(await readFile(policyPath, 'utf8'))) : DEFAULT_POLICY
-
   const chainId = num(args, 'chain-id') ?? Number(process.env['CHAIN_ID'] ?? 0)
   const resolvedChainId = chainId || (await chainIdFromRpc(rpcUrl))
+
+  // Sized from the chain's own gas price rather than from a constant, because two of the limits mean
+  // nothing in absolute wei: the same 0.02 native is five activations of reserve on Ethereum and six
+  // thousand on Base. Sampled once, here, so `/v1/health` stays a cheap read and the numbers hold
+  // still for the process — an operator reading a log line needs the figure that will actually apply.
+  const activationCostWei = activationCostAt(await gasPriceFromRpc(rpcUrl))
+  const defaults = defaultPolicyFor(activationCostWei)
+
+  const policyPath = str(args, 'policy')
+  const policy = policyPath ? parsePolicy(JSON.parse(await readFile(policyPath, 'utf8')), defaults) : defaults
 
   // After the chain is resolved, not before: every line this process prints carries the chain, and a
   // boot banner logged under the wrong one is exactly the confusion the prefix exists to remove.
@@ -161,6 +169,14 @@ async function main(): Promise<void> {
   logger.info(
     `policy ${policy.mode}, ${policy.dailyBudgetWei} wei/day` +
       `${policy.perOwnerDailyBudgetWei > 0n ? `, ${policy.perOwnerDailyBudgetWei} wei/day per owner` : ''}`,
+  )
+  // The floor and the per-activation cap, in the unit that makes them legible. A refusal naming only
+  // the wei figure is unreadable — "below its 20000000000000000 floor" tells you nothing about whether
+  // that is one activation or six thousand.
+  logger.info(
+    `one activation costs about ${formatEther(activationCostWei)} native here, so the floor is ` +
+      `${formatEther(policy.minPayerBalanceWei)} (${policy.minPayerBalanceWei / activationCostWei} activations) ` +
+      `and one activation may cost up to ${formatEther(policy.maxCostPerActivationWei)}`,
   )
   logger.info(`polling every ${pollSeconds}s`)
   logger.info(`warning below ${formatEther(minBalanceWarnWei)} native`)
@@ -201,6 +217,30 @@ async function main(): Promise<void> {
 }
 
 /** Ask the endpoint which chain it is, for when neither the flag nor the environment says. */
+/**
+ * The chain's current gas price, for sizing the defaults.
+ *
+ * `eth_gasPrice` rather than a fee-history percentile: this only has to be the right *order of
+ * magnitude*, and the difference between chains is three orders. A chain that will not answer falls
+ * back to Ethereum-shaped numbers, which are conservative everywhere — the failure mode is a keeper
+ * that reserves too much, not one that spends too much.
+ */
+async function gasPriceFromRpc(rpcUrl: string): Promise<bigint> {
+  try {
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_gasPrice', params: [] }),
+    })
+    const body = (await response.json()) as { result?: string }
+    const price = body.result ? BigInt(body.result) : 0n
+    if (price > 0n) return price
+  } catch {
+    // Fall through to the conservative default below.
+  }
+  return DEFAULT_POLICY.minPayerBalanceWei / TYPICAL_ACTIVATION_GAS
+}
+
 async function chainIdFromRpc(rpcUrl: string): Promise<number> {
   const response = await fetch(rpcUrl, {
     method: 'POST',

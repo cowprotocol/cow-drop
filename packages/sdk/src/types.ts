@@ -68,6 +68,16 @@ export interface DropAddresses {
    */
   cowOrderPoster: Address
   /**
+   * `DropBungeeReceiver` — the address a Bungee route delivers its destination payload to, which
+   * forwards the tokens to the drop and activates it inside the bridge's own fill.
+   *
+   * Optional, and outside the commitment even more thoroughly than `cowOrderPoster`: no recipe
+   * reaches it *and* it reaches no recipe, since all it does is call `activate`, which anyone may.
+   * So a receiver can be added to a generation that already exists, and a generation predating it
+   * simply has none — which is why this is the one address here that may be missing.
+   */
+  bungeeReceiver?: Address
+  /**
    * `GPv2Settlement` and `ComposableCoW`. Not cow-drop's own contracts and not inputs to a drop
    * address — but they *are* constructor inputs to the step contracts, so they belong to the
    * generation. Carried so a rescue can retire live orders without an RPC round-trip.

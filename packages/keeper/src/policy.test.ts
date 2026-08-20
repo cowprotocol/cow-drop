@@ -1,7 +1,15 @@
 import type { Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_POLICY, evaluatePolicy, nextUtcMidnight, parsePolicy } from './policy.js'
+import {
+  DEFAULT_POLICY,
+  TYPICAL_ACTIVATION_GAS,
+  activationCostAt,
+  defaultPolicyFor,
+  evaluatePolicy,
+  nextUtcMidnight,
+  parsePolicy,
+} from './policy.js'
 import type { SubsidyPolicy } from './types.js'
 
 const OWNER: Address = '0x00000000000000000000000000000000000a11ce'
@@ -235,5 +243,89 @@ describe('paying mode', () => {
     expect(
       evaluate({ policy: { ...paying, dailyBudgetWei: 0n }, fee: FEE, revenueWei: cost * 100n }),
     ).toMatchObject({ reason: 'daily-budget-exhausted' })
+  })
+})
+
+describe('defaultPolicyFor', () => {
+  // Roughly what these chains charge. Only the order of magnitude matters, which is the point.
+  const BASE_GWEI = 10n ** 7n // 0.01 gwei
+  const ETHEREUM_GWEI = 10n * 10n ** 9n
+
+  const baseCost = activationCostAt(BASE_GWEI)
+  const ethereumCost = activationCostAt(ETHEREUM_GWEI)
+
+  /**
+   * The bug this function exists for.
+   *
+   * A flat 0.02 native floor is a few activations of reserve on Ethereum and thousands on Base, where
+   * it refused to pay for a drop out of a wallet holding a thousand times the gas it needed. Sized in
+   * activations, the same policy is sane on both.
+   */
+  it('keeps the same reserve in activations on chains three orders of magnitude apart', () => {
+    for (const cost of [baseCost, ethereumCost]) {
+      const policy = defaultPolicyFor(cost)
+      expect(policy.minPayerBalanceWei / cost).toBe(20n)
+      expect(policy.maxCostPerActivationWei / cost).toBe(20n)
+    }
+
+    // And they are genuinely different absolute numbers, or nothing has been fixed.
+    expect(defaultPolicyFor(baseCost).minPayerBalanceWei).toBeLessThan(
+      defaultPolicyFor(ethereumCost).minPayerBalanceWei,
+    )
+  })
+
+  /**
+   * The other half of the same bug, in the opposite direction: the flat 0.01 native per-activation cap
+   * silently refuses every Ethereum activation above roughly 24 gwei — a keeper that looks configured
+   * and does nothing.
+   */
+  it('does not refuse an ordinary activation on an expensive chain', () => {
+    const busy = activationCostAt(60n * 10n ** 9n)
+
+    expect(busy).toBeGreaterThan(DEFAULT_POLICY.maxCostPerActivationWei)
+    expect(defaultPolicyFor(busy).maxCostPerActivationWei).toBeGreaterThan(busy)
+  })
+
+  /**
+   * Risk appetite is a sum of money, not a multiple of gas. Scaling a daily budget by gas price would
+   * quietly raise the ceiling on the expensive chain, which is exactly backwards.
+   */
+  it('leaves the budgets and the fee cap absolute', () => {
+    const policy = defaultPolicyFor(baseCost)
+
+    expect(policy.dailyBudgetWei).toBe(DEFAULT_POLICY.dailyBudgetWei)
+    expect(policy.perOwnerDailyBudgetWei).toBe(DEFAULT_POLICY.perOwnerDailyBudgetWei)
+    expect(policy.maxFeePerGasWei).toBe(DEFAULT_POLICY.maxFeePerGasWei)
+    expect(policy.mode).toBe('all')
+  })
+
+  it('sizes an activation from the measured gas', () => {
+    expect(activationCostAt(2n)).toBe(TYPICAL_ACTIVATION_GAS * 2n)
+  })
+})
+
+describe('parsePolicy defaults', () => {
+  /**
+   * A file that sets only `mode` must not silently inherit Ethereum-shaped limits on Base. This is how
+   * the chain-sized defaults reach anyone who writes a partial policy — which is most people.
+   */
+  it('falls back to the chain-sized limits for omitted fields', () => {
+    const defaults = defaultPolicyFor(activationCostAt(10n ** 7n))
+    const parsed = parsePolicy({ mode: 'all' }, defaults)
+
+    expect(parsed.minPayerBalanceWei).toBe(defaults.minPayerBalanceWei)
+    expect(parsed.maxCostPerActivationWei).toBe(defaults.maxCostPerActivationWei)
+  })
+
+  it('still lets a file override them outright', () => {
+    const defaults = defaultPolicyFor(activationCostAt(10n ** 7n))
+    const parsed = parsePolicy({ minPayerBalanceWei: '7' }, defaults)
+
+    expect(parsed.minPayerBalanceWei).toBe(7n)
+    expect(parsed.maxCostPerActivationWei).toBe(defaults.maxCostPerActivationWei)
+  })
+
+  it('keeps the Ethereum-shaped constant as the no-chain-info fallback', () => {
+    expect(parsePolicy({}).minPayerBalanceWei).toBe(DEFAULT_POLICY.minPayerBalanceWei)
   })
 })
