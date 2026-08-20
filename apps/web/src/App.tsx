@@ -12,7 +12,8 @@ import { RecipesTab } from './tabs/RecipesTab.js'
 import { SdkTab } from './tabs/SdkTab.js'
 
 /**
- * The shell: the error banner, the header and wallet, the tab bar. Nothing about recipes.
+ * The shell: the error banner, the beta notice, the header and wallet, the tab bar. Nothing about
+ * recipes.
  *
  * It owns only what is genuinely shared across tabs — the connected account, the page-level error, the
  * recipe handed between Drops and Recipes, and which tab the URL selects. Everything else lives in the
@@ -125,6 +126,16 @@ export function App() {
           {error}
         </p>
       )}
+
+      {/*
+        Said once, in the shell, so it is on screen whichever tab the URL opens on. It belongs here
+        rather than in About — which is the one tab nobody funding a drop has to visit — and it is not
+        dismissible, because it is a standing fact about this deployment and not a notification.
+      */}
+      <p className="beta-notice" role="note">
+        <strong>Beta.</strong> Not meant for public use: unaudited and still changing. Exercise
+        caution and use it at your own risk.
+      </p>
 
       <header>
         <div className="brand">
