@@ -1,7 +1,7 @@
 # Web app architecture
 
-What the page does, tab by tab and then panel by panel, and the decisions behind it. Running it is
-covered in the [README](README.md).
+What the page does, panel by panel, and the decisions behind it. Running it is covered in the
+[README](README.md).
 
 ## The four tabs
 
@@ -10,126 +10,99 @@ covered in the [README](README.md).
 | **Recipes** | The builder: a form that turns into an address. The default, and what the page is for. |
 | **Drops** | Every drop associated with the connected account, from this browser *and* from the keeper. |
 | **About** | What a drop is, and what the keeper this page points at will actually do. |
-| **SDK** | The same thing in code, for someone who would rather not use the form. |
+| **SDK** | The same thing in code. |
 
-Only one of these is new work in any real sense. The other three are surfaces for things the project
-already had and never showed: the keeper has served `/v1/about`, `/v1/policy` and `/v1/health` all along
-and the page called none of them, `packages/sdk` has a full reference nobody using the page could find,
-and the drop list was folded into a `<details>` above the form.
+Only Recipes is new work. The other three surface things the project already had and never showed: the
+keeper's `/v1/about`, `/v1/policy` and `/v1/health`, the SDK reference, and a drop list previously folded
+into a `<details>`.
 
-### Recipes
+## Recipes, panel by panel
 
-Eight panels, top to bottom, in the order you'd actually use them:
+1. **Recipe** — swap on arrival, TWAP on arrival, or stop-loss on arrival. The hint says what each needs
+   afterwards: the swap's order must be posted to the API, the two ComposableCoW recipes are self-driving.
+2. **Parameters** — network, tokens, limit price, receiver, owner.
+   - Switching network does not move the drop address (addresses are identical on every chain), only which
+     chain you fund. Picking one also asks the wallet to switch, adding the chain if unknown, and the page
+     follows the wallet's own `chainChanged` events so the two cannot drift. A declined prompt is not an
+     error.
+   - **Token selections reset on a chain change**, since an address from the previous chain would otherwise
+     compile into a valid-looking recipe for a token that does not exist there.
+   - **Owner** is who can recover the funds if the recipe turns out unrunnable; defaults to your wallet.
+     **Receiver** defaults to the owner; the zero address leaves proceeds in the drop for chaining.
+   - **Price feeds** appear for the stop-loss, and for the swap when you tick "improve the limit with a
+     price feed". For the swap the limit becomes a *floor* the feed may only tighten — **anyone may
+     activate a drop, so without a floor whoever activates chooses your price by choosing the moment.**
+     Both feeds must quote the same currency, which nothing on-chain can check.
+   - **Guards** are optional on every recipe: a minimum balance, and a not-before / not-after window.
+     **The minimum is the one that matters** — on a one-shot recipe anyone may trigger the moment the first
+     wei lands, sizing the order from a part-delivered balance, which is what a bridge paying in tranches
+     does. The panel warns when a one-shot recipe has no minimum. Guards are part of the address, and they
+     are refusals, not triggers.
+3. **Your drop address** — updates live as you type, with a QR code. Nothing is deployed at it yet, and
+   funds sent before deployment are safe.
+4. **What the address commits to** — the decoded steps and the exact `setupData` bytes, via the SDK's
+   `describeRecipe`. **Activation is permissionless and unsigned, so reading this is the safeguard.**
+   Arguments show the exact committed values with no unit conversion: a prettified amount differing by an
+   atomic unit would describe a different drop. Four warnings appear where they apply:
 
-1. **Recipe** — swap on arrival, TWAP on arrival, or stop-loss on arrival. The hint under the tabs
-   explains what each needs afterwards: the swap's order has to be posted to the API, while the two
-   ComposableCoW recipes are self-driving once activated.
-2. **Parameters** — network, tokens, limit price, receiver, owner. The **network** selector lists the
-   chains from `chains.ts` and defaults to whatever your wallet is on when that is one of them. Switching
-   network does not move the drop address — the addresses are identical on every chain — it only changes
-   which chain you fund. Both recipes work on every listed chain.
+   | warning | why |
+   |---|---|
+   | unrecognised call | the SDK cannot name it, so a funder is trusting the bytes |
+   | delegatecall to a non-step contract | it can rewrite the shed's storage, including the admin the rescue path depends on |
+   | step contract as a plain call | it would read that contract's zero balance instead of the drop's |
+   | `allowFailure` | the activation can complete having skipped the step |
 
-   Picking a network also asks the wallet to switch, adding the chain first if the wallet does not know
-   it, and the page follows the wallet's own `chainChanged` events — so the two cannot drift apart. A
-   declined prompt is not treated as an error; the mismatch banner says the wallet is elsewhere. Token
-   selections reset on a chain change, because a token address from the previous chain would otherwise
-   compile into a valid-looking recipe for a token that does not exist there. The **owner** matters: it's who can recover
-   the funds if the recipe turns out to be unrunnable, and it defaults to your connected wallet. The
-   **receiver** defaults to the owner, so proceeds land in your wallet rather than piling up in the
-   drop; the zero address leaves them in the drop for chaining.
+5. **Status** — balance, whether it is deployed, and the activate button. Links to two explorers because
+   they answer different questions: CoW Explorer for the *orders*, the chain's explorer for *balances and
+   transactions*. It warns when the contracts are not deployed on the chain yet, in which case the address
+   is a prediction (a correct one).
 
-   **Price feeds** appear for the stop-loss, and for the swap when you tick "improve the limit with a
-   price feed". For the swap the limit price becomes a *floor* the feed may only tighten — which is the
-   point, because anyone may activate a drop, so without a floor whoever activates would be choosing
-   your price by choosing the moment. The panel says out loud that both feeds must quote the same
-   currency, since nothing on-chain can check it.
-
-   **Guards** are optional on every recipe: a minimum balance, and a not-before / not-after window.
-   The minimum is the one that matters — activation is permissionless, so on a one-shot recipe anyone
-   may trigger it the moment the first wei lands and the order gets sized from a part-delivered
-   balance, which is exactly what a bridge paying out in tranches does. The panel warns when a one-shot
-   recipe has no minimum set. Guards are part of the address, so adding one moves it — and they are
-   refusals, not triggers: nothing watches for the moment a guard turns true.
-3. **Your drop address** — updates live as you type, with a QR code. Nothing is deployed at it yet,
-   and funds sent before deployment are safe; the recipe spends them on activation.
-4. **What the address commits to** — the decoded steps and the exact `setupData` bytes. This is the
-   only place you can see what you're being asked to fund, and since activation is permissionless and
-   unsigned, reading it *is* the safeguard — so the steps are named and their arguments decoded, via the
-   SDK's `describeRecipe`. Arguments are shown as the exact committed values, with no unit conversion: a
-   prettified amount that disagreed with the committed one by an atomic unit would be describing a
-   different drop.
-
-   A step the SDK cannot name is called out as an **unrecognised call** rather than rendered as if it
-   were understood, with a warning saying why. Three more warnings appear where they apply: a
-   delegatecall to something that is not a step contract (it can rewrite the shed's storage, including
-   the admin the rescue path depends on), a step contract invoked as a plain *call* (it would read that
-   contract's zero balance instead of the drop's), and `allowFailure` (the activation can complete
-   having skipped the step).
-5. **Status** — balance at the drop, whether it's deployed, and the activate button. Links to two
-   explorers, because they answer different questions: CoW Explorer for the *orders* a drop has placed,
-   the chain's own explorer for its *balances and transactions*. It warns when the contracts aren't
-   deployed on the chain yet, in which case the address is a prediction (a correct one — addresses are
-   deterministic).
-
-   Also holds **Activate from the terminal**, for a keeper or a pre-flight check. Note what curl can
-   and cannot do: activation is a signed transaction, so the send is a `cast` command, and curl gets
-   the two jobs it genuinely does — simulating the activation via `eth_call` (no key, no funds, and it
-   answers "would this work?" before anyone sends money to the address) and reading back the orders the
-   drop owns.
-6. **If something goes wrong** — the rescue panel, behind a toggle. It shows which path applies
-   (deploy-without-setup if the drop doesn't exist yet, direct sweep if it does), lets you pick which
-   balances to recover and where to send them, and offers "deploy shed only" for taking manual
-   control instead. Owner-only, so it tells you when the connected account isn't the owner.
-7. **Add a custom step** — an ABI-driven builder for calling something the recipe types do not cover.
-   Paste human-readable signatures or a JSON ABI, pick a function, fill the arguments, and it appends a
-   `raw` step to the recipe below. Two limits are stated in the panel rather than discovered: every
-   argument is a **literal** committed into the address, so this cannot express anything that depends on
-   the amount that arrives; and `delegatecall` is off by default and needs a second, explicit
-   confirmation, because foreign code running as the drop can rewrite the shed's admin.
-8. **Recipe file** — import and export. Export, reload the page, import, and the same address comes
-   back, because the address is derived from the recipe rather than stored anywhere.
+   Also holds **Activate from the terminal**. Activation is a signed transaction, so the send is a `cast`
+   command; curl gets the two jobs it does — simulating via `eth_call` (no key, no funds, answers "would
+   this work?" before anyone sends money) and reading back the drop's orders.
+6. **If something goes wrong** — the rescue panel, behind a toggle. Shows which path applies, lets you pick
+   balances and destination, and offers "deploy shed only" for manual control. Owner-only.
+7. **Add a custom step** — an ABI-driven builder that appends a `raw` step. Two limits stated in the panel:
+   every argument is a **literal** committed into the address, so this cannot express anything depending on
+   the amount that arrives; and `delegatecall` is off by default and needs a second confirmation.
+8. **Recipe file** — import and export. Export, reload, import, and the same address comes back.
 
 ## Activation
 
-The connected wallet only pays gas. It isn't authorising anything — the recipe was authorised by
-being committed into the address — so any account could send the same transaction. That's why the
-wallet handling here is deliberately thin: `viem` plus the injected provider, no connector framework.
+The connected wallet only pays gas. It is not authorising anything — the recipe was authorised by being
+committed into the address — so any account could send the same transaction. Hence the deliberately thin
+wallet handling: `viem` plus the injected provider, no connector framework.
 
-For the pre-sign path, activation is followed by a `POST` to the CoW order book, since the
-pre-signature exists on-chain but the order still has to be made visible to solvers. The page does
-this for you and reports the order UIDs. For the TWAP path there's nothing to post: the watch tower
-takes over.
+For the pre-sign path, activation is followed by a `POST` to the CoW order book, since the pre-signature
+exists on-chain but the order still has to be made visible to solvers. For the TWAP path there is nothing
+to post; the watch tower takes over.
 
-## Files
+## Never lose a recipe
 
-| | |
-|---|---|
-| `src/App.tsx` | The shell: the error banner, the header and wallet, the tab bar. Nothing about recipes. |
-| `src/tabs/RecipesTab.tsx` | The form, and the recipe it builds. `toRecipe` is pure, which is what makes the address update as you type. |
-| `src/tabs/DropsTab.tsx` | The three groups, the empty states, and the one-chain footer. |
-| `src/tabs/AboutTab.tsx` | What a drop is, plus the keeper's own `/v1/about`, `/v1/policy` and `/v1/health`. |
-| `src/tabs/SdkTab.tsx` | Copyable snippets, grouped as `packages/sdk/API.md` groups them. |
-| `src/lib/route.ts` | Fragment ⇄ tab + recipe. Pure, so it can be reasoned about without a browser. |
-| `src/lib/useRoute.ts` | The fragment as an external store, and the one place that writes it. |
-| `src/lib/dropList.ts` | Merging what this browser saved with what the keeper holds. Pure. |
-| `src/lib/drop.ts` | Reading drop status, activating, and posting placed orders. |
-| `src/lib/chain.ts` | Public client, injected wallet, chain switching. |
-| `src/lib/tokenList.ts` | Loads the token lists cowswap enables by default, per chain, and merges them by priority. |
-| `src/lib/tokenLogo.ts` | The logo fallback cascade, mirroring cowswap's `getTokenLogoUrls`. |
-| `src/lib/tokens.ts` | Offline fallback list (symbols and decimals verified on-chain). |
-| `src/components/` | Address panel with QR, the decoded step table, the custom-step builder, the rescue panel, and the JSON import/export. |
+A drop address is a hash of its recipe, and every path that can touch the drop — activation *and* the
+owner's rescue — needs those exact bytes. Nothing on-chain holds them until the first activation.
+**Funding an address and losing its recipe destroys the money, with no owner override.**
+
+So the page treats the recipe as a key:
+
+- kept in the **URL fragment** while Recipes is showing, so a bookmark, a pasted link or a reload restores
+  it (and a fragment never reaches a server);
+- saved to **localStorage** at every point where funding is plausibly next — copying the address,
+  downloading the file, activating — not only on an explicit save, because the failure to prevent is
+  someone copying an address and closing the tab;
+- **Drops** gets its own tab *and* stays folded above the form, because the moment you need it is the
+  moment you have already funded something. Both render the same rows from the same code.
+- the address panel states the consequence and shows whether the current recipe is saved yet.
 
 ## Handing a drop to a keeper
 
-With `VITE_KEEPER_URL` set, the status panel gains **Hand to keeper**: it POSTs the recipe to
-`/v1/drops`, and the keeper recompiles `setupData` itself and refuses anything that does not derive the
-address given — so the page cannot register a recipe for an address it does not hold the preimage of.
-The call is idempotent, so a retry after a timeout is safe.
+With `VITE_KEEPER_URL` set, the status panel gains **Hand to keeper**: it POSTs the recipe to `/v1/drops`,
+and the keeper recompiles `setupData` itself and refuses anything that does not derive the address given.
+The call is idempotent.
 
-Saved drops then carry a tag, and it is deliberately **not** the local flag rendered as fact. The
-browser only knows what it *sent*; the keeper's own state is the truth, and its `--state` defaults to
-memory only, so a restart can lose every registration. The list asks the keeper on open and shows one of
-these:
+Saved drops then carry a tag, and it is deliberately **not** the local flag rendered as fact — the browser
+only knows what it *sent*, and the keeper's `--state` defaults to memory, so a restart can lose every
+registration. The list asks the keeper on open:
 
 | tag | meaning |
 |---|---|
@@ -138,143 +111,109 @@ these:
 | `keeper holds, not watching` | held but retired — the recipe is kept, nothing is polling |
 | `sent, keeper has no record` | **we sent it and the keeper does not have it.** The one that needs acting on |
 | `sent, keeper unreachable` | the keeper is down; unknown rather than bad |
-| `keeper is on another chain` | sent, but this keeper serves a different chain, so it cannot answer |
-| `keeper only — no recipe here` | the keeper has it and this browser does not, so nothing here can act on it |
-| `sent, not checked` | sent, but the listing was filtered by another owner, so it proves nothing either way |
+| `keeper is on another chain` | sent, but this keeper serves a different chain |
+| `keeper only — no recipe here` | the keeper has it and this browser does not |
+| `sent, not checked` | the listing was filtered by another owner, so it proves nothing |
 
-`sent, keeper has no record` and `sent, keeper unreachable` are separate on purpose: a keeper that is
-down and a keeper that has forgotten call for opposite reactions.
-
-`keeper is on another chain` exists because the alternative was a lie. The keeper's store is
-chain-scoped, so a drop registered on one chain and checked against a keeper for another answers 404 —
-and that used to render as `sent, keeper has no record`, the loudest tag here, for a drop that was
-perfectly fine. The last two tags are the same principle: never derive an alarm from a silence that had
-an innocent explanation.
+The distinctions are the point: a keeper that is down and a keeper that has forgotten call for opposite
+reactions, and a chain-scoped 404 must not render as the loudest tag here. **Never derive an alarm from a
+silence that had an innocent explanation.**
 
 ## The Drops tab
 
-Two sources, and neither is complete. This browser holds the **recipes**, which are the only thing that
-can activate or rescue a drop — but it only knows what *it* saved. The keeper knows what was registered
-from anywhere, and hands out **no recipes at all**. So the tab shows both and says which is which,
-rather than merging them into one list that implies more than it can do.
-
-Three groups:
+Two sources, neither complete. This browser holds the **recipes**, which are the only thing that can
+activate or rescue a drop, but only knows what *it* saved. The keeper knows what was registered from
+anywhere and hands out **no recipes at all**. So the tab shows both and says which is which.
 
 - **Your drops** — saved here, owned by the connected account. Load, Forget, everything.
-- **The keeper for <chain> also has** — registered under this account and *not* in this browser. Listed
-  and linked, with no Load, Forget or activate control anywhere on the row. That absence is the truth
-  rather than a gap: all three need the recipe bytes, and only their hash is on-chain.
-- **Other accounts in this browser** — collapsed, and deliberately **shown rather than hidden**. With
-  several accounts you would otherwise watch a drop you funded vanish the moment you switched wallets,
-  which is the exact failure this page exists to prevent. The recipe is here, so the controls stay.
+- **The keeper for &lt;chain&gt; also has** — registered under this account and not in this browser. Listed
+  and linked, with no Load, Forget or activate control: all three need the recipe bytes, and only their
+  hash is on-chain.
+- **Other accounts in this browser** — collapsed, and deliberately **shown rather than hidden**. Otherwise
+  you would watch a drop you funded vanish on switching wallets.
 
-Two things the tab has to say out loud. The keeper is **per-chain** while localStorage spans every
-chain, so its answer is scoped and a drop elsewhere must read as out of scope rather than missing. And a
-keeper row is **not proof of ownership**: registration is open and `owner` is a field of the submitted
-recipe, so anyone can put a labelled row in anyone's listing. It means *someone registered a recipe
-naming you*, never *you made this* — which is why that group warns against funding anything from it.
+Two things the tab says out loud. The keeper is **per-chain** while localStorage spans every chain, so a
+drop elsewhere reads as out of scope rather than missing. And **a keeper row is not proof of ownership**:
+registration is open and `owner` is a field of the submitted recipe, so it means *someone registered a
+recipe naming you*, never *you made this* — which is why that group warns against funding anything from it.
 
-## Where a tab lives, and why the URL carries it
+## Routing
 
-The fragment was already carrying the recipe, and it never reaches a server, so the tab rides the same
-private channel: no server rewrite, no assumption about the deploy path, and no router dependency in an
-app that deliberately has none.
+The fragment already carried the recipe and never reaches a server, so the tab rides the same private
+channel: no server rewrite, no router dependency.
 
-`#/recipes/<recipe>` is the canonical form; `#/drops`, `#/about` and `#/sdk` carry nothing. A fragment
-that does **not** start with `/` is read as a bare recipe on the Recipes tab, which is how every link
-shared before the tabs existed still opens. That is an invariant rather than a heuristic: `recipeToHash`
-maps `/` to `_`, so the payload alphabet is `[A-Za-z0-9_-]` and **every `/` in a fragment is
-structural**.
+`#/recipes/<recipe>` is canonical; the other three tabs carry nothing. A fragment that does **not** start
+with `/` is read as a bare recipe, which is how every link shared before the tabs existed still opens —
+an invariant rather than a heuristic, since `recipeToHash` maps `/` to `_`, so **every `/` in a fragment
+is structural**.
 
-Push for a tab, replace for a keystroke — Back should move between tabs and must not fill up with every
-character typed. The recipe mirror is gated on the Recipes tab being the one on screen, because
-`#/drops` must not be rewritten by a form nobody is looking at, and `pushState`/`replaceState` do not
-fire `hashchange`, which is what keeps that mirror from reading back its own write.
+Push for a tab, replace for a keystroke. The recipe mirror is gated on Recipes being on screen, and
+`pushState`/`replaceState` do not fire `hashchange`, which keeps that mirror from reading back its own
+write.
 
-The tabs are **links with `aria-current`**, not an ARIA tablist. They really are pages: bookmarkable,
-Back moves between them, About and SDK are worth sending to someone. A tablist would misdescribe
-navigation as a widget and oblige us to reimplement its roving-tabindex keyboard model by hand — and a
-row of `role="tab"` without that model is worse for a screen-reader user than plain links. It would also
-collide with the recipe-kind switch in panel 1, which genuinely *is* an in-page control.
+The tabs are **links with `aria-current`**, not an ARIA tablist — they really are pages, and a row of
+`role="tab"` without a roving-tabindex model is worse for a screen-reader user than plain links.
 
-The builder **stays mounted** while another tab shows, hidden with the `hidden` attribute. Unmounting
-would throw away a half-filled form, and the URL could not bring it back because `#/drops` carries no
-recipe by design. It costs nothing to keep: nothing in this app polls, so every effect there is
-dependency-driven and a hidden panel is idle. `hidden` specifically, because it removes the subtree from
-the accessibility tree *and* the tab order — anything less leaves thirty invisible focusable inputs
-between the nav and the visible panel. The accepted cost: a *reload* while parked on another tab loses
-an unsaved recipe, since it is only in memory there.
+The builder **stays mounted** while another tab shows, hidden with the `hidden` attribute; unmounting
+would throw away a half-filled form the URL could not restore. `hidden` specifically, because it removes
+the subtree from the accessibility tree *and* the tab order. Accepted cost: a *reload* while parked on
+another tab loses an unsaved recipe.
 
-## Never lose a recipe
+## Files
 
-A drop address is a hash of its recipe, and every path that can touch the drop — activation *and* the
-owner's rescue — needs those exact bytes back. Nothing on-chain holds them until the first activation.
-Funding an address and losing its recipe therefore destroys the money, with no owner override.
-
-So the page treats the recipe as a key rather than a document:
-
-- it is kept in the **URL fragment** while the Recipes tab is showing, so a bookmark, a pasted link or a
-  plain reload restores it (and a fragment never reaches a server) — the tab is what the fragment
-  carries otherwise;
-- it is saved to **localStorage** at every point where funding is plausibly next — copying the address,
-  downloading the file, activating — not only on an explicit save, because the failure to prevent is
-  someone copying an address and closing the tab;
-- **Drops** gets its own tab, *and* the list stays folded above the form, because the moment you need it
-  is the moment you have already funded something and cannot remember what with — a tab away is fine,
-  out of sight on the page where the funding happens is not. Both render the same rows from the same
-  code, so the wording that says clearing site data loses them cannot drift between the two;
-- the address panel states the consequence, and shows whether the current recipe is saved yet.
+| | |
+|---|---|
+| `src/App.tsx` | The shell: error banner, header and wallet, tab bar. Nothing about recipes. |
+| `src/tabs/RecipesTab.tsx` | The form, and the recipe it builds. `toRecipe` is pure, which is what makes the address update as you type. |
+| `src/tabs/DropsTab.tsx` | The three groups, the empty states, and the one-chain footer. |
+| `src/tabs/AboutTab.tsx` | What a drop is, plus the keeper's `/v1/about`, `/v1/policy` and `/v1/health`. |
+| `src/tabs/SdkTab.tsx` | Copyable snippets, grouped as `packages/sdk/API.md` groups them. |
+| `src/lib/route.ts` | Fragment ⇄ tab + recipe. Pure. |
+| `src/lib/useRoute.ts` | The fragment as an external store, and the one place that writes it. |
+| `src/lib/dropList.ts` | Merging what this browser saved with what the keeper holds. Pure. |
+| `src/lib/drop.ts` | Reading drop status, activating, and posting placed orders. |
+| `src/lib/chain.ts` | Public client, injected wallet, chain switching. |
+| `src/lib/tokenList.ts` | Loads the token lists cowswap enables by default, per chain. |
+| `src/lib/tokenLogo.ts` | The logo fallback cascade, mirroring cowswap's `getTokenLogoUrls`. |
+| `src/lib/tokens.ts` | Offline fallback list (symbols and decimals verified on-chain). |
+| `src/components/` | Address panel with QR, decoded step table, custom-step builder, rescue panel, JSON import/export. |
 
 ## Tokens and logos
 
-Tokens come from the lists cowswap marks `enabledByDefault` in `libs/tokens/src/const/tokensList.json`,
-mirrored per chain in `TOKEN_LIST_SOURCES`. This used to be one hardcoded URL,
-`files.cow.fi/tokens/CowSwap.json`, on the assumption that it was what CoW Swap shows. It was not, in
-two separate ways, and both made the picker far smaller than CoW Swap's:
-
-- **Priority 1 is not the whole default set.** `CowSwap.json` is CoW's own curated list and it is tiny
-  on the newer chains — 11 tokens on Arbitrum, 5 on Polygon — while cowswap also enables the CoinGecko
-  and Uniswap lists out of the box.
-- **Sepolia never used `CowSwap.json` at all.** That file carries no Sepolia tokens whatsoever, so
-  loading it there returned nothing and the 3-token built-in fallback was all you ever saw. cowswap
-  points Sepolia at `token-lists/CowSwapSepolia.json` instead.
-
-The picker now matches a fresh CoW Swap install exactly: 617 tokens on Ethereum, 661 on Arbitrum, 624
-on Polygon, 311 on Gnosis, 7 on Sepolia. The opt-in lists cowswap keeps behind a toggle — Curve,
-Balancer, Ondo, xStocks — are left out.
+Tokens come from the lists cowswap marks `enabledByDefault` in
+`libs/tokens/src/const/tokensList.json`, mirrored per chain in `TOKEN_LIST_SOURCES`. The picker matches a
+fresh CoW Swap install exactly: 617 tokens on Ethereum, 661 on Arbitrum, 624 on Polygon, 311 on Gnosis, 7
+on Sepolia. The opt-in lists cowswap keeps behind a toggle — Curve, Balancer, Ondo, xStocks — are left out.
 
 Lists are concatenated in cowswap's priority order and sorted *within* each list rather than across the
-whole set, so CoW's curated tokens stay at the top of the picker instead of scattering alphabetically
-through several hundred others; the first list wins on a duplicate address. Those curated tokens are
-flagged `curated`, which is what the rescue panel lists — it renders a checkbox per token, so it shows
-the short list plus the recipe's sell token rather than all 661. Results are cached per chain for the
-session, since a chain now costs up to four requests. If every source fails the built-in list stands in
-and is not cached, since an unreachable token list should never stop you computing an address.
+whole set, so CoW's curated tokens stay at the top instead of scattering alphabetically; the first list
+wins on a duplicate address. Curated tokens are flagged, which is what the rescue panel lists — it renders
+a checkbox per token, so it shows the short list plus the recipe's sell token rather than all 661. Results
+are cached per chain for the session. If every source fails the built-in list stands in and is not cached,
+since an unreachable token list should never stop you computing an address.
 
-Logos follow cowswap's cascade from `getTokenLogoUrls`, and the fact that it *is* a cascade is the
-point — CoW's CDN answers **403** for addresses it does not carry, so any single URL fails regularly:
+Logos follow cowswap's cascade from `getTokenLogoUrls`, and it **is** a cascade because CoW's CDN answers
+**403** for addresses it does not carry, so any single URL fails regularly:
 
 1. the list's own `logoURI`, resolved through a `uriToHttp` subset (`ipfs://`, `ipns://`, `http→https`)
 2. `files.cow.fi/token-lists/images/<chainId>/<address>/logo.png`
 3. the same under mainnet, since many bridged tokens are only there
 4. Trust Wallet's assets repo
 
-`TokenLogo` walks that list on each `error` and ends at a lettered circle rather than a broken image.
-A native `<select>` cannot show images, so the picker is a button plus a filterable popover; Escape and
-outside-click close it.
+`TokenLogo` walks that list on each `error` and ends at a lettered circle rather than a broken image. A
+native `<select>` cannot show images, so the picker is a button plus a filterable popover.
 
 ## Two SDKs, on purpose
 
 `@cowprotocol/cow-drop-sdk` works out *what the address is* — pure, offline, deterministic.
-[`@cowprotocol/cow-sdk`](https://www.npmjs.com/package/@cowprotocol/cow-sdk) does everything that
-involves talking to CoW: `OrderBookApi` for quotes and order submission, and the chain objects for the
-block explorer, the API path and the wrapped native token, none of which should be retyped here.
+[`@cowprotocol/cow-sdk`](https://www.npmjs.com/package/@cowprotocol/cow-sdk) does everything involving
+talking to CoW: `OrderBookApi` for quotes and order submission, and the chain objects for the explorer, the
+API path and the wrapped native token.
 
-The one thing cow-sdk does not cover is the CoW Explorer's own network slugs (`gc`, `arb1`, …) —
-`internalId` is `xdai`, which that explorer does not accept — so `lib/chain.ts` keeps a small local map
-for it.
+The one gap is the CoW Explorer's own network slugs (`gc`, `arb1`, …) — `internalId` is `xdai`, which that
+explorer does not accept — so `lib/chain.ts` keeps a small local map.
 
-Quoting note: a drop cannot know its amount ahead of time, so the quote uses a visible **reference
-amount** and only its price. That amount is not decoration — quote too little and the fee dominates,
-making the market look far worse than it is — which is why it is an input rather than a hidden
-constant. It never enters the recipe.
+**Quoting note:** a drop cannot know its amount ahead of time, so the quote uses a visible **reference
+amount** and only its price. That amount is not decoration — quote too little and the fee dominates, making
+the market look far worse than it is — which is why it is an input rather than a hidden constant. It never
+enters the recipe.

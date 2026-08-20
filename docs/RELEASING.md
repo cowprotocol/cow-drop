@@ -36,12 +36,11 @@ That fires two workflows:
 The two run in parallel off the same tag, and neither waits on the other: a failed npm publish still
 leaves the images pushed, and vice versa. Both are re-runnable — see below.
 
-The tag is the only place the version lives. `packages/sdk/package.json` carries a placeholder for
-local installs; the workflow overwrites it before packing, so there is no version bump to forget and
-no way for the published version to disagree with the tag.
+The tag is the only place the version lives. `packages/sdk/package.json` carries a placeholder for local
+installs which the workflow overwrites before packing, so there is no version bump to forget.
 
-Creating the release from the GitHub UI works too — that also pushes the tag, and `release.yml`
-leaves an existing release's notes alone.
+Creating the release from the GitHub UI works too — that also pushes the tag, and `release.yml` leaves an
+existing release's notes alone.
 
 ### Prereleases
 
@@ -90,11 +89,11 @@ docker run -d --name cow-drop-keeper \
   --state /data/state.json --cursor /data/cursor.json --policy /data/policy.json
 ```
 
-- **Set `--policy` before pointing anything public at it.** The default subsidises every owner up to
-  a small daily budget.
-- `/data` holds the registry of watched drops and the spend ledger. Neither is reconstructible from
-  the chain: lose it and the keeper forgets which drops it agreed to watch, and forgets how much of
-  today's budget it already spent. Back it with real disk.
+- **Set `--policy` before pointing anything public at it.** The default subsidises every owner up to a
+  small daily budget.
+- `/data` holds the registry of watched drops and the spend ledger, neither reconstructible from the
+  chain. Lose it and the keeper forgets which drops it agreed to watch and how much of today's budget it
+  already spent. Back it with real disk.
 - `GET /v1/health` reports the payer, its balance and the budget left. Browsable API docs are at
   `/v1/docs`.
 - It runs a watch tower in-process, so **do not** also run the watch-tower image for the same chain.
