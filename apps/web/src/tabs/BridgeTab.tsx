@@ -57,11 +57,14 @@ export function BridgeTab({
   // to show before there is an account — unlike the builder, which is pure arithmetic without a wallet.
   if (!account) {
     return (
-      <section>
-        <h2>Bridge &amp; Swap</h2>
+      <>
         <BridgeHistory revision={0} />
-        <p>Connect a wallet to quote a route and send the bridge transaction.</p>
-      </section>
+
+        <section>
+          <h2>Bridge &amp; Swap</h2>
+          <p>Connect a wallet to quote a route and send the bridge transaction.</p>
+        </section>
+      </>
     )
   }
   return <Bridge account={account} recipe={recipe} onBuildRecipe={onBuildRecipe} />
@@ -69,19 +72,23 @@ export function BridgeTab({
 
 function EmptyState({ onBuildRecipe }: { onBuildRecipe: () => void }) {
   return (
-    <section>
-      <h2>Bridge &amp; Swap</h2>
-      <p className="hint">
-        Bring tokens from another chain straight into a drop. The bridge delivers to the drop and
-        triggers its recipe in the same transaction, so the CoW order is live the moment the bridge
-        fills — no keeper wait, and no gas of yours on the destination chain.
-      </p>
+    <>
       <BridgeHistory revision={0} />
-      <p>
-        There is no recipe to fund yet. Build one on the Recipes tab, then press <em>Fund by bridging</em>.
-      </p>
-      <button onClick={onBuildRecipe}>Go to Recipes</button>
-    </section>
+
+      <section>
+        <h2>Bridge &amp; Swap</h2>
+        <p className="hint">
+          Bring tokens from another chain straight into a drop. The bridge delivers to the drop address
+          itself and the keeper activates it on arrival, so nothing needs to be open and nothing of
+          yours pays gas on the destination chain.
+        </p>
+        <p>
+          There is no recipe to fund yet. Build one on the Recipes tab, then press{' '}
+          <em>Fund by bridging</em>.
+        </p>
+        <button onClick={onBuildRecipe}>Go to Recipes</button>
+      </section>
+    </>
   )
 }
 
@@ -402,289 +409,291 @@ function Bridge({
   const explorer = blockExplorer(destinationChain)
 
   return (
-    <section className="bridge">
-      <h2>Bridge &amp; Swap</h2>
-      <p className="hint">
-        {mode === 'direct'
-          ? `The bridge pays the drop address on ${chainName(destinationChain)} directly. The keeper activates it once the money lands, and your order goes live then.`
-          : `The bridge pays a receiver contract on ${chainName(destinationChain)}, which forwards the tokens to the drop and runs its recipe in the same transaction. Your order is live as soon as the bridge fills.`}
-      </p>
-
+    <>
       <BridgeHistory revision={historyRevision} />
 
-      <h3>1 · The drop you are funding</h3>
-      <dl className="facts">
-        <dt>Recipe</dt>
-        <dd>{recipe.label}</dd>
-        <dt>Lands on</dt>
-        <dd>{chainName(destinationChain)}</dd>
-        <dt>Drop address</dt>
-        <dd>
-          <a href={`${explorer.url}/address/${drop}`} target="_blank" rel="noreferrer">
-            <code>{drop}</code>
-          </a>
-        </dd>
-        <dt>Must receive</dt>
-        <dd>
-          <code>{deliveredToken}</code>
-          <span className="hint"> — the token the recipe sells. The bridge has to deliver this one.</span>
-        </dd>
-        <dt>Generation</dt>
-        <dd>{compiled.deployment.generation}</dd>
-      </dl>
-      <p className="hint">
-        Built on the Recipes tab. <button className="link" onClick={onBuildRecipe}>Change it</button>.
-      </p>
+      <section className="bridge">
+        <h2>Bridge &amp; Swap</h2>
+        <p className="hint">
+          {mode === 'direct'
+            ? `The bridge pays the drop address on ${chainName(destinationChain)} directly. The keeper activates it once the money lands, and your order goes live then.`
+            : `The bridge pays a receiver contract on ${chainName(destinationChain)}, which forwards the tokens to the drop and runs its recipe in the same transaction. Your order is live as soon as the bridge fills.`}
+        </p>
 
-      <h3>2 · What you are sending</h3>
-      <label>
-        From chain
-        <select
-          value={sourceChainId}
-          onChange={(event) => setSourceChainId(Number(event.target.value))}
-          disabled={busy}
-        >
-          {BRIDGE_SOURCE_CHAINS.filter((id) => id !== destinationChain).map((id) => (
-            <option key={id} value={id}>
-              {chainName(id)}
-            </option>
+        <h3>1 · The drop you are funding</h3>
+        <dl className="facts">
+          <dt>Recipe</dt>
+          <dd>{recipe.label}</dd>
+          <dt>Lands on</dt>
+          <dd>{chainName(destinationChain)}</dd>
+          <dt>Drop address</dt>
+          <dd>
+            <a href={`${explorer.url}/address/${drop}`} target="_blank" rel="noreferrer">
+              <code>{drop}</code>
+            </a>
+          </dd>
+          <dt>Must receive</dt>
+          <dd>
+            <code>{deliveredToken}</code>
+            <span className="hint"> — the token the recipe sells. The bridge has to deliver this one.</span>
+          </dd>
+          <dt>Generation</dt>
+          <dd>{compiled.deployment.generation}</dd>
+        </dl>
+        <p className="hint">
+          Built on the Recipes tab. <button className="link" onClick={onBuildRecipe}>Change it</button>.
+        </p>
+
+        <h3>2 · What you are sending</h3>
+        <label>
+          From chain
+          <select
+            value={sourceChainId}
+            onChange={(event) => setSourceChainId(Number(event.target.value))}
+            disabled={busy}
+          >
+            {BRIDGE_SOURCE_CHAINS.filter((id) => id !== destinationChain).map((id) => (
+              <option key={id} value={id}>
+                {chainName(id)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {sourceToken && (
+          <TokenPicker
+            label="Token"
+            tokens={tokens}
+            value={sourceToken}
+            chainId={sourceChainId}
+            onChange={setSourceToken}
+          />
+        )}
+
+        <label>
+          Amount
+          <input
+            value={amountText}
+            onChange={(event) => setAmountText(event.target.value)}
+            placeholder="0.0"
+            inputMode="decimal"
+            disabled={busy}
+          />
+        </label>
+        <p className="hint">
+          {balance === null ? (
+            'Balance unavailable — this chain\u2019s public RPC did not answer. You can still enter an amount.'
+          ) : (
+            <>
+              Balance {formatUnits(balance, decimals)} {symbol}
+              {balance > 0n && (
+                <>
+                  {' · '}
+                  <button
+                    className="link"
+                    onClick={() => setAmountText(formatUnits(balance, decimals))}
+                    disabled={busy}
+                  >
+                    Max
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </p>
+        {overBalance && <p className="error">That is more than you hold on {chainName(sourceChainId)}.</p>}
+
+        {/*
+          Two different findings wearing one sentence before this was split. In atomic mode the pair may
+          be perfectly bridgeable and merely unable to run a payload — in which case the fix is to switch
+          mode, not to switch chain, and saying "this pair will not work" sent people the wrong way.
+        */}
+        {reachable === false &&
+          (mode === 'atomic' ? (
+            <p className="error">
+              No bridge that runs a destination payload can deliver <code>{deliveredToken}</code> on{' '}
+              {chainName(destinationChain)} from {chainName(sourceChainId)}. Switching to{' '}
+              <button className="link" onClick={() => setMode('direct')}>
+                straight to the drop
+              </button>{' '}
+              usually fixes this — it works with every bridge — or pick another source chain.
+            </p>
+          ) : (
+            <p className="error">
+              Bungee cannot deliver <code>{deliveredToken}</code> on {chainName(destinationChain)} from{' '}
+              {chainName(sourceChainId)} through any bridge. Pick another source chain, or a recipe whose
+              sell token this bridge can deliver there.
+            </p>
           ))}
-        </select>
-      </label>
 
-      {sourceToken && (
-        <TokenPicker
-          label="Token"
-          tokens={tokens}
-          value={sourceToken}
-          chainId={sourceChainId}
-          onChange={setSourceToken}
-        />
-      )}
+        {/*
+          Here rather than only beside the send button. The source chain is chosen just above, and the
+          switch is a precondition of everything below it — finding that out at the last step means
+          going back up to understand why.
+        */}
+        {wrongNetwork && (
+          <p className="hint">
+            Your wallet is on {chainName(walletChain as number)}, so the bridge transaction cannot be
+            sent yet.{' '}
+            <button className="link" onClick={() => void switchChain(sourceChainId)}>
+              Switch to {chainName(sourceChainId)}
+            </button>
+          </p>
+        )}
 
-      <label>
-        Amount
-        <input
-          value={amountText}
-          onChange={(event) => setAmountText(event.target.value)}
-          placeholder="0.0"
-          inputMode="decimal"
-          disabled={busy}
-        />
-      </label>
-      <p className="hint">
-        {balance === null ? (
-          'Balance unavailable — this chain\u2019s public RPC did not answer. You can still enter an amount.'
-        ) : (
+        <h3>3 · How it is delivered</h3>
+        <label className="radio">
+          <input
+            type="radio"
+            name="mode"
+            checked={mode === 'direct'}
+            onChange={() => setMode('direct')}
+            disabled={busy}
+          />
+          <span>
+            <strong>Straight to the drop.</strong> The bridge pays the drop address and the keeper
+            activates it once the money lands — usually within a minute of the fill. Works with every
+            bridge, so far more routes are available, and nothing can go wrong on arrival: the address
+            belongs to this recipe alone.
+          </span>
+        </label>
+        <label className="radio">
+          <input
+            type="radio"
+            name="mode"
+            checked={mode === 'atomic'}
+            onChange={() => setMode('atomic')}
+            disabled={busy}
+          />
+          <span>
+            <strong>Activate inside the bridge transaction.</strong> The order is live the instant the
+            bridge fills, and the relayer pays the activation gas. Only bridges that run a destination
+            payload can do this, so fewer routes — and if the delivery fails to execute, the tokens sit in
+            a shared contract that anyone may sweep.
+          </span>
+        </label>
+
+        {mode === 'atomic' && (
           <>
-            Balance {formatUnits(balance, decimals)} {symbol}
-            {balance > 0n && (
-              <>
-                {' · '}
-                <button
-                  className="link"
-                  onClick={() => setAmountText(formatUnits(balance, decimals))}
+            <h3>4 · If the recipe will not run</h3>
+            <p className="hint">
+              A recipe can legitimately decline — a minimum-balance guard refusing a bridge&apos;s first
+              tranche is the guard working. The tokens have arrived either way, so this is where they go.
+            </p>
+            {ON_FAILURE.map((option) => (
+              <label key={option} className="radio">
+                <input
+                  type="radio"
+                  name="onFailure"
+                  checked={onFailure === option}
+                  onChange={() => setOnFailure(option)}
                   disabled={busy}
-                >
-                  Max
-                </button>
-              </>
-            )}
+                />
+                {option === 'leave-at-drop' ? (
+                  <span>
+                    <strong>Leave at the drop.</strong> They wait at the drop address for the rest to
+                    arrive, and a keeper activates once the recipe can run. The safe choice with any
+                    recipe.
+                  </span>
+                ) : (
+                  <span>
+                    <strong>Send back to me.</strong> Returned to <code>{recipe.owner}</code>. Do not use
+                    this with a minimum-balance guard — every tranche would bounce instead of
+                    accumulating.
+                  </span>
+                )}
+              </label>
+            ))}
           </>
         )}
-      </p>
-      {overBalance && <p className="error">That is more than you hold on {chainName(sourceChainId)}.</p>}
 
-      {/*
-        Two different findings wearing one sentence before this was split. In atomic mode the pair may
-        be perfectly bridgeable and merely unable to run a payload — in which case the fix is to switch
-        mode, not to switch chain, and saying "this pair will not work" sent people the wrong way.
-      */}
-      {reachable === false &&
-        (mode === 'atomic' ? (
-          <p className="error">
-            No bridge that runs a destination payload can deliver <code>{deliveredToken}</code> on{' '}
-            {chainName(destinationChain)} from {chainName(sourceChainId)}. Switching to{' '}
-            <button className="link" onClick={() => setMode('direct')}>
-              straight to the drop
-            </button>{' '}
-            usually fixes this — it works with every bridge — or pick another source chain.
-          </p>
-        ) : (
-          <p className="error">
-            Bungee cannot deliver <code>{deliveredToken}</code> on {chainName(destinationChain)} from{' '}
-            {chainName(sourceChainId)} through any bridge. Pick another source chain, or a recipe whose
-            sell token this bridge can deliver there.
-          </p>
-        ))}
-
-      {/*
-        Here rather than only beside the send button. The source chain is chosen just above, and the
-        switch is a precondition of everything below it — finding that out at the last step means
-        going back up to understand why.
-      */}
-      {wrongNetwork && (
-        <p className="hint">
-          Your wallet is on {chainName(walletChain as number)}, so the bridge transaction cannot be
-          sent yet.{' '}
-          <button className="link" onClick={() => void switchChain(sourceChainId)}>
-            Switch to {chainName(sourceChainId)}
-          </button>
-        </p>
-      )}
-
-      <h3>3 · How it is delivered</h3>
-      <label className="radio">
-        <input
-          type="radio"
-          name="mode"
-          checked={mode === 'direct'}
-          onChange={() => setMode('direct')}
-          disabled={busy}
-        />
-        <span>
-          <strong>Straight to the drop.</strong> The bridge pays the drop address and the keeper
-          activates it once the money lands — usually within a minute of the fill. Works with every
-          bridge, so far more routes are available, and nothing can go wrong on arrival: the address
-          belongs to this recipe alone.
-        </span>
-      </label>
-      <label className="radio">
-        <input
-          type="radio"
-          name="mode"
-          checked={mode === 'atomic'}
-          onChange={() => setMode('atomic')}
-          disabled={busy}
-        />
-        <span>
-          <strong>Activate inside the bridge transaction.</strong> The order is live the instant the
-          bridge fills, and the relayer pays the activation gas. Only bridges that run a destination
-          payload can do this, so fewer routes — and if the delivery fails to execute, the tokens sit in
-          a shared contract that anyone may sweep.
-        </span>
-      </label>
-
-      {mode === 'atomic' && (
-        <>
-          <h3>4 · If the recipe will not run</h3>
-          <p className="hint">
-            A recipe can legitimately decline — a minimum-balance guard refusing a bridge&apos;s first
-            tranche is the guard working. The tokens have arrived either way, so this is where they go.
-          </p>
-          {ON_FAILURE.map((option) => (
-            <label key={option} className="radio">
-              <input
-                type="radio"
-                name="onFailure"
-                checked={onFailure === option}
-                onChange={() => setOnFailure(option)}
-                disabled={busy}
-              />
-              {option === 'leave-at-drop' ? (
-                <span>
-                  <strong>Leave at the drop.</strong> They wait at the drop address for the rest to
-                  arrive, and a keeper activates once the recipe can run. The safe choice with any
-                  recipe.
-                </span>
-              ) : (
-                <span>
-                  <strong>Send back to me.</strong> Returned to <code>{recipe.owner}</code>. Do not use
-                  this with a minimum-balance guard — every tranche would bounce instead of
-                  accumulating.
-                </span>
-              )}
-            </label>
-          ))}
-        </>
-      )}
-
-      <h3>{mode === 'atomic' ? '5' : '4'} · Route</h3>
-      <button onClick={onQuote} disabled={!amount || !sourceToken || overBalance || quoting || busy}>
-        {quoting ? 'Getting a quote…' : quote ? 'Re-quote' : 'Get a quote'}
-      </button>
-
-      {quoteError && <p className="error">{quoteError}</p>}
-
-      {quote && (
-        <>
-          <dl className="facts">
-            <dt>Bridge</dt>
-            <dd>
-              {quote.route.name} · about {Math.round(quote.route.estimatedSeconds / 60)} min
-            </dd>
-            <dt>Sending</dt>
-            <dd>
-              {formatUnits(quote.input.amount, quote.input.token.decimals)} {quote.input.token.symbol}
-            </dd>
-            <dt>Delivered</dt>
-            <dd>
-              ~{formatUnits(quote.output.amount, quote.output.token.decimals)} {quote.output.token.symbol}
-              <span className="hint">
-                {' '}
-                (at least {formatUnits(quote.output.minAmount, quote.output.token.decimals)})
-              </span>
-            </dd>
-          </dl>
-          <p className="hint">
-            The drop&apos;s own minimum lives in the recipe, not in this quote — it is part of the drop
-            address, so taking it from a route that changes on every refresh would move the address the
-            bridge is aimed at.
-          </p>
-        </>
-      )}
-
-      <h3>{mode === 'atomic' ? '6' : '5'} · Send it</h3>
-      <KeeperNote state={keeperState} chainId={destinationChain} mode={mode} />
-
-      {needsApproval && (
-        <button onClick={() => void onApprove()} disabled={busy || wrongNetwork}>
-          Approve {quote?.input.token.symbol}
+        <h3>{mode === 'atomic' ? '5' : '4'} · Route</h3>
+        <button onClick={onQuote} disabled={!amount || !sourceToken || overBalance || quoting || busy}>
+          {quoting ? 'Getting a quote…' : quote ? 'Re-quote' : 'Get a quote'}
         </button>
-      )}
 
-      <button
-        onClick={() => void onBridge()}
-        disabled={!quote || busy || wrongNetwork || needsApproval || bridgeHash !== null}
-      >
-        {busy ? 'Sending…' : 'Bridge and activate'}
-      </button>
+        {quoteError && <p className="error">{quoteError}</p>}
 
-      {sendError && <p className="error">{sendError}</p>}
+        {quote && (
+          <>
+            <dl className="facts">
+              <dt>Bridge</dt>
+              <dd>
+                {quote.route.name} · about {Math.round(quote.route.estimatedSeconds / 60)} min
+              </dd>
+              <dt>Sending</dt>
+              <dd>
+                {formatUnits(quote.input.amount, quote.input.token.decimals)} {quote.input.token.symbol}
+              </dd>
+              <dt>Delivered</dt>
+              <dd>
+                ~{formatUnits(quote.output.amount, quote.output.token.decimals)} {quote.output.token.symbol}
+                <span className="hint">
+                  {' '}
+                  (at least {formatUnits(quote.output.minAmount, quote.output.token.decimals)})
+                </span>
+              </dd>
+            </dl>
+            <p className="hint">
+              The drop&apos;s own minimum lives in the recipe, not in this quote — it is part of the drop
+              address, so taking it from a route that changes on every refresh would move the address the
+              bridge is aimed at.
+            </p>
+          </>
+        )}
 
-      {bridgeHash && (
-        <>
-          <p>
-            {mode === 'direct'
-              ? 'Sent. The bridge fills in a few minutes; the keeper then activates the drop and places the order. Nothing else is needed from you.'
-              : 'Sent. The bridge fills in a few minutes, and the order is placed in the same transaction as the fill — so nothing else is needed from you.'}
-          </p>
-          {/* Three links because they are three different questions: has the bridge filled, did the
-              money land, and is the order live. The last is the one that says it worked. */}
-          <ul className="hint hint-list">
-            <li>
-              <a href={bridgeExplorerUrl(bridgeHash)} target="_blank" rel="noreferrer">
-                Track the bridge
-              </a>{' '}
-              — the source transaction, until it fills on {chainName(destinationChain)}.
-            </li>
-            <li>
-              <a href={`${explorer.url}/address/${drop}`} target="_blank" rel="noreferrer">
-                The drop on {explorer.name}
-              </a>{' '}
-              — the tokens arriving, and the activation that spends them.
-              {mode === 'direct' && ' The balance sitting here briefly is expected and safe.'}
-            </li>
-            <li>
-              <a href={`${cowExplorer(destinationChain)}/address/${drop}`} target="_blank" rel="noreferrer">
-                The order in CoW Explorer
-              </a>{' '}
-              — appears once the fill has activated the drop.
-            </li>
-          </ul>
-        </>
-      )}
-    </section>
+        <h3>{mode === 'atomic' ? '6' : '5'} · Send it</h3>
+        <KeeperNote state={keeperState} chainId={destinationChain} mode={mode} />
+
+        {needsApproval && (
+          <button onClick={() => void onApprove()} disabled={busy || wrongNetwork}>
+            Approve {quote?.input.token.symbol}
+          </button>
+        )}
+
+        <button
+          onClick={() => void onBridge()}
+          disabled={!quote || busy || wrongNetwork || needsApproval || bridgeHash !== null}
+        >
+          {busy ? 'Sending…' : 'Bridge and activate'}
+        </button>
+
+        {sendError && <p className="error">{sendError}</p>}
+
+        {bridgeHash && (
+          <>
+            <p>
+              {mode === 'direct'
+                ? 'Sent. The bridge fills in a few minutes; the keeper then activates the drop and places the order. Nothing else is needed from you.'
+                : 'Sent. The bridge fills in a few minutes, and the order is placed in the same transaction as the fill — so nothing else is needed from you.'}
+            </p>
+            {/* Three links because they are three different questions: has the bridge filled, did the
+                money land, and is the order live. The last is the one that says it worked. */}
+            <ul className="hint hint-list">
+              <li>
+                <a href={bridgeExplorerUrl(bridgeHash)} target="_blank" rel="noreferrer">
+                  Track the bridge
+                </a>{' '}
+                — the source transaction, until it fills on {chainName(destinationChain)}.
+              </li>
+              <li>
+                <a href={`${explorer.url}/address/${drop}`} target="_blank" rel="noreferrer">
+                  The drop on {explorer.name}
+                </a>{' '}
+                — the tokens arriving, and the activation that spends them.
+                {mode === 'direct' && ' The balance sitting here briefly is expected and safe.'}
+              </li>
+              <li>
+                <a href={`${cowExplorer(destinationChain)}/address/${drop}`} target="_blank" rel="noreferrer">
+                  The order in CoW Explorer
+                </a>{' '}
+                — appears once the fill has activated the drop.
+              </li>
+            </ul>
+          </>
+        )}
+      </section>
+    </>
   )
 }
 
