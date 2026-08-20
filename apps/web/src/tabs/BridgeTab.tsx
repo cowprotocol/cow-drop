@@ -493,13 +493,28 @@ function Bridge({
       </p>
       {overBalance && <p className="error">That is more than you hold on {chainName(sourceChainId)}.</p>}
 
-      {reachable === false && (
-        <p className="error">
-          No bridge that runs a destination payload can deliver that token on{' '}
-          {chainName(destinationChain)} from {chainName(sourceChainId)}. Only those bridges can activate
-          the drop on arrival, so this pair will not work — try another source chain.
-        </p>
-      )}
+      {/*
+        Two different findings wearing one sentence before this was split. In atomic mode the pair may
+        be perfectly bridgeable and merely unable to run a payload — in which case the fix is to switch
+        mode, not to switch chain, and saying "this pair will not work" sent people the wrong way.
+      */}
+      {reachable === false &&
+        (mode === 'atomic' ? (
+          <p className="error">
+            No bridge that runs a destination payload can deliver <code>{deliveredToken}</code> on{' '}
+            {chainName(destinationChain)} from {chainName(sourceChainId)}. Switching to{' '}
+            <button className="link" onClick={() => setMode('direct')}>
+              straight to the drop
+            </button>{' '}
+            usually fixes this — it works with every bridge — or pick another source chain.
+          </p>
+        ) : (
+          <p className="error">
+            Bungee cannot deliver <code>{deliveredToken}</code> on {chainName(destinationChain)} from{' '}
+            {chainName(sourceChainId)} through any bridge. Pick another source chain, or a recipe whose
+            sell token this bridge can deliver there.
+          </p>
+        ))}
 
       {/*
         Here rather than only beside the send button. The source chain is chosen just above, and the
