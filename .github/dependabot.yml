@@ -1,0 +1,22 @@
+# Keep the pinned action SHAs moving.
+#
+# An org ruleset requires every action to be pinned to a full-length commit SHA, and a SHA does not
+# update itself — so without an updater the workflows freeze at whatever was current the day they
+# were written, which is the opposite of why pinning exists. Dependabot rewrites the SHA and the
+# trailing `# vX` comment together, so the pin stays readable.
+#
+# Monthly rather than weekly, and grouped into one pull request, because these move slowly and a
+# separate PR per action is noise. Matches the cadence the other repositories settled on.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # `/` covers .github/workflows, wherever the workflow files sit inside it.
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - '*'
+    commit-message:
+      prefix: ci
