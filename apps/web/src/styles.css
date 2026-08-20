@@ -386,25 +386,66 @@ input[aria-invalid='true'] {
 }
 
 /*
- * The standing beta notice, above the header on every tab.
+ * The standing beta notice: a full-bleed bar across the top of the window, above `main` and so above
+ * everything the page column contains.
  *
- * Deliberately quiet: muted text, one warn-coloured rule, no icon and no dismiss. It has to stay
- * legible on the tenth visit, and a notice that shouts on the first one gets read as decoration by
- * then. The louder `.error.banner` above it keeps its precedence, which is the right order — a
- * standing caveat should never outshout something that just went wrong.
+ * It can be this prominent because it is dismissible for good — see `components/BetaNotice.tsx`. The
+ * earlier version was a quiet inset note that had to survive being read on the tenth visit; once
+ * closing it sticks, the first read is the only one that has to land, and the bar can take the width
+ * and the top of the page to do it.
+ *
+ * Still not louder than `.error.banner`, which sits below it in the column: warn-toned rather than
+ * error-toned, no icon. A standing caveat should never outshout something that just went wrong.
  */
 .beta-notice {
-  margin: 0 0 1.5rem;
-  padding: 0.5rem 0.75rem;
-  border-left: 2px solid var(--warn);
-  background: rgba(232, 196, 104, 0.06);
+  display: block;
+  padding: 0.6rem 1.25rem;
+  border-bottom: 1px solid rgba(232, 196, 104, 0.28);
+  background: rgba(232, 196, 104, 0.08);
   color: var(--muted);
-  font-size: 0.8rem;
-  max-width: 70ch;
+  font-size: 0.85rem;
+}
+
+/*
+ * The bar spans the window; its contents line up with the page. Same max-width and side padding as
+ * `main`, so the word "Beta" starts on the logo's left edge rather than floating off in the margin.
+ */
+.beta-notice-inner {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.beta-notice p {
+  margin: 0;
 }
 
 .beta-notice strong {
   color: var(--warn);
+}
+
+/*
+ * Pushed to the far end of the bar. Deliberately not a bordered `button`: a boxed control here would
+ * read as the bar's call to action, when the thing to do with this notice is read it.
+ */
+.beta-notice-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  /* A comfortable target around a glyph that is only a few pixels wide. */
+  padding: 0 0.4rem;
+  background: none;
+  border: none;
+  color: var(--muted);
+  /* Big enough to hit, and the line-height keeps it from stretching the bar. */
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.beta-notice-close:hover:not(:disabled) {
+  border: none;
+  color: var(--text);
 }
 
 .steps {
