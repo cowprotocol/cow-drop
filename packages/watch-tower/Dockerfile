@@ -19,6 +19,7 @@ WORKDIR /app
 # --frozen-lockfile fails, even for members this image does not build.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/sdk/package.json packages/sdk/
+COPY packages/bridging/package.json packages/bridging/
 COPY packages/watch-tower/package.json packages/watch-tower/
 COPY packages/keeper/package.json packages/keeper/
 COPY apps/web/package.json apps/web/
