@@ -14,13 +14,17 @@ jobs:
       contents: read
       packages: write
     strategy:
-      # One leg's failure should not hide the others: these three ship independently.
+      # One leg's failure should not hide the others: these ship independently.
       fail-fast: false
       matrix:
         package:
           - packages/keeper
           - packages/watch-tower
-          - apps/web
+          # The web app is deployed from Vercel, which builds it from the repo itself, so nobody pulls
+          # this image and every push paid for a two-platform build of it. `apps/web/Dockerfile` and its
+          # runtime-config entrypoint stay in the tree and still build locally (see docs/RELEASING.md) —
+          # uncomment this line to start publishing it again.
+          # - apps/web
     steps:
       # No submodules: every image builds from the committed TypeScript and the SDK's committed
       # `src/generated/`, so none of them needs the foundry toolchain or cow-shed's submodule tree.
@@ -58,7 +62,7 @@ jobs:
       - name: Build and push ${{ env.PACKAGE_NAME }}
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          # The repo root, not the package directory: all three depend on the SDK through the workspace.
+          # The repo root, not the package directory: both depend on the SDK through the workspace.
           context: .
           file: ${{ matrix.package }}/Dockerfile
           push: true

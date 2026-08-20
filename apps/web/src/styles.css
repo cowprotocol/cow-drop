@@ -385,6 +385,28 @@ input[aria-invalid='true'] {
   margin: 0 0 1rem;
 }
 
+/*
+ * The standing beta notice, above the header on every tab.
+ *
+ * Deliberately quiet: muted text, one warn-coloured rule, no icon and no dismiss. It has to stay
+ * legible on the tenth visit, and a notice that shouts on the first one gets read as decoration by
+ * then. The louder `.error.banner` above it keeps its precedence, which is the right order — a
+ * standing caveat should never outshout something that just went wrong.
+ */
+.beta-notice {
+  margin: 0 0 1.5rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid var(--warn);
+  background: rgba(232, 196, 104, 0.06);
+  color: var(--muted);
+  font-size: 0.8rem;
+  max-width: 70ch;
+}
+
+.beta-notice strong {
+  color: var(--warn);
+}
+
 .steps {
   overflow-x: auto;
 }
