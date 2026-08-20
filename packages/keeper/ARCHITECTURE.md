@@ -3,53 +3,68 @@
 How the keeper decides what to activate, what it will pay for, and what it does when things go wrong.
 Running it is covered in the [README](README.md).
 
-Two loops run side by side. **The keeper activates; the watch tower posts.** The keeper decides what
-to spend money on; an in-process [`watch-tower`](../watch-tower/README.md) turns the resulting
-`OrderPlacement` logs into posted orders, with the retry and cursor semantics it already has. One
-implementation of order posting, not two — at the cost of `order-posted` arriving a poll or two after
-the receipt rather than instantly.
+Two loops run side by side: **the keeper activates, the watch tower posts.** An in-process
+[`watch-tower`](../watch-tower/README.md) turns the resulting `OrderPlacement` logs into posted orders,
+with the retry and cursor semantics it already has. One implementation of order posting rather than
+two, at the cost of `order-posted` arriving a poll or two after the receipt.
 
-## Readiness is decided by simulation, not by reading the recipe
+## Readiness is decided by simulation
 
-The tempting design is to decode the guards and evaluate them. It does not work: `requireCallResult`
-leaves its inner calldata undecoded by design, a `raw` step is opaque entirely, `token: 0x0` means
-native rather than an ERC20, and the guarded token need not be the sell token.
+Decoding the guards and evaluating them does not work: `requireCallResult` leaves its inner calldata
+undecoded by design, a `raw` step is opaque entirely, `token: 0x0` means native rather than an ERC20,
+and the guarded token need not be the sell token.
 
 So the recipe is a **hint** — it says which balances are worth polling — and the gate is an `eth_call`
 of `buildActivateTx` itself. That evaluates every guard correctly, including ones no decoder can read,
-plus `NothingToSell`, `AlreadyConsumed` and `NoCodeAtDelegateTarget`, without this package
-understanding any of them.
+plus `NothingToSell`, `AlreadyConsumed` and `NoCodeAtDelegateTarget`.
 
-The balance poll exists only to keep that call cheap: a drop whose balances have not moved since the
-last simulation is not simulated again until `resimulateIntervalMs`. Without that, a funded-but-not-
-ready drop costs an `eth_call` every tick forever. A recipe of nothing but `raw` steps has nothing to
-poll, so it is simulated on a timer instead — correctness is unaffected, only latency.
+The balance poll only keeps that call cheap: a drop whose balances have not moved since the last
+simulation is not simulated again until `resimulateIntervalMs`. A recipe of nothing but `raw` steps has
+nothing to poll, so it is simulated on a timer instead — latency, not correctness.
 
-## Activating twice is the thing to be careful about, not activating once
+## The drop lifecycle
 
-A `once` recipe retires on its first confirmation and needs nothing more. Everything else is reusable —
-running again on the next arrival is the point of a deposit address — so the question is what stops it
-running again *too soon*.
+```mermaid
+stateDiagram-v2
+    [*] --> watching: POST /v1/drops
+    watching --> activating: simulation passes, budget allows
+    activating --> watching: reverted, or receipt timed out
+    activating --> activated: confirmed, recipe is self-driving
+    activating --> watching: confirmed, discrete order (gated by committedDigest)
+    activating --> retired: confirmed, once-consumed
+    watching --> parked: NoCodeAtDelegateTarget
+    watching --> retired: AlreadyConsumed, NotADrop, MalformedRecipe, TooLate
+    watching --> retired: POST /v1/drops/unregister
+    retired --> watching: re-register, only if retiredReason was 'unregistered'
+```
+
+`activated` is where a recipe that registered a conditional order parks; the tick loop never considers
+it. Re-arming a TWAP is expensive and cannot be gated: the drop holds its sell balance for the whole
+schedule, `twapFromBalance` reads that balance at activation and passes `t0 = 0`, so a second activation
+either registers a second TWAP over the remainder or re-seeds the cabinet and restarts over parts that
+already traded. The balance *falls as parts fill*, so no balance-watching gate holds it, and nothing
+off-chain can tell a finished schedule from a running one.
+
+A recipe that signs discrete orders comes back to `watching` instead. Parking those was a bug: a
+reusable deposit address that fires exactly once is not reusable.
+
+## Activating twice is the risk, not activating once
 
 The money does not leave at activation. The pre-signature is on chain, the order is valid, and the
-balance `presignSellAll` sized it against is still sitting in the drop until a solver settles. Simulating
-on that balance passes, so without a gate the very next tick signs a second order for the same money —
-one the first order's fill makes unfillable, bought with the keeper's gas.
+balance `presignSellAll` sized it against sits in the drop until a solver settles. Simulating on that
+balance passes, so without a gate the next tick signs a second order for the same money — one the first
+order's fill makes unfillable, bought with the keeper's gas.
 
-So a confirmed activation records `committedDigest`: the balances it committed. `shouldSimulate` refuses
-while the polled digest still matches, and the commitment ends on whichever comes first:
+A confirmed activation therefore records `committedDigest`, the balances it committed. `shouldSimulate`
+refuses while the polled digest still matches, and the commitment ends on whichever comes first:
 
-- **the balance moves** — a fill, a sweep, or a fresh arrival. Any of the three means the sizing is
-  stale, and a fill is what frees the money. This is a latch cleared on movement rather than a
+- **the balance moves** — a fill, a sweep, or a fresh arrival. A latch cleared on movement rather than a
   comparison against the committed value, so a refund of exactly the last order's size still counts as
   new money.
 - **the order can no longer fill** — `validTo`, read from the last four bytes of the uid the watch tower
-  posted onto the activation record. This is the half that matters when an order expires unfilled: the
-  balance never moved, so nothing else would ever release it. Before a uid exists the recipe's own
-  validity window stands in, measured from the receipt, which errs late.
-
-A recipe that registers a conditional order instead gets none of this — see `selfDriving` under
-Registration, and `activated`.
+  posted onto the activation record. This is the half that matters when an order expires unfilled, since
+  the balance never moved. Before a uid exists the recipe's own validity window stands in, measured from
+  the receipt, which errs late.
 
 ## Registration
 
@@ -66,120 +81,67 @@ GET  /v1/openapi.json     -> this surface as an OpenAPI 3.1 document
 GET  /v1/docs             -> Swagger UI over that document
 ```
 
-The list above is generated at runtime from `ROUTES` in `src/server.ts`, which also feeds the boot
-banner. `src/server.test.ts` walks it and asserts every entry answers something other than 404, so the
-table cannot drift into advertising a route the router does not serve.
+That list is generated at runtime from `ROUTES` in `src/server.ts`, which also feeds the boot banner.
+`src/server.test.ts` walks it and asserts every entry answers something other than 404.
 
-`/v1/about` publishes the same skew check one level up: the chain, the generation, and the contract
-addresses those numbers stand for, plus a hash of the proxy creation code. A client can compare its
-own SDK deployment key by key before it ever compiles a recipe, rather than discovering the mismatch
-as a 409 — or, if it never sends its derived address, not at all.
+**The client sends the address it derived and the server compares it to its own; a mismatch is a 409
+naming both.** That catches SDK-version skew, whose failure is otherwise silent — the keeper would
+diligently watch an address nobody funded while the user watches the one they did. The client's address
+is an assertion to be checked, never an input. `/v1/about` publishes the same check one level up, so a
+client can compare deployments key by key before it ever compiles a recipe.
 
-The client sends the address it derived and the server compares it to its own. **A mismatch is a 409
-naming both.** That is the point of the endpoint: it catches SDK-version skew, whose failure is
-otherwise silent — the keeper would diligently watch an address nobody funded while the user watches
-the one they did. The client's address is an assertion to be checked, never an input.
-
-`POST` is idempotent, because a client whose request timed out will retry and can only honestly be
-told that retrying is safe if it is. Registering a recipe that was previously unregistered *resumes*
-that record rather than returning it as held-but-idle, so the pair is a pause the recipe holder can
-undo rather than a one-way door. Only `retiredReason: 'unregistered'` revives: every other reason is a
-fact about the drop — `once-consumed` cannot fire twice, `expired` is past its committed window,
-`terminal-revert` would revert again — and watching those is polling for something that cannot happen.
-For the same reason, unregistering a drop that is *already* retired changes nothing rather than
-rewriting its reason: only `unregistered` revives, so rewriting would make the pair a resurrection
-ritual.
-
-**A resume restores the state the stop interrupted, which is not always `watching`.** Whether a drop
-that has already activated comes back armed depends on what its activation left behind, and the rule is
-`selfDriving` — the same one `reconcile` applies. The status is derived from the activation history
-rather than remembered in a field that would go stale.
-
-A recipe that registers with ComposableCoW is parked in `activated`, which the tick loop never
-considers. For a TWAP, re-arming is expensive: the drop holds its sell balance for the whole schedule,
-and `twapFromBalance` reads that balance at activation and passes `t0 = 0`, so `createWithContext` seeds
-the start time from the current block. A second activation registers a second TWAP over the remaining
-balance, or re-seeds the cabinet and restarts the schedule over parts that already traded. And because
-the balance *falls as the parts fill*, no balance-watching gate can hold it — parking is the only
-answer available off-chain, since nothing here can tell a finished schedule from a running one.
-
-A recipe that signs discrete orders comes back `watching`, gated by `committedDigest` instead. Parking
-those was a bug: a reusable deposit address that fires exactly once is not reusable.
+`POST` is idempotent, because a client whose request timed out will retry. Re-registering an
+unregistered recipe *resumes* that record, so the pair is a pause the recipe holder can undo. Only
+`retiredReason: 'unregistered'` revives — every other reason is a fact about the drop (`once-consumed`
+cannot fire twice, `expired` is past its window, `terminal-revert` would revert again), and polling for
+those is polling for something that cannot happen. A resume restores the state the stop interrupted,
+derived from the activation history rather than remembered in a field that would go stale.
 
 **Registration is open; unregistration is not symmetric.** Registering someone's drop grants nothing —
-activation is permissionless already, the guards are committed into the address, and only the owner
-can sweep. Unregistering someone else's costs them their subsidy for free, so it goes through
-`POST /v1/drops/unregister` with the recipe in the body, which proves the caller holds the one thing
-that matters. No subscription token is issued for this and none is needed: a token would be another
-thing to store, lose on a restart and leak, and it would grant exactly what holding the recipe already
-proves.
+activation is permissionless already, the guards are committed into the address, and only the owner can
+sweep. Unregistering someone else's costs them their subsidy for free, so it takes the recipe in the
+body, which proves the caller holds the one thing that matters. A subscription token would be another
+thing to store, lose on restart and leak, and would grant exactly what holding the recipe already proves.
 
 **Unregistering is refused while an activation is in flight** — a 409 naming the transaction. Retired
-drops are excluded from `store.active()`, and only active drops get their `pending` activation
-reconciled, so retiring mid-flight would abandon a transaction the keeper has already paid for: the
-reserved spend would never be trued up against the receipt and the activation would never reach the
-drop's history. The money is already committed, so the honest answer is to refuse; a second later the
-tick has reconciled and the same request succeeds.
+drops are excluded from `store.active()` and only active drops get their `pending` reconciled, so
+retiring mid-flight would abandon a transaction the keeper has already paid for. A second later the tick
+has reconciled and the same request succeeds.
 
-What registration does cost is capacity: a recipe stored indefinitely and a line in every tick's poll
-set. Hence `--max-drops` and a body cap.
+What registration costs is capacity: a recipe stored indefinitely and a line in every tick's poll set.
+Hence `--max-drops` and a body cap.
 
-## Listing by owner
+### Listing by owner
 
-`GET /v1/drops?owner=…` requires the owner, and that is the design rather than an omission. Unfiltered
-this is a dump of every recipe the keeper holds — labels, token hints, current balances and activation
-history for everybody — which is an operator's view rather than a client's, and the cheapest possible way
-to make this process serialise its whole registry. `/v1/events` refuses an unfiltered stream for the same
-reason.
+`GET /v1/drops?owner=…` requires the owner. Unfiltered, this is a dump of every recipe the keeper holds
+for everybody — an operator's view, and the cheapest way to make the process serialise its whole
+registry. `/v1/events` refuses an unfiltered stream for the same reason.
 
-A malformed owner is a **400**, not an empty 200: a typo and an empty registry must not read the same,
-because the page asking this exists to tell "you have nothing" from "we asked wrong". The chain is in the
-envelope because the *empty* answer is the only one carrying no drops to read it from, and that is
-exactly when a client has to say "this keeper has nothing for you" rather than "you have nothing".
-
-Retired drops are included, with no filter to exclude them. The drop nothing is watching is the one most
-worth seeing — it may be holding money — and a `?status=` filter defaulting to live would make the
-dangerous state the hidden one. `watching` already tells them apart.
-
-There is no pager. A keyset cursor over a store whose `all()` is a full scan is a pager for a query the
-store cannot serve efficiently anyway; instead the response is capped (`maxListed`, 200 by default, set
-where `maxDrops` is) and reports `total` and `truncated`, so a shortened list never lies about being
-complete. The cap keeps
-the **newest**, so a truncated list is still the half somebody is looking for. The day this is Postgres,
-`WHERE owner = $1` plus a real pager both become cheap — which is also why the owner filter lives in the
-handler rather than as a `DropStore` method: there is nothing to index yet, and an index maintained in
-both `memoryStore` and `fileStore` would be two implementations of `filter` to delete later.
-
-### A row is not an ownership claim
-
-The keeper compiled every recipe it holds and stored the record under the address that compilation
-derived, so a row is a consistent triple of address, recipe and owner — unlike `ownerOf` on a deployed
-shed, which reports whatever it was told. That is why listing this way is not the mistake
-[docs/DESIGN.md](../../docs/DESIGN.md) warns about.
-
-But **registration is open and `owner` is a field of the submitted recipe.** Anyone can put a row, with a
-label of their choosing, into anyone's listing. So a row means *"someone registered a recipe naming this
-address as owner"*, never *"you made this"*. The route summary says "registered under one owner" for that
-reason, and a client must never turn a row into an invitation to fund.
-
-### What it discloses
-
-The shape is `toWire`, unchanged and deliberately not a second shaper — two would drift, and the thinner
-one would become the one nobody updates. So this route can never expose more than `GET /v1/drops/{address}`
-already does: no `recipe`, no `setupData`, no `appDataDocuments`, no per-drop `fee`, no simulation state.
-
-Keeping `setupData` out is not only privacy. It is the activation authority, and a one-shot recipe with no
-minimum-balance guard can be burned by anyone who activates it at a bad moment — so publishing recipes
-keyed by owner would hand a scraper every such drop's burn button.
-
-What it does expose, for any address someone guesses: the label, `status`, the token hints, `everFunded`,
-`registeredAt`, the activation history, and `lastPoll` — which carries current balances. Per drop all of
-that was already reachable by anyone who knew the address. What the listing removes is the need to know
-the address first, so the genuinely new disclosure is the **aggregate**: everything one owner is waiting
-on, and how much is in each. Worth stating rather than glossing. Given activation is permissionless
-already and the whole design is public by nature, that is an accepted trade.
+- **A malformed owner is a 400, not an empty 200.** A typo and an empty registry must not read the same.
+  The chain is in the envelope because the empty answer carries no drops to read it from.
+- **Retired drops are included**, with no filter to exclude them. The drop nothing is watching may be
+  holding money, and a `?status=` filter defaulting to live would hide the dangerous state.
+- **No pager.** The response is capped (`maxListed`, 200 by default) and reports `total` and `truncated`,
+  keeping the **newest**. A keyset cursor over a store whose `all()` is a full scan would be a pager for
+  a query the store cannot serve efficiently anyway.
+- **A row is not an ownership claim.** The keeper compiled every recipe it holds, so a row is a
+  consistent triple of address, recipe and owner — unlike `ownerOf` on a deployed shed. But registration
+  is open and `owner` is a field of the *submitted* recipe, so a row means *"someone registered a recipe
+  naming this address as owner"*, never *"you made this"*. A client must never turn a row into an
+  invitation to fund.
+- **What it discloses.** The shape is `toWire`, so this route can never expose more than
+  `GET /v1/drops/{address}` already does: no `recipe`, no `setupData`, no `appDataDocuments`, no fee, no
+  simulation state. Keeping `setupData` out is not only privacy — it is the activation authority, and a
+  one-shot recipe with no minimum-balance guard can be burned by anyone. What is new is the
+  **aggregate**: everything one owner is waiting on, and how much is in each.
 
 ## Money
+
+Three modes. `all` subsidises everyone, `allowlist` a fixed set of owners, and **`paying` anyone whose
+recipe pays the keeper more than the activation costs** — the only one whose limit is economic rather
+than administrative, and so the only one that safely scales to strangers.
+
+### `paying`
 
 ```json
 {
@@ -191,12 +153,6 @@ already and the whole design is public by nature, that is an accepted trade.
 }
 ```
 
-Three modes. `all` subsidises everyone, `allowlist` a fixed set of owners, and **`paying` anyone whose
-recipe pays the keeper more than the activation costs** — the only one whose limit is economic rather
-than administrative, and so the only one that safely scales to strangers.
-
-### `paying`
-
 A drop qualifies when its order carries a CoW `partnerFee` naming the keeper:
 
 ```json
@@ -204,34 +160,28 @@ A drop qualifies when its order carries a CoW `partnerFee` naming the keeper:
 ```
 
 That costs no gas and needs no contract of ours — it is the protocol's own mechanism, taken at
-settlement. The keeper values it with the order book's native price and refuses unless it clears the
-gas by `minRevenueRatio`.
+settlement. The keeper values it with the order book's native price and refuses unless it clears the gas
+by `minRevenueRatio`.
 
-The document has to be supplied at registration, because **the chain carries only its hash**. So the
-keeper verifies rather than trusts: it hashes the exact bytes it was handed and compares to what the
-recipe committed to. A fee in a document nobody signed is not a promise. It hashes the string
-verbatim and never re-serialises — JSON has many spellings of one object and only the one that was
-hashed is the pre-image.
+**The chain carries only the appData hash, so the document must be supplied at registration.** The keeper
+hashes the exact bytes it was handed and compares them to what the recipe committed to; a fee in a
+document nobody signed is not a promise. It hashes the string verbatim and never re-serialises, since
+JSON has many spellings of one object and only the one that was hashed is the pre-image.
 
 Two deliberate narrowings:
 
-- **Only `volumeBps` counts.** A `surplusBps` fee is real income whose *guaranteed* value is zero — a
-  fill with no surplus pays nothing — and subsidising against income that may never arrive is the
-  thing this mode exists to stop.
+- **Only `volumeBps` counts.** A `surplusBps` fee is real income whose *guaranteed* value is zero — a fill
+  with no surplus pays nothing.
 - **`minRevenueRatio` sits above 1.** The volume is the balance a poll saw, the order is sized at
-  activation, and the price moves in between. A fee that only just covers the gas covers nothing
-  after any of that.
+  activation, and the price moves in between.
 
-An unpriceable sell token is a refusal, not a zero: a token the order book will not price is one we
-cannot say is worth subsidising, not one we know is worthless.
-
-The documents are kept for a second job too — the order book rejects an appData hash it has never
-seen, so the watch tower needs them to post the order at all.
+An unpriceable sell token is a refusal, not a zero. The documents are kept for a second job: the order
+book rejects an appData hash it has never seen, so the watch tower needs them to post at all.
 
 **Confirm the price convention before turning this on with real money.** `feeValueWei` assumes CoW's
-native price converts atomic token units to wei, which the SDK's `{ price?: number }` type does not
-state. Run `--dry-run` first: it logs the estimated revenue beside the gas for every drop, so a wrong
-convention shows up as several orders of magnitude rather than as a subtle loss.
+native price converts atomic token units to wei, which the SDK's `{ price?: number }` type does not state.
+`--dry-run` logs estimated revenue beside gas for every drop, so a wrong convention shows up as orders of
+magnitude.
 
 ### `all` and `allowlist`
 
@@ -247,97 +197,78 @@ convention shows up as several orders of magnitude rather than as a subtle loss.
 }
 ```
 
-Three things about this are worth reading twice.
-
-**Two of these numbers are defaults sized from the chain, not constants.** `minPayerBalanceWei` and
-`maxCostPerActivationWei` default to twenty activations, computed at boot from `eth_gasPrice` and the
-measured ~420k gas an activation burns. The values above are what a caller with no chain information
-falls back to, and they are Ethereum-shaped because a chain-blind constant has to be shaped like some
-chain. As frozen constants they were wrong on every chain at once, in opposite directions: 0.02 native
-is five activations of reserve on Ethereum and six thousand on Base — where it refused to pay for a
-drop out of a wallet holding a thousand times the gas it needed — while a 0.01 native per-activation cap
-is three thousand times the real cost on Base and silently refuses every Ethereum activation above
-roughly 24 gwei. A file that sets only some fields inherits the chain-sized rest.
-
-**The per-activation cap is in wei, not gas units.** A units cap does not bound the spend: the same
-300k gas costs thirty times more in a fee spike, and a cap that moves with the gas price is not a cap.
-`maxFeePerGasWei` is the separate breaker that pauses the keeper in a spike rather than draining it one
-capped transaction at a time. Sizing the *default* from the gas price is not the same thing — it is
-picked once at boot and then holds still, so it remains a cap.
-
-Budgets stay absolute for a reason worth stating: `dailyBudgetWei` is risk appetite, and scaling it by
-gas price would raise the ceiling on the chain where a mistake costs most.
-
-**`perOwnerDailyBudgetWei` barely binds in `mode: "all"`.** `owner` is a field of a recipe anyone may
-submit, and minting a fresh one per registration is free. So in `all` mode the only cap that really
-holds is `dailyBudgetWei` — set it to a number you would not mind losing daily. Simulation kills the
-cheap abuse (a drop that would revert costs nothing) but a valid, useless, repeatedly-registered drop
-can still drain a day's allowance. The per-owner cap earns its place in `allowlist` mode, where the
-owner set is fixed by configuration rather than by the caller.
+- **`minPayerBalanceWei` and `maxCostPerActivationWei` are chain-sized defaults, not constants.** Both
+  default to twenty activations, computed at boot from `eth_gasPrice` and the measured ~420k gas an
+  activation burns; the values above are what a caller with no chain information falls back to. See the
+  [README](README.md#cli) for the numbers and why they cannot be flat. A file that sets only some fields
+  inherits the chain-sized rest.
+- **The per-activation cap is in wei, not gas units.** A units cap does not bound spend: the same 300k gas
+  costs thirty times more in a fee spike. `maxFeePerGasWei` is the separate breaker that pauses the keeper
+  in a spike. Sizing the *default* from the gas price is different — it is picked once at boot and then
+  holds still, so it remains a cap.
+- **Budgets stay absolute.** `dailyBudgetWei` is risk appetite, and scaling it by gas price would raise the
+  ceiling on the chain where a mistake costs most.
+- **`perOwnerDailyBudgetWei` barely binds in `mode: "all"`,** since `owner` is a field of a recipe anyone
+  may submit and minting a fresh one is free. Set `dailyBudgetWei` to a number you would not mind losing
+  daily. Simulation kills the cheap abuse, but a valid, useless, repeatedly-registered drop can still
+  drain a day's allowance. The per-owner cap earns its place in `allowlist` mode.
 
 `paying` is the answer to that: an attacker draining the budget has to pay you more than they cost.
-The budgets stay in place underneath it as a backstop.
 
 The hot key is read from `--private-key-file` or `$KEEPER_PRIVATE_KEY`, never from argv — `--private-key`
-is rejected rather than ignored, because an argument is visible in `ps` to everything on the machine.
-It sits behind a `Submitter` interface, so a relayer or Safe replaces it without touching the loop.
+is rejected rather than ignored, since an argument is visible in `ps`. It sits behind a `Submitter`
+interface, so a relayer or Safe replaces it without touching the loop.
 
 ## Crash safety
 
-`Submitter` is two-phase — `prepare` then `broadcast` — and that is the whole reason it is not a single
-`sendTransaction`. Signing locally yields the transaction hash *before* any bytes leave the process, so
-the record moves to `activating` with the hash recorded, and the budget is debited, before the
-broadcast. A crash inside that window leaves a hash to look up rather than a question about whether
-anything was sent.
+`Submitter` is two-phase — `prepare` then `broadcast`. Signing locally yields the transaction hash
+*before* any bytes leave the process, so the record moves to `activating` with the hash recorded, and the
+budget is debited, before the broadcast. A crash in that window leaves a hash to look up rather than a
+question about whether anything was sent.
 
 The budget is debited at the reservation and settled from the receipt. Over-counting a transaction that
 never goes out is the safe direction — reconciliation refunds it — whereas under-counting means a crash
 loop can spend past the daily cap.
 
-On restart the watch tower's cursor is rewound to the oldest in-flight activation's block. Without
-that, a restart between broadcast and scan skips the block the activation landed in, and its orders are
-never posted.
+On restart the watch tower's cursor is rewound to the oldest in-flight activation's block. Without that,
+a restart between broadcast and scan skips the block the activation landed in, and its orders are never
+posted.
 
 ## Reverts
 
-An unrecognised selector is **always** `waiting`, never `terminal`. The decoder is the lossy part of
-this system — a `raw` step's target has its own errors, and a future step contract will have errors
-this build has never heard of — so if an unfamiliar revert could retire a drop, one unknown error would
-stop the keeper watching an address that is alive and about to be funded. Being wrong the other way
-costs a poll every few minutes. That is the right asymmetry.
+**An unrecognised selector is always `waiting`, never `terminal`.** The decoder is the lossy part of this
+system — a `raw` step's target has its own errors, and a future step contract will have errors this build
+has never heard of — so if an unfamiliar revert could retire a drop, one unknown error would stop the
+keeper watching an address that is alive and about to be funded. Being wrong the other way costs a poll
+every few minutes.
 
 Only `AlreadyConsumed`, `NotADrop`, `MalformedRecipe` and `TooLate` retire a drop.
-`NoCodeAtDelegateTarget` parks it, because the step contract may be deployed later.
+`NoCodeAtDelegateTarget` parks it, since the step contract may be deployed later.
 
 ## Retired, not deleted
 
-A retired record keeps its recipe. This store holds the only server-side copy of `setupData`, and
-losing those bytes before activation loses the money for everyone including the owner — see
-`apps/web/src/lib/storage.ts`. `GET /v1/drops/:address` keeps serving it, which makes the keeper an
-incidental recovery path. It is not a backup service and should not be sold as one; download the
-`.drop.json` regardless.
+A retired record keeps its recipe. This store holds the only server-side copy of `setupData`, and losing
+those bytes before activation loses the money for everyone including the owner.
+`GET /v1/drops/:address` keeps serving it, which makes the keeper an incidental recovery path — not a
+backup service, and not to be sold as one. Download the `.drop.json` regardless.
 
 ## Tests
 
-All hermetic — no network, no node, no clock. `KeeperChain` is six methods and `Submitter` is four, so
-a test drives a revert, a fee spike, a reorged transaction or a crash between signing and broadcasting
-by handing over a fake. `now()` is injected because the day a budget rolls over on is the thing most
-worth pinning.
+All hermetic — no network, no node, no clock. `KeeperChain` is six methods and `Submitter` is four, so a
+test drives a revert, a fee spike, a reorged transaction or a crash between signing and broadcasting by
+handing over a fake. `now()` is injected because the day a budget rolls over on is the thing most worth
+pinning.
 
 ## Known limits
 
-- **One chain per process.** The hot key, the nonce, the deployment and the cursor are all per chain.
-  Several chains means several processes behind one ingress, which is why a recipe for another chain is
-  a 422 rather than something stored and never looked at.
+- **One chain per process.** The hot key, the nonce, the deployment and the cursor are all per chain, which
+  is why a recipe for another chain is a 422 rather than something stored and never looked at.
 - **One process per key.** Two keepers sharing a key would read the same nonce and stall each other.
-- **The keeper cannot hold the moment exclusively.** A user may hit Activate while it is mid-flight;
-  the simulation immediately before the send is the narrowest window obtainable off-chain, and the
-  residual cost is one reverted transaction's gas. Permissionless means permissionless.
-- **Listing by owner is a full scan, and nothing here is rate limited.** `GET /v1/drops?owner=…` walks
-  the whole registry per request, and registration is free with a caller-chosen owner — so one owner's
-  listing can be inflated deliberately. The response cap bounds what is serialised; nothing bounds the
-  scan. The mitigations that exist are `maxDrops`, that cap, and an ingress in front of this. Stated
-  rather than papered over with a limiter that isn't there.
-- **A stuck transaction is not fee-bumped.** Past `receiptTimeoutMs` the reservation is refunded and
-  the drop goes back to watching, rather than replacing at the same nonce. That is the honest limit of
-  a first version.
+- **The keeper cannot hold the moment exclusively.** A user may hit Activate mid-flight; the simulation
+  immediately before the send is the narrowest window obtainable off-chain, and the residual cost is one
+  reverted transaction's gas.
+- **Listing by owner is a full scan, and nothing here is rate limited.** Registration is free with a
+  caller-chosen owner, so one owner's listing can be inflated deliberately. The response cap bounds what is
+  serialised; nothing bounds the scan. The mitigations are `maxDrops`, that cap, and an ingress in front.
+- **A stuck transaction is not fee-bumped.** Past `receiptTimeoutMs` the reservation is refunded and the
+  drop goes back to watching, rather than replacing at the same nonce.

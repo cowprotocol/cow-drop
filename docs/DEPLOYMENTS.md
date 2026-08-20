@@ -19,12 +19,11 @@ addresses on every one, checked against the chains rather than against composabl
 `GENERATION` in `contracts/script/Deploy.s.sol` names one deployment of the stack, and each one writes
 its own `contracts/deployments/gen<N>/<chainId>.json`. Past directories are never touched.
 
-This is not bookkeeping. Every address the script prints is part of the CREATE2 preimage of every drop,
-so changing the code, the constructor arguments or a compiler setting moves **every** drop address. A
-recipe file therefore cannot mean anything on its own — it has to say which generation it was compiled
-against, which is what `DropRecipeJson.generation` is for, and why it defaults to 1 rather than to the
-latest. The contracts of an old generation stay deployed, so an old file keeps resolving to the address
-its author funded.
+Every address the script prints is part of the CREATE2 preimage of every drop, so changing the code, the
+constructor arguments or a compiler setting moves **every** drop address. A recipe file therefore cannot
+mean anything on its own — it has to say which generation it was compiled against, which is what
+`DropRecipeJson.generation` is for, and why it defaults to 1 rather than the latest. Old generations stay
+deployed, so an old file keeps resolving to the address its author funded.
 
 Bump it whenever any input to an address changes, and let `pnpm --filter @cowprotocol/cow-drop-sdk
 generate` pick the new directory up — it reads every `gen*/` and emits them all as `GENERATIONS`.
@@ -44,32 +43,25 @@ generate` pick the new directory up — it reads every `gen*/` and emits them al
 | `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | **not yet broadcast** | new |
 | `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis | same |
 
-`DropBungeeReceiver` was added to generation 2 rather than starting a generation 3, and that is safe
-for a reason worth spelling out: **no drop address depends on it.** Nothing in a recipe reaches a
-receiver, and all a receiver does is call `activate`, which is permissionless anyway — so it is not an
-input to any CREATE2 preimage, and adding one moves nothing. It is recorded here because a bridge route
-is quoted against its address, which has to be findable. `DropAddresses.bungeeReceiver` is optional in
-the SDK for the same reason: generation 1 was cut before it existed and legitimately has none.
+Generation 2 exists because `PresignSteps` and `CowOrderPoster` changed bytecode, and therefore addresses.
+Nothing else moved: `SALT` does not depend on the generation and no other contract's code changed, so
+`DropExecutor` keeps the address it is already deployed at. Generation 1's addresses stay in
+[`contracts/deployments/gen1/`](../contracts/deployments/gen1/) and in the SDK's `GENERATIONS`, because a
+recipe compiled against it resolves to an address somebody may have funded.
 
-Generation 2 exists because `PresignSteps` and `CowOrderPoster` now announce an order as CoW's own
-`OrderPlacement` rather than a `CowOrderPlaced` of this repository's invention, which changes their
-bytecode and therefore their addresses. Nothing else moved — `SALT` does not depend on the generation and
-no other contract's code changed, so `DropExecutor` keeps the address it is already deployed at. Both of
-generation 1's replaced contracts were never broadcast on any chain, so nothing on-chain was orphaned;
-generation 1 is kept anyway, because a recipe compiled against it resolves to a drop address somebody
-may have funded, and that is the case a generation exists to protect. Generation 1's addresses are in
-[`contracts/deployments/gen1/`](../contracts/deployments/gen1/) and stay in the SDK's `GENERATIONS`.
+`DropBungeeReceiver` joined generation 2 rather than starting a generation 3 because **no drop address
+depends on it** — nothing in a recipe reaches a receiver, so it is not an input to any CREATE2 preimage.
+It is recorded here only because a bridge route is quoted against its address.
+`DropAddresses.bungeeReceiver` is optional in the SDK for the same reason.
 
 **Generation 2 has not been broadcast.** `pnpm generate` has already pointed the SDK at it, so a recipe
-compiled today resolves against the new `PresignSteps`; until the deploy runs, activating a path-P drop
-reverts with `NoCodeAtDelegateTarget` — which the UI's `getCode` check surfaces before anyone funds
-anything.
+compiled today resolves against the new `PresignSteps`. Until the deploy runs, activating a path-P drop
+reverts with `NoCodeAtDelegateTarget`, which the UI's `getCode` check surfaces before anyone funds anything.
 
-Both cow-shed contracts are the canonical ones already live on Gnosis, reused rather than
-redeployed — so **the only things this project deploys are its own seven contracts**, and a drop address
-is derived entirely from official cow-shed code. Because a CREATE2 address is derived from init code,
-landing on #79's addresses is also proof this repo reproduces the deployed bytecode, which is why
-`contracts/foundry.toml` must stay byte-identical to cow-shed's.
+Both cow-shed contracts are the canonical ones already live on Gnosis, so **the only things this project
+deploys are its own seven contracts** and a drop address derives entirely from official cow-shed code.
+Since a CREATE2 address comes from init code, landing on #79's addresses is proof this repo reproduces the
+deployed bytecode — which is why `contracts/foundry.toml` must stay byte-identical to cow-shed's.
 
 ## Scripts
 

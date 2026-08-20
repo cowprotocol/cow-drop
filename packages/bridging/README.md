@@ -67,42 +67,27 @@ the destination to `OrderFlow`. Naming the destination as data instead means one
 serves both — everything else (the quote call, `destinationPayload`, `destinationGasLimit`, route
 selection) is already identical.
 
-## Why the allowlist became a registry
-
-There used to be a `DESTINATION_EXECUTING_BRIDGES` constant here — three bridge names asserted to run a
-destination payload, used as the default `includeBridges`. It has been replaced by
-`bungee/capability.ts`, and the reason is worth reading before adding anything back.
+## The capability registry
 
 **Bungee gives no signal for destination-execution support.** A route that ignores the payload quotes
-exactly like one that honours it: `destinationExec` in the response is a verbatim echo of what you
-sent, and no field on the route says otherwise. Symbiosis quotes Base→Gnosis happily and then delivers
-with a plain transfer — tokens land at the receiver, `executeData` is never called, no drop is funded,
-no order is placed.
+exactly like one that honours it — `destinationExec` in the response is a verbatim echo of what you sent.
+Symbiosis quotes Base→Gnosis happily and then delivers with a plain transfer: tokens land at the receiver,
+`executeData` is never called, no drop is funded, no order is placed.
 
-So the constant was a belief, and nothing in the code or the tests ever confronted it with a response.
-Two of its three entries had never been observed working. The third, `gnosis-native-bridge`, *cannot*
-execute our payload at all: it is the AMB omnibridge, whose destination call is
-`onTokenBridged(address,uint256,bytes)` on the recipient, and `DropBungeeReceiver` exposes
-`executeData(bytes32,uint256[],address[],bytes)`. Those selectors can never meet. And because it was the
-only entry that served Ethereum→Gnosis, the one pair the allowlist claimed to protect was the pair it
-silently broke.
+So `bungee/capability.ts` records **observations, not beliefs**:
 
-The replacement is not a better list. It is a different kind of thing:
-
-- **A verdict per bridge, carrying its evidence.** `observed` cannot be constructed without a
-  transaction hash, a chain and a date, so a bridge cannot be promoted on a hunch. `broken` carries the
-  reason. Anything unknown is `unobserved`, which is refused.
-- **Safety moved from the request to the response.** `includeBridges` is now about reach and latency
-  only. What protects a delivery is `Verification` — the checks in `checks.ts` and `bungee/verify.ts` —
-  and the fact that `sendableTransaction()` is the only way to obtain calldata from a quote and refuses
-  unless every blocking check passed.
+- **A verdict per bridge, carrying its evidence.** `observed` cannot be constructed without a transaction
+  hash, a chain and a date. `broken` carries the reason. Anything unknown is `unobserved`, which is refused.
+- **Safety lives in the response, not the request.** `includeBridges` is about reach and latency only. What
+  protects a delivery is `Verification` — the checks in `checks.ts` and `bungee/verify.ts` — plus the fact
+  that `sendableTransaction()` is the only way to get calldata from a quote and refuses unless every
+  blocking check passed.
 - **Nothing is discarded.** `getRoutes` returns every route with its verdict, so a mode with no working
-  route shows as a list of reasons rather than as an empty screen.
+  route shows as a list of reasons rather than an empty screen.
 
-Today **nothing is observed**, so atomic delivery has no eligible route and is offered by nothing. That
-is the honest state, not a temporary gap: direct delivery asks the bridge for a plain transfer, works
-everywhere, and has nothing in the path that could redirect a payment. Promoting a bridge is one line in
-the registry, and it takes a transaction hash.
+Today **nothing is observed**, so atomic delivery has no eligible route. Direct delivery asks the bridge
+for a plain transfer, works everywhere, and has nothing in the path that could redirect a payment.
+Promoting a bridge is one line in the registry, and it takes a transaction hash.
 
 ## What is not here
 

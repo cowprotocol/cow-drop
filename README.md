@@ -18,7 +18,7 @@ the flow, because the recipe is committed into the address itself.
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | [docs/DESIGN.md](docs/DESIGN.md)                          | How it works: the commitment, the two order paths, the recipe format, security and rescue |
 | [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)                | Addresses, generations, and verification                                                  |
-| [docs/BRIDGING.md](docs/BRIDGING.md)                      | Funding a drop from another chain: the two delivery modes, how one got stolen, and the fixes |
+| [docs/BRIDGING.md](docs/BRIDGING.md)                      | Funding a drop from another chain: the two delivery modes and their trade-offs             |
 | [docs/RELEASING.md](docs/RELEASING.md)                    | Cutting a release, the published images and package, and how to run them                  |
 | [`contracts/`](contracts/README.md)                       | `DropExecutor` and the step contracts — foundry                                           |
 | [`packages/sdk/`](packages/sdk/README.md)                 | Compile a recipe, get an address, build the activation tx — TypeScript, viem              |
