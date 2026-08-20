@@ -2,7 +2,9 @@ name: Release
 
 # Tagging is the whole release trigger, exactly as in cowprotocol/debug-tool: push `vX.Y.Z` and
 # everything downstream happens on its own. This workflow publishes the SDK to npm and opens the
-# GitHub release; `docker.yml` fires on the same tag and pushes the three images.
+# GitHub release; `docker.yml` fires on the same tag and pushes the keeper and watch-tower images.
+# Those are two workflows on one trigger, not a chain: the images do not wait on the npm publish, and
+# neither is skipped if the other fails.
 #
 # The tag is the single source of truth for the version — the committed `packages/sdk/package.json`
 # version is only a placeholder for local installs, and is overwritten here before packing. That way

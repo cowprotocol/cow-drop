@@ -8,7 +8,9 @@ Compute an address, send funds to it — by bridge, exchange withdrawal, payroll
 and anyone can trigger the trading logic that was baked into it. There is no signature anywhere in
 the flow, because the recipe is committed into the address itself.
 
-**Unaudited, and it depends on an unmerged cow-shed PR stack. Do not put real money in it yet.**
+> [!WARNING]
+> **Beta — not meant for public use.** Unaudited, and it depends on an unmerged cow-shed PR stack.
+> Exercise caution: use it at your own risk, and do not put real money in it yet.
 
 ## Docs
 
@@ -125,7 +127,7 @@ pnpm --filter @cowprotocol/cow-drop-sdk generate
 
 ## Release
 
-Tag it. That publishes the SDK to npm and pushes the three images to GHCR:
+Tag it. That publishes the SDK to npm and pushes both images to GHCR:
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
@@ -136,7 +138,8 @@ git tag v0.1.0 && git push origin v0.1.0
 | `@cowprotocol/cow-drop-sdk` | `pnpm add @cowprotocol/cow-drop-sdk` |
 | `ghcr.io/cowprotocol/cow-drop/keeper` | Activates drops, pays the gas. Needs a hot key and a policy. |
 | `ghcr.io/cowprotocol/cow-drop/watch-tower` | Posts on-chain orders to the order book. No key. |
-| `ghcr.io/cowprotocol/cow-drop/web` | This page, static behind nginx. |
+
+The web app is not in that list — it deploys from Vercel, so no image of it is published.
 
 See [docs/RELEASING.md](docs/RELEASING.md) for the prerelease flow, the repository secrets it needs,
 and how to run each image.
