@@ -17,7 +17,7 @@ the flow, because the recipe is committed into the address itself.
 |                                                           |                                                                                           |
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | [docs/DESIGN.md](docs/DESIGN.md)                          | How it works: the commitment, the two order paths, the recipe format, security and rescue |
-| [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)                | Addresses, generations, and verification                                                  |
+| [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)                | Generations, what is deployed where, and verification                                     |
 | [docs/BRIDGING.md](docs/BRIDGING.md)                      | Funding a drop from another chain: the two delivery modes and their trade-offs             |
 | [docs/RELEASING.md](docs/RELEASING.md)                    | Cutting a release, the published images and package, and how to run them                  |
 | [`contracts/`](contracts/README.md)                       | `DropExecutor` and the step contracts — foundry                                           |
@@ -127,11 +127,10 @@ pnpm --filter @cowprotocol/cow-drop-sdk generate
 
 ## Release
 
-Tag it. That publishes the SDK to npm and pushes both images to GHCR:
-
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
+Cut a [new release](https://github.com/cowprotocol/cow-drop/releases/new) with a semver tag —
+`v0.1.0`, `v0.2.0-rc.1`. That is the whole process: the tag publishes the SDK to
+[npm](https://www.npmjs.com/package/@cowprotocol/cow-drop-sdk) and pushes both images to
+[GHCR](https://github.com/orgs/cowprotocol/packages?repo_name=cow-drop) on its own.
 
 | | |
 | --- | --- |
