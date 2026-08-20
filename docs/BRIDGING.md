@@ -68,6 +68,51 @@ one that gets overlooked.
    Putting the recipe in the bridge payload publishes it as calldata on the destination chain. It is
    the one path where losing your copy is survivable.
 
+### "Why not just call `DropExecutor` directly?"
+
+The obvious question, and the answer is a property of bridges rather than a choice we made.
+
+**A bridge pays one address and calls that same address.** Bungee transfers the tokens to
+`receiverAddress` and then calls `receiverAddress.executeData(bytes32, uint256[], address[], bytes)`.
+Across, LiFi and Stargate all work the same way, for the same reason: whoever runs the logic needs the
+tokens in hand, so the recipient *is* the callee. You do not get to name them separately.
+
+So "make the destination calldata an `activate(owner, setupData)` call" is not on the menu. The bridge
+does not take a target and a calldata blob; it takes an address and a payload, and it calls one fixed
+function on that address.
+
+Try the two obvious candidates and both fail, in instructive ways:
+
+| `receiverAddress` = | Tokens land | The call |
+|---|---|---|
+| `DropExecutor` | at `DropExecutor`, which has no sweep and no fallback | reverts — it has four functions and `executeData` is not one of them |
+| the drop address | correctly, at the drop | does nothing. Undeployed, it is a call to an address with no code, which silently "succeeds"; once deployed, the proxy delegatecalls `COWShed`, which has no `executeData` either, and reverts |
+
+The second row is worth sitting with, because it is *almost* right. The money goes exactly where it
+should — that is direct delivery — and the only thing missing is that nothing calls `activate`. You
+cannot fix it by putting the call in the payload, because the code that would receive it is the code
+you are trying to deploy.
+
+**And `executeData` cannot simply be added to `DropExecutor`.** Its address is both the
+`trustedExecutor` and the `setupTarget` in every drop's CREATE2 preimage, so a new function means new
+bytecode, a new address, and a different address for every drop that has ever been computed — including
+ones already funded against a recipe file somebody is holding. That is what generations exist to
+prevent.
+
+So the receiver does exactly two jobs, and neither is optional:
+
+1. **Translate the ABI** — `executeData(...)` in, `activate(owner, setupData)` out.
+2. **Move the tokens** — from the address the bridge paid to the address the drop lives at.
+
+Job 2 is the fundamental one, and it is also the whole problem. The bridge pays the callee, the drop
+needs the money, and those are different addresses by construction — so *something* has to hold the
+tokens for an instant in between. A contract that holds other people's tokens for an instant is a
+contract that holds them indefinitely when the call never comes.
+
+Which points straight at the fix, and it is the one this question keeps circling: make the in-between
+contract **per drop**. Then "the address the bridge paid" and "an address only this drop can drain" are
+the same address, and there is nothing in between to steal from. That is option C below.
+
 ## Who activates, and what happens if nobody does
 
 There is a ladder, and each rung is a fallback for the one above:
