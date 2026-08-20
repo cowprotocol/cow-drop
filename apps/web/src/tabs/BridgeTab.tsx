@@ -16,6 +16,7 @@ import {
   readTokenBalance,
   sendBridge,
   type BridgePlan,
+  type DeliveryMode,
 } from '../lib/bridge.js'
 import {
   blockExplorer,
@@ -124,6 +125,11 @@ function Bridge({
   const [onFailure, setOnFailure] = useState<OnFailure>(
     restored?.onFailure === 'refund-owner' ? 'refund-owner' : 'leave-at-drop',
   )
+  /**
+   * Direct unless deliberately changed. It works with every bridge and has nothing to steal, which is
+   * worth more than the latency atomic buys — see `docs/BRIDGING.md`.
+   */
+  const [mode, setMode] = useState<DeliveryMode>(restored?.mode === 'atomic' ? 'atomic' : 'direct')
 
   const [quote, setQuote] = useState<BridgeQuote | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -219,6 +225,7 @@ function Bridge({
       sellChainId: sourceChainId,
       sellToken: sourceToken,
       buyChainId: destinationChainId,
+      mode,
     }).then((tokens) => {
       if (cancelled || tokens === null) return
       const wanted = plan.ok ? plan.value.deliveredToken.toLowerCase() : ''
@@ -227,13 +234,13 @@ function Bridge({
     return () => {
       cancelled = true
     }
-  }, [sourceChainId, sourceToken, destinationChainId, plan])
+  }, [sourceChainId, sourceToken, destinationChainId, plan, mode])
 
   /** Remember the choices, so a reload mid-setup does not start over. */
   useEffect(() => {
     if (!plan.ok || !sourceToken) return
-    saveBridgeForm(plan.value.drop, { sourceChainId, sourceToken, amountText, onFailure })
-  }, [plan, sourceChainId, sourceToken, amountText, onFailure])
+    saveBridgeForm(plan.value.drop, { sourceChainId, sourceToken, amountText, onFailure, mode })
+  }, [plan, sourceChainId, sourceToken, amountText, onFailure, mode])
 
   /** A quote is for one route, amount and destination. Any of them moving makes it stale. */
   useEffect(() => {
@@ -242,7 +249,7 @@ function Bridge({
     setBridgeHash(null)
     setQuoteError(null)
     setSendError(null)
-  }, [sourceChainId, sourceToken, amountText, onFailure, recipe])
+  }, [sourceChainId, sourceToken, amountText, onFailure, mode, recipe])
 
   /**
    * Does the destination keeper already hold this recipe?
@@ -302,6 +309,7 @@ function Bridge({
         sellChainId: sourceChainId,
         sellToken: sourceToken,
         sellAmount: amount,
+        mode,
         onFailure,
       })
       setQuote(quoted)
@@ -367,6 +375,7 @@ function Bridge({
       // Written straight after the wallet returns, so a reload before the bridge fills still finds it.
       saveBridge({
         hash,
+        mode,
         sourceChainId,
         destinationChainId: destinationChain,
         drop,
@@ -396,9 +405,9 @@ function Bridge({
     <section className="bridge">
       <h2>Bridge &amp; Swap</h2>
       <p className="hint">
-        The bridge pays a receiver contract on {chainName(destinationChain)}, which forwards the tokens
-        to the drop and runs its recipe in the same transaction. Your order is live as soon as the
-        bridge fills.
+        {mode === 'direct'
+          ? `The bridge pays the drop address on ${chainName(destinationChain)} directly. The keeper activates it once the money lands, and your order goes live then.`
+          : `The bridge pays a receiver contract on ${chainName(destinationChain)}, which forwards the tokens to the drop and runs its recipe in the same transaction. Your order is live as soon as the bridge fills.`}
       </p>
 
       <h3>1 · The drop you are funding</h3>
@@ -507,35 +516,73 @@ function Bridge({
         </p>
       )}
 
-      <h3>3 · If the recipe will not run</h3>
-      <p className="hint">
-        A recipe can legitimately decline — a minimum-balance guard refusing a bridge&apos;s first
-        tranche is the guard working. The tokens have arrived either way, so this is where they go.
-      </p>
-      {ON_FAILURE.map((mode) => (
-        <label key={mode} className="radio">
-          <input
-            type="radio"
-            name="onFailure"
-            checked={onFailure === mode}
-            onChange={() => setOnFailure(mode)}
-            disabled={busy}
-          />
-          {mode === 'leave-at-drop' ? (
-            <span>
-              <strong>Leave at the drop.</strong> They wait at the drop address for the rest to arrive,
-              and a keeper activates once the recipe can run. The safe choice with any recipe.
-            </span>
-          ) : (
-            <span>
-              <strong>Send back to me.</strong> Returned to <code>{recipe.owner}</code>. Do not use this
-              with a minimum-balance guard — every tranche would bounce instead of accumulating.
-            </span>
-          )}
-        </label>
-      ))}
+      <h3>3 · How it is delivered</h3>
+      <label className="radio">
+        <input
+          type="radio"
+          name="mode"
+          checked={mode === 'direct'}
+          onChange={() => setMode('direct')}
+          disabled={busy}
+        />
+        <span>
+          <strong>Straight to the drop.</strong> The bridge pays the drop address and the keeper
+          activates it once the money lands — usually within a minute of the fill. Works with every
+          bridge, so far more routes are available, and nothing can go wrong on arrival: the address
+          belongs to this recipe alone.
+        </span>
+      </label>
+      <label className="radio">
+        <input
+          type="radio"
+          name="mode"
+          checked={mode === 'atomic'}
+          onChange={() => setMode('atomic')}
+          disabled={busy}
+        />
+        <span>
+          <strong>Activate inside the bridge transaction.</strong> The order is live the instant the
+          bridge fills, and the relayer pays the activation gas. Only bridges that run a destination
+          payload can do this, so fewer routes — and if the delivery fails to execute, the tokens sit in
+          a shared contract that anyone may sweep.
+        </span>
+      </label>
 
-      <h3>4 · Route</h3>
+      {mode === 'atomic' && (
+        <>
+          <h3>4 · If the recipe will not run</h3>
+          <p className="hint">
+            A recipe can legitimately decline — a minimum-balance guard refusing a bridge&apos;s first
+            tranche is the guard working. The tokens have arrived either way, so this is where they go.
+          </p>
+          {ON_FAILURE.map((option) => (
+            <label key={option} className="radio">
+              <input
+                type="radio"
+                name="onFailure"
+                checked={onFailure === option}
+                onChange={() => setOnFailure(option)}
+                disabled={busy}
+              />
+              {option === 'leave-at-drop' ? (
+                <span>
+                  <strong>Leave at the drop.</strong> They wait at the drop address for the rest to
+                  arrive, and a keeper activates once the recipe can run. The safe choice with any
+                  recipe.
+                </span>
+              ) : (
+                <span>
+                  <strong>Send back to me.</strong> Returned to <code>{recipe.owner}</code>. Do not use
+                  this with a minimum-balance guard — every tranche would bounce instead of
+                  accumulating.
+                </span>
+              )}
+            </label>
+          ))}
+        </>
+      )}
+
+      <h3>{mode === 'atomic' ? '5' : '4'} · Route</h3>
       <button onClick={onQuote} disabled={!amount || !sourceToken || overBalance || quoting || busy}>
         {quoting ? 'Getting a quote…' : quote ? 'Re-quote' : 'Get a quote'}
       </button>
@@ -570,8 +617,8 @@ function Bridge({
         </>
       )}
 
-      <h3>5 · Send it</h3>
-      <KeeperNote state={keeperState} chainId={destinationChain} />
+      <h3>{mode === 'atomic' ? '6' : '5'} · Send it</h3>
+      <KeeperNote state={keeperState} chainId={destinationChain} mode={mode} />
 
       {needsApproval && (
         <button onClick={() => void onApprove()} disabled={busy || wrongNetwork}>
@@ -591,8 +638,9 @@ function Bridge({
       {bridgeHash && (
         <>
           <p>
-            Sent. The bridge fills in a few minutes, and the order is placed in the same transaction as
-            the fill — so nothing else is needed from you.
+            {mode === 'direct'
+              ? 'Sent. The bridge fills in a few minutes; the keeper then activates the drop and places the order. Nothing else is needed from you.'
+              : 'Sent. The bridge fills in a few minutes, and the order is placed in the same transaction as the fill — so nothing else is needed from you.'}
           </p>
           {/* Three links because they are three different questions: has the bridge filled, did the
               money land, and is the order live. The last is the one that says it worked. */}
@@ -608,6 +656,7 @@ function Bridge({
                 The drop on {explorer.name}
               </a>{' '}
               — the tokens arriving, and the activation that spends them.
+              {mode === 'direct' && ' The balance sitting here briefly is expected and safe.'}
             </li>
             <li>
               <a href={`${cowExplorer(destinationChain)}/address/${drop}`} target="_blank" rel="noreferrer">
@@ -624,12 +673,20 @@ function Bridge({
   )
 }
 
-function KeeperNote({ state, chainId }: { state: KeeperState; chainId: number }) {
+function KeeperNote({ state, chainId, mode }: { state: KeeperState; chainId: number; mode: DeliveryMode }) {
   if (state === 'registered') {
     return <p className="hint">The {chainName(chainId)} keeper already holds this recipe.</p>
   }
   if (state === 'none') {
-    return (
+    // In direct mode the keeper is the *only* thing that will activate, so this stops being a caveat
+    // and becomes the reason nothing will happen.
+    return mode === 'direct' ? (
+      <p className="error">
+        No keeper is configured for {chainName(chainId)}, and in this mode the keeper is the only thing
+        that activates the drop. The money will arrive safely and then sit there until you press
+        Activate yourself.
+      </p>
+    ) : (
       <p className="hint">
         No keeper is configured for {chainName(chainId)}. The bridge still activates the drop on
         arrival, but nothing will retry if the recipe declines, and an order with custom appData may be

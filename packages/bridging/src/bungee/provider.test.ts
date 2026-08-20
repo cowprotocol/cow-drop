@@ -1,4 +1,4 @@
-import { bungeeDelivery, compileRecipe, swapOnArrival } from '@cowprotocol/cow-drop-sdk'
+import { bungeeDelivery, compileRecipe, directDelivery, swapOnArrival } from '@cowprotocol/cow-drop-sdk'
 import { describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
 
@@ -14,18 +14,26 @@ const BASE = 8453
 const GNOSIS = 100
 
 /** The drop the bridge is aimed at: sell whatever USDC arrives on Gnosis for COW. */
-function destination() {
-  return bungeeDelivery(
-    compileRecipe(
-      swapOnArrival({
-        chainId: GNOSIS,
-        owner: SENDER,
-        sellToken: USDC_GNOSIS,
-        buyToken: COW,
-        limitPrice: { price: '2.5', sellDecimals: 6, buyDecimals: 18 },
-      }),
-    ),
+function compiled() {
+  return compileRecipe(
+    swapOnArrival({
+      chainId: GNOSIS,
+      owner: SENDER,
+      sellToken: USDC_GNOSIS,
+      buyToken: COW,
+      limitPrice: { price: '2.5', sellDecimals: 6, buyDecimals: 18 },
+    }),
   )
+}
+
+/** Atomic: the bridge pays the receiver and runs the recipe on arrival. */
+function destination() {
+  return bungeeDelivery(compiled())
+}
+
+/** Direct: the bridge pays the drop and nothing runs on arrival. */
+function directDestination() {
+  return directDelivery(compiled())
 }
 
 function token(address: Address, symbol: string, decimals: number, chainId: number) {
@@ -156,6 +164,24 @@ describe('BungeeDropProvider.getQuote', () => {
 
     const quote = calls.find((url) => url.pathname.endsWith('/quote'))
     expect(quote?.searchParams.get('includeBridges')).toBe(DESTINATION_EXECUTING_BRIDGES.join(','))
+  })
+
+  /**
+   * Direct delivery asks the bridge for a plain transfer, so none of the destination-execution
+   * machinery applies — and, critically, neither does the allowlist. Applying it here would report
+   * pairs as unreachable that route perfectly well; Base to Gnosis is exactly such a pair.
+   */
+  it('asks for no payload and no bridge filter in direct mode', async () => {
+    const { doFetch, calls } = fakeFetch({ '/quote': quoteBody([route('q1', '999000000')]), '/build-tx': BUILD_BODY })
+
+    await new BungeeDropProvider({ fetch: doFetch }).getQuote({ ...request(), destination: directDestination() })
+
+    const quote = calls.find((url) => url.pathname.endsWith('/quote'))
+    expect(quote?.searchParams.has('includeBridges')).toBe(false)
+    expect(quote?.searchParams.has('destinationPayload')).toBe(false)
+    expect(quote?.searchParams.has('destinationGasLimit')).toBe(false)
+    // Paid straight to the drop, with no contract in between.
+    expect(quote?.searchParams.get('receiverAddress')).toBe(directDestination().predictedAddress)
   })
 
   it('restricts them when asked', async () => {

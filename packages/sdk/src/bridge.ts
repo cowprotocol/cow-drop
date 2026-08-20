@@ -70,12 +70,19 @@ export interface DeliveryPayload {
  * what would let one Bungee implementation serve both destinations.
  */
 export interface DestinationTarget {
-  /** The contract the bridge delivers tokens and payload to. */
+  /** The address the bridge delivers to. The receiver in atomic mode; the drop itself in direct mode. */
   receiver: Address
-  /** The destination calldata. */
+  /**
+   * The destination calldata, or `0x` for a plain transfer.
+   *
+   * Empty is the signal for direct delivery, and it is load-bearing everywhere downstream: a provider
+   * must not ask a bridge for destination execution it is not going to use, and must not restrict the
+   * route to bridges that support it. See `directDelivery`.
+   */
   payload: Hex
-  /** Where the funds end up — the drop. Not the receiver, which never keeps anything. */
+  /** Where the funds end up — the drop. Equal to `receiver` in direct mode. */
   predictedAddress: Address
+  /** Destination gas to prepay. Zero in direct mode, where nothing runs on arrival. */
   gasLimit: number
 }
 
@@ -139,6 +146,35 @@ export function bungeeDelivery(
     payload: encodeDeliveryPayload({ owner: compiled.owner, setupData: compiled.setupData, onFailure }),
     predictedAddress: compiled.address,
     gasLimit: options.gasLimit ?? DEFAULT_DESTINATION_GAS_LIMIT,
+  }
+}
+
+/**
+ * Deliver straight to the drop, with no contract in between.
+ *
+ * The safe default, and the one to reach for unless the latency genuinely matters. The bridge is asked
+ * for nothing but a transfer, which has two consequences worth understanding:
+ *
+ * **Nothing can be stolen.** A drop address belongs to exactly one recipe and one owner, so money sent
+ * there can only ever be spent by that recipe or rescued by that owner. `bungeeDelivery`'s receiver is
+ * shared by everyone and forwards its whole balance to whichever drop its caller names, so a delivery
+ * that fails to execute there is a public bounty. Here there is nothing to redirect and nothing to race
+ * for — an unactivated delivery simply waits, indefinitely and safely.
+ *
+ * **Every bridge qualifies.** Atomic delivery only works through bridges that actually run a destination
+ * payload, and that allowlist is narrow — with it, Gnosis is reachable only from Ethereum. A plain
+ * transfer has no such requirement.
+ *
+ * What it costs: somebody still has to call `activate`. That is the keeper, if the drop was registered
+ * before the money was sent — so register first, always. See `docs/BRIDGING.md`.
+ */
+export function directDelivery(compiled: CompiledRecipe): DestinationTarget {
+  return {
+    receiver: compiled.address,
+    // No destination call, so no payload and no gas to prepay. Both are checked downstream.
+    payload: '0x',
+    predictedAddress: compiled.address,
+    gasLimit: 0,
   }
 }
 

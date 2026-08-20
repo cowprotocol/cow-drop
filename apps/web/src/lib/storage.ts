@@ -195,6 +195,8 @@ export interface SavedBridgeForm {
   sourceToken: Address
   amountText: string
   onFailure: string
+  /** `direct` or `atomic`. Absent on records written before the choice existed, which read as direct. */
+  mode?: string
 }
 
 export function readBridgeForm(drop: Address): SavedBridgeForm | null {
@@ -235,6 +237,8 @@ const BRIDGES_KEY = 'cow-drop:bridges:v1'
 export interface SavedBridge {
   /** The source-chain transaction. Unique per send, so it is the identity of the row. */
   hash: string
+  /** How it was delivered — `direct` or `atomic`. Absent on rows written before the choice existed. */
+  mode?: string
   sourceChainId: number
   destinationChainId: number
   /** Where the money is going, and the drop whose order should appear once it lands. */

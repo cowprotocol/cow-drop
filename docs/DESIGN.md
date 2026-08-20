@@ -145,6 +145,12 @@ Off-chain, `bungeeDelivery()` in the SDK builds the payload and
 [`packages/bridging`](../packages/bridging/README.md) quotes the route. Note what the payload does
 *not* contain — an amount — so re-quoting a route can never move the address the quote is aimed at.
 
+**Direct delivery is the default, and this section is the reason.** The receiver is shared by everyone
+and forwards its whole balance to whichever drop its caller names, so a delivery that fails to execute
+there is not merely stuck — it is a public bounty, and one has already been taken. Paying the drop
+address instead gives up atomicity and gives up nothing else. The whole argument, the incident and the
+options for fixing the atomic path are in [BRIDGING.md](BRIDGING.md).
+
 ## Source layout
 
 ```

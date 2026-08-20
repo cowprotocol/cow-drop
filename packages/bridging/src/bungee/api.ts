@@ -3,7 +3,6 @@ import {
   BUNGEE_API_PATH,
   BUNGEE_BASE_URL,
   BUNGEE_MANUAL_API_PATH,
-  DESTINATION_EXECUTING_BRIDGES,
   type BungeeBuildTxResponseWire,
   type BungeeQuoteRequestWire,
   type BungeeQuoteResponseWire,
@@ -24,11 +23,11 @@ export interface BungeeApiOptions {
   baseUrl?: string
   manualBaseUrl?: string
   /**
-   * Restrict the bridges Bungee may route through.
+   * Restrict the bridges Bungee may route through, overriding the per-quote choice.
    *
-   * Defaults to `DESTINATION_EXECUTING_BRIDGES`, and read that comment before widening it: a bridge
-   * that ignores the destination payload quotes exactly like one that honours it, and delivering
-   * through one strands the tokens at the receiver with no drop funded and no order placed.
+   * Left unset by default, because the right answer depends on the delivery and not on the client:
+   * a quote that carries a destination payload must be limited to bridges that run one, and a plain
+   * transfer must not be limited at all. `BungeeDropProvider` decides that per call — see there.
    */
   includeBridges?: readonly BridgeName[]
   fetch?: typeof globalThis.fetch
@@ -37,13 +36,13 @@ export interface BungeeApiOptions {
 export class BungeeApi {
   private readonly baseUrl: string
   private readonly manualBaseUrl: string
-  private readonly includeBridges: readonly BridgeName[]
+  private readonly includeBridges: readonly BridgeName[] | undefined
   private readonly doFetch: typeof globalThis.fetch
 
   constructor(options: BungeeApiOptions = {}) {
     this.baseUrl = options.baseUrl ?? `${BUNGEE_BASE_URL}${BUNGEE_API_PATH}`
     this.manualBaseUrl = options.manualBaseUrl ?? `${BUNGEE_BASE_URL}${BUNGEE_MANUAL_API_PATH}`
-    this.includeBridges = options.includeBridges ?? DESTINATION_EXECUTING_BRIDGES
+    this.includeBridges = options.includeBridges
 
     const injected = options.fetch ?? globalThis.fetch
     if (!injected) throw new Error('no fetch available: pass one in BungeeApiOptions')
@@ -56,12 +55,14 @@ export class BungeeApi {
     fromChainId?: number
     fromTokenAddress?: string
     toChainId: number
+    /** Omit to ask what *any* bridge can deliver, which is the right question for a plain transfer. */
+    includeBridges?: readonly BridgeName[]
   }): Promise<BungeeTokenWire[]> {
     const response = await this.get<BungeeTokenListResponseWire>(this.manualBaseUrl, '/dest-tokens', {
       toChainId: String(params.toChainId),
       fromChainId: params.fromChainId === undefined ? undefined : String(params.fromChainId),
       fromTokenAddress: params.fromTokenAddress,
-      includeBridges: this.includeBridges.join(','),
+      includeBridges: (params.includeBridges ?? this.includeBridges)?.join(','),
     })
 
     if (!response.success) throw new BridgeError('quote-failed', 'Bungee could not list destination tokens', response)
@@ -78,7 +79,7 @@ export class BungeeApi {
   async getQuote(request: BungeeQuoteRequestWire): Promise<{ route: BungeeRouteWire; input: BungeeTokenWire }> {
     const response = await this.get<BungeeQuoteResponseWire>(this.baseUrl, '/quote', {
       ...request,
-      includeBridges: request.includeBridges ?? this.includeBridges.join(','),
+      includeBridges: request.includeBridges ?? this.includeBridges?.join(','),
     })
 
     if (!response.success) throw new BridgeError('quote-failed', 'Bungee rejected the quote request', response)

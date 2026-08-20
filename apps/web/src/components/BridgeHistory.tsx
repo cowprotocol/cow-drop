@@ -39,7 +39,7 @@ export function BridgeHistory({ revision }: { revision: number }) {
               </strong>
               <span className="muted">
                 {chainName(bridge.sourceChainId)} → {chainName(bridge.destinationChainId)} · {bridge.route} ·{' '}
-                {new Date(bridge.sentAt).toLocaleString()}
+                {bridge.mode === 'atomic' ? 'atomic' : 'direct'} · {new Date(bridge.sentAt).toLocaleString()}
               </span>
             </div>
             <div className="bridge-history-row muted">

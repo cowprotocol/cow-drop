@@ -3,6 +3,7 @@ import {
   bungeeDelivery,
   compileRecipe,
   describeRecipe,
+  directDelivery,
   type CompiledRecipe,
   type DropRecipeJson,
   type OnFailure,
@@ -35,6 +36,20 @@ export const BRIDGE_SOURCE_CHAINS: readonly number[] = [1, 10, 100, 137, 8453, 4
 const provider = new BungeeDropProvider()
 
 export type { BridgeQuote, BridgeToken }
+
+/**
+ * How the money is delivered on the destination chain.
+ *
+ * - `direct` — the bridge pays the drop address itself and nothing runs on arrival. Works with every
+ *   bridge, and nothing can be stolen, because a drop address belongs to exactly one recipe. Somebody
+ *   still has to activate it; that is the keeper's job.
+ * - `atomic` — the bridge pays a shared receiver and carries the recipe as its payload, so the order
+ *   goes live inside the fill. Only some bridges can do this, and a delivery that fails to execute
+ *   sits in a permissionless contract that anyone may sweep.
+ *
+ * See `docs/BRIDGING.md`.
+ */
+export type DeliveryMode = 'direct' | 'atomic'
 
 /**
  * The token the bridge has to deliver, read out of the recipe.
@@ -84,18 +99,22 @@ export function planFrom(recipe: DropRecipeJson): BridgePlan {
 /**
  * The tokens a bridge can actually deliver on the destination chain.
  *
- * Asked before quoting, because the enabled bridges reach far fewer pairs than the chain list
- * suggests — Across and CCTP do not serve Gnosis at all, and the Gnosis native bridge only runs from
- * Ethereum. Without this the first sign of an unreachable pair is an empty route list, which reads
- * like a failure rather than like a pair that was never going to work.
+ * Asked before quoting, because in atomic mode the bridges that run a destination payload reach far
+ * fewer pairs than the chain list suggests — Across and CCTP do not serve Gnosis at all, and the
+ * Gnosis native bridge only runs from Ethereum. Without this the first sign of an unreachable pair is
+ * an empty route list, which reads like a failure rather than like a pair that was never going to
+ * work. In direct mode the question is much easier and almost everything answers yes.
  */
 export async function deliverableTokens(params: {
   sellChainId: number
   sellToken: Address
   buyChainId: number
+  mode: DeliveryMode
 }): Promise<BridgeToken[] | null> {
   try {
-    return await provider.getDeliverableTokens(params)
+    // Asked for the mode that will actually be quoted. Direct reaches far more pairs, so asking the
+    // atomic question would report perfectly good routes as unreachable.
+    return await provider.getDeliverableTokens({ ...params, executesPayload: params.mode === 'atomic' })
   } catch {
     // Advisory only. If Bungee will not answer this, quoting is still allowed to try.
     return null
@@ -109,6 +128,7 @@ export async function quoteBridge(params: {
   sellChainId: number
   sellToken: Address
   sellAmount: bigint
+  mode: DeliveryMode
   onFailure: OnFailure
 }): Promise<BridgeQuote> {
   const { plan } = params
@@ -122,7 +142,12 @@ export async function quoteBridge(params: {
     buyToken: plan.deliveredToken,
     // Built here rather than by the provider: the destination is cow-drop's business and the route is
     // the bridge's, and keeping the two apart is what lets a second provider reuse all of this.
-    destination: bungeeDelivery(plan.compiled, { onFailure: params.onFailure }),
+    // `onFailure` only exists in atomic mode — direct delivery has no failure branch, because there is
+    // no receiver holding anything to fall back with.
+    destination:
+      params.mode === 'direct'
+        ? directDelivery(plan.compiled)
+        : bungeeDelivery(plan.compiled, { onFailure: params.onFailure }),
   })
 }
 

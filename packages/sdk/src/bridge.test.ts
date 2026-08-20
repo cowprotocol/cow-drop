@@ -4,6 +4,7 @@ import type { Address } from 'viem'
 import {
   DEFAULT_DESTINATION_GAS_LIMIT,
   bungeeDelivery,
+  directDelivery,
   bungeeReceiverOf,
   decodeDeliveryPayload,
   encodeDeliveryPayload,
@@ -86,6 +87,40 @@ describe('bungeeDelivery', () => {
     expect(() => bungeeDelivery(compiled, { onFailure: 'refund-owner' })).toThrow(/zero address/)
     // A zero-owner drop is a legitimate recipe, so the safe mode still works.
     expect(() => bungeeDelivery(compiled)).not.toThrow()
+  })
+})
+
+describe('directDelivery', () => {
+  it('points the bridge straight at the drop, with nothing to execute', () => {
+    const compiled = compileRecipe(swapRecipe())
+    const target = directDelivery(compiled)
+
+    // Receiver and destination are the same address: there is no contract in between, which is the
+    // whole point — nothing shared means nothing for anyone else to redirect.
+    expect(target.receiver).toBe(compiled.address)
+    expect(target.predictedAddress).toBe(compiled.address)
+    expect(target.payload).toBe('0x')
+    expect(target.gasLimit).toBe(0)
+  })
+
+  /**
+   * The empty payload is the signal downstream: it is what tells a provider not to ask for destination
+   * execution and not to restrict the route to bridges that support it.
+   */
+  it('is distinguishable from an atomic delivery by its payload alone', () => {
+    const compiled = compileRecipe(swapRecipe())
+
+    expect(directDelivery(compiled).payload).toBe('0x')
+    expect(bungeeDelivery(compiled).payload).not.toBe('0x')
+  })
+
+  it('works with a recipe that atomic delivery would refuse', () => {
+    // `refund-owner` plus a guard is rejected for atomic, because every tranche would bounce. Direct
+    // delivery has no failure branch at all, so a guarded recipe is simply fine.
+    const compiled = compileRecipe(swapRecipe({ minAmount: 1000n }))
+
+    expect(() => bungeeDelivery(compiled, { onFailure: 'refund-owner' })).toThrow()
+    expect(() => directDelivery(compiled)).not.toThrow()
   })
 })
 
