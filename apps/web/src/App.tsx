@@ -2,6 +2,7 @@ import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import type { Address } from 'viem'
 import { useEffect, useState } from 'react'
 
+import { BetaNotice } from './components/BetaNotice.js'
 import { DEFAULT_CHAIN_ID, connect, onAccountsChanged, readAccount } from './lib/chain.js'
 import { TABS, parseRoute, routeHash } from './lib/route.js'
 import { useExternalRoute, useRoute, writeHash } from './lib/useRoute.js'
@@ -116,116 +117,115 @@ export function App() {
   }
 
   return (
-    <main>
+    <>
       {/*
-        Top level on purpose. This used to live inside the status section, which meant any gate that
-        hid that section also swallowed every error it was supposed to explain.
+        Ahead of `main`, and so ahead of the error banner too: it is full-bleed, and the page column
+        would otherwise clip it. Said once, in the shell, so it is on screen whichever tab the URL
+        opens on rather than only on About — the one tab nobody funding a drop has to visit.
       */}
-      {error && (
-        <p className="error banner" role="alert">
-          {error}
-        </p>
-      )}
+      <BetaNotice />
 
-      {/*
-        Said once, in the shell, so it is on screen whichever tab the URL opens on. It belongs here
-        rather than in About — which is the one tab nobody funding a drop has to visit — and it is not
-        dismissible, because it is a standing fact about this deployment and not a notification.
-      */}
-      <p className="beta-notice" role="note">
-        <strong>Beta.</strong> Not meant for public use: unaudited and still changing. Exercise
-        caution and use it at your own risk.
-      </p>
+      <main>
+        {/*
+          Top level on purpose. This used to live inside the status section, which meant any gate that
+          hid that section also swallowed every error it was supposed to explain.
+        */}
+        {error && (
+          <p className="error banner" role="alert">
+            {error}
+          </p>
+        )}
 
-      <header>
-        <div className="brand">
-          {/* Served from public/ rather than imported, so index.html's icon tags point at the same set. */}
-          <img src="/logo.png" alt="" width={96} height={96} className="brand-mark" />
-          <div>
-            <h1>cow-drop</h1>
-            <p className="tagline">
-              Drop your tokens into an address and the cow does the rest. The recipe is committed
-              into the address itself, so anyone can trigger it and nobody has to sign anything.
-            </p>
+        <header>
+          <div className="brand">
+            {/* Served from public/ rather than imported, so index.html's icon tags point at the same set. */}
+            <img src="/logo.png" alt="" width={96} height={96} className="brand-mark" />
+            <div>
+              <h1>cow-drop</h1>
+              <p className="tagline">
+                Drop your tokens into an address and the cow does the rest. The recipe is committed
+                into the address itself, so anyone can trigger it and nobody has to sign anything.
+              </p>
+            </div>
           </div>
+          <div className="wallet">
+            {account ? (
+              <span className="pill">{account}</span>
+            ) : (
+              <button onClick={onConnect}>Connect wallet</button>
+            )}
+          </div>
+        </header>
+
+        {/*
+          Links rather than an ARIA tablist, because these really are pages: they change the URL, Back
+          moves between them, and About and SDK are worth sending to someone. That also leaves the
+          keyboard model the platform's instead of a roving tabindex reimplemented by hand — and it means
+          a tab click needs no JavaScript at all, since the browser's own hash write is what we listen to.
+        */}
+        <nav className="tab-nav" aria-label="Sections">
+          {TABS.map((tab) => (
+            <a
+              key={tab.id}
+              href={routeHash({ tab: tab.id })}
+              aria-current={route.tab === tab.id ? 'page' : undefined}
+              // Already here: do nothing rather than push an entry the recipe mirror is about to rewrite
+              // into a duplicate of the current one, which makes Back look broken.
+              onClick={route.tab === tab.id ? (event) => event.preventDefault() : undefined}
+            >
+              {tab.label}
+            </a>
+          ))}
+        </nav>
+
+        {/*
+          The builder stays mounted while another tab shows, so a trip to Drops does not throw away a
+          half-filled form — `#/drops` carries no recipe, so the URL could not bring it back. It costs
+          nothing to keep: nothing in this app polls, so every effect here is dependency-driven and a
+          hidden panel is idle. `hidden` is what does the hiding, because it removes the subtree from the
+          accessibility tree *and* the tab order; anything less leaves ~30 invisible focusable inputs.
+        */}
+        <div className="tab-panel" hidden={route.tab !== 'recipes'}>
+          <RecipesTab
+            active={route.tab === 'recipes'}
+            account={account}
+            imported={imported}
+            setImported={setImported}
+            setError={setError}
+            dropsRevision={dropsRevision}
+            onDropsChanged={() => setDropsRevision((n) => n + 1)}
+            onChainSelected={setConnectChainId}
+            onAddressChanged={setDropAddress}
+            onSeeAll={() => navigate('drops')}
+            onBridge={(recipe) => {
+              setBridgeRecipe(recipe)
+              setError(null)
+              navigate('bridge')
+            }}
+          />
         </div>
-        <div className="wallet">
-          {account ? (
-            <span className="pill">{account}</span>
-          ) : (
-            <button onClick={onConnect}>Connect wallet</button>
-          )}
-        </div>
-      </header>
 
-      {/*
-        Links rather than an ARIA tablist, because these really are pages: they change the URL, Back
-        moves between them, and About and SDK are worth sending to someone. That also leaves the
-        keyboard model the platform's instead of a roving tabindex reimplemented by hand — and it means
-        a tab click needs no JavaScript at all, since the browser's own hash write is what we listen to.
-      */}
-      <nav className="tab-nav" aria-label="Sections">
-        {TABS.map((tab) => (
-          <a
-            key={tab.id}
-            href={routeHash({ tab: tab.id })}
-            aria-current={route.tab === tab.id ? 'page' : undefined}
-            // Already here: do nothing rather than push an entry the recipe mirror is about to rewrite
-            // into a duplicate of the current one, which makes Back look broken.
-            onClick={route.tab === tab.id ? (event) => event.preventDefault() : undefined}
-          >
-            {tab.label}
-          </a>
-        ))}
-      </nav>
-
-      {/*
-        The builder stays mounted while another tab shows, so a trip to Drops does not throw away a
-        half-filled form — `#/drops` carries no recipe, so the URL could not bring it back. It costs
-        nothing to keep: nothing in this app polls, so every effect here is dependency-driven and a
-        hidden panel is idle. `hidden` is what does the hiding, because it removes the subtree from the
-        accessibility tree *and* the tab order; anything less leaves ~30 invisible focusable inputs.
-      */}
-      <div className="tab-panel" hidden={route.tab !== 'recipes'}>
-        <RecipesTab
-          active={route.tab === 'recipes'}
-          account={account}
-          imported={imported}
-          setImported={setImported}
-          setError={setError}
-          dropsRevision={dropsRevision}
-          onDropsChanged={() => setDropsRevision((n) => n + 1)}
-          onChainSelected={setConnectChainId}
-          onAddressChanged={setDropAddress}
-          onSeeAll={() => navigate('drops')}
-          onBridge={(recipe) => {
-            setBridgeRecipe(recipe)
-            setError(null)
-            navigate('bridge')
-          }}
-        />
-      </div>
-
-      {/* The others unmount, because their state is better fresh — the Drops tab re-reads
-          localStorage and re-asks the keeper on every open, which is exactly what you want from it,
-          and a bridge quote goes stale within minutes so it should never survive a tab switch. */}
-      {route.tab === 'bridge' && (
-        <BridgeTab account={account} recipe={bridgeRecipe} onBuildRecipe={() => navigate('recipes')} />
-      )}
-      {route.tab === 'drops' && (
-        <DropsTab
-          account={account}
-          revision={dropsRevision}
-          currentAddress={dropAddress}
-          onLoad={(recipe) => {
-            setImported(recipe)
-            setError(null)
-            navigate('recipes')
-          }}
-        />
-      )}
-      {route.tab === 'about' && <AboutTab />}
-      {route.tab === 'sdk' && <SdkTab />}
-    </main>
+        {/* The others unmount, because their state is better fresh — the Drops tab re-reads
+            localStorage and re-asks the keeper on every open, which is exactly what you want from it,
+            and a bridge quote goes stale within minutes so it should never survive a tab switch. */}
+        {route.tab === 'bridge' && (
+          <BridgeTab account={account} recipe={bridgeRecipe} onBuildRecipe={() => navigate('recipes')} />
+        )}
+        {route.tab === 'drops' && (
+          <DropsTab
+            account={account}
+            revision={dropsRevision}
+            currentAddress={dropAddress}
+            onLoad={(recipe) => {
+              setImported(recipe)
+              setError(null)
+              navigate('recipes')
+            }}
+          />
+        )}
+        {route.tab === 'about' && <AboutTab />}
+        {route.tab === 'sdk' && <SdkTab />}
+      </main>
+    </>
   )
 }
