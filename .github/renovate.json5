@@ -1,0 +1,27 @@
+// This file follows JSON5 syntax, to make it easier to maintain.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  // Dependabot continues to manage GitHub Actions.
+  enabledManagers: ["npm"],
+  semanticCommits: "enabled",
+  semanticCommitType: "deps",
+  packageRules: [
+    // Keep workspace dependency updates in one monthly PR and avoid fresh releases.
+    {
+      matchManagers: ["npm"],
+      schedule: ["* 0-3 1 * *"], // 00:00-03:59 UTC on the first day of each month
+      minimumReleaseAge: "14 days",
+      separateMajorMinor: false,
+      groupName: "npm dependencies",
+      groupSlug: "npm-dependencies",
+      semanticCommitScope: "npm-dependencies",
+      commitMessageTopic: "npm dependencies",
+    },
+    // Major upgrades need an explicit compatibility and supply-chain review.
+    {
+      matchManagers: ["npm"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+  ],
+}
