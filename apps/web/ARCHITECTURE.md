@@ -96,7 +96,7 @@ So the page treats the recipe as a key:
 
 ## Handing a drop to a keeper
 
-With `VITE_KEEPER_URL` set, the status panel gains **Hand to keeper**: it POSTs the recipe to `/v1/drops`,
+With a keeper configured (`VITE_KEEPER_BASE_URL`, see [README](README.md)), the status panel gains **Hand to keeper**: it POSTs the recipe to `/v1/drops`,
 and the keeper recompiles `setupData` itself and refuses anything that does not derive the address given.
 The call is idempotent.
 

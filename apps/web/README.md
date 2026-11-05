@@ -19,13 +19,15 @@ pnpm build
 
 | env var | |
 |---|---|
-| `VITE_KEEPER_URL` | Points the page at a [keeper](../../packages/keeper/README.md). Without it the **Hand to keeper** button is hidden, the Drops tab shows only this browser's own records, and the About tab drops its live panel. |
+| `VITE_KEEPER_BASE_URL` | A multi-chain [keeper](../../packages/keeper/README.md)'s root, e.g. `https://drop.barn.cow.fi/keeper`. Each chain is `<base>/<network>` (`…/keeper/xdai`, `…/keeper/mainnet`). Set in `.env.production` for the Vercel build. |
+| `VITE_KEEPER_URLS` | Per-chain overrides, `100=https://…,1=https://…`, for a chain whose keeper lives elsewhere. |
+| `VITE_KEEPER_URL` | A single keeper for every chain, the last fallback. With no keeper set at all the **Hand to keeper** button is hidden, the Drops tab shows only this browser's own records, and the About tab drops its live panel. |
 | `VITE_RPC_URL` | Your own RPC for the default chain instead of the public one. |
 
 Both are build-time values, which is right for `pnpm dev` and wrong for a container image — Vite
 would bake them into the bundle, pinning the image to one environment. So the published image reads
-`KEEPER_URL` and `RPC_URL` at **container start** instead and writes them into `/config.js`, which
-takes precedence over the `VITE_*` pair. See [`src/lib/runtimeConfig.ts`](src/lib/runtimeConfig.ts)
+`KEEPER_BASE_URL`, `KEEPER_URLS`, `KEEPER_URL` and `RPC_URL` at **container start** instead and writes them into `/config.js`, which
+takes precedence over the `VITE_*` values. See [`src/lib/runtimeConfig.ts`](src/lib/runtimeConfig.ts)
 and [docs/RELEASING.md](../../docs/RELEASING.md).
 
 ## Against a local fork

@@ -8,10 +8,9 @@
 # nginx's entrypoint runs this via `sh`, so keep it POSIX. `set -u` is deliberately not used: these
 # variables are expected to be absent.
 #
-# KEEPER_URLS is `100=https://…,1=https://…` and is what a deployment watching more than one chain
-# sets: a drop funded across a bridge lives on the destination chain and must be registered with that
-# chain's keeper. KEEPER_URL stays the single-chain shorthand, and the fallback for a chain the map
-# does not name.
+# KEEPER_BASE_URL is a multi-chain keeper's root (https://…/keeper): each chain is <base>/<network>,
+# e.g. …/keeper/xdai. KEEPER_URLS (`100=https://…,1=https://…`) overrides it per chain, and KEEPER_URL
+# stays the single-chain shorthand and the last fallback.
 set -e
 
 escape() {
@@ -22,6 +21,7 @@ escape() {
 cat > /usr/share/nginx/html/config.js <<CONFIG
 window.__COW_DROP_CONFIG__ = {
   keeperUrl: "$(escape "${KEEPER_URL:-}")",
+  keeperBaseUrl: "$(escape "${KEEPER_BASE_URL:-}")",
   keeperUrls: "$(escape "${KEEPER_URLS:-}")",
   rpcUrl: "$(escape "${RPC_URL:-}")",
 }
@@ -29,4 +29,4 @@ CONFIG
 
 # The RPC URL routinely carries an API key in its path, so log only whether one was given.
 if [ -n "${RPC_URL:-}" ]; then rpc_state="<set>"; else rpc_state="<unset>"; fi
-echo "cow-drop: runtime config written (keeperUrl=${KEEPER_URL:-<unset>}, keeperUrls=${KEEPER_URLS:-<unset>}, rpcUrl=$rpc_state)"
+echo "cow-drop: runtime config written (keeperUrl=${KEEPER_URL:-<unset>}, keeperBaseUrl=${KEEPER_BASE_URL:-<unset>}, keeperUrls=${KEEPER_URLS:-<unset>}, rpcUrl=$rpc_state)"

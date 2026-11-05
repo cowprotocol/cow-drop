@@ -1,7 +1,10 @@
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import type { Address } from 'viem'
 
-import { configuredKeeperUrl, configuredKeeperUrls } from './runtimeConfig'
+import { getDropChain } from '@cowprotocol/cow-drop-sdk'
+
+import { DEFAULT_CHAIN_ID } from './chain.js'
+import { configuredKeeperBaseUrl, configuredKeeperUrl, configuredKeeperUrls } from './runtimeConfig'
 
 /**
  * Talking to a keeper.
@@ -19,6 +22,10 @@ import { configuredKeeperUrl, configuredKeeperUrls } from './runtimeConfig'
 /**
  * The keeper for a chain, or null when none is configured. See `./runtimeConfig.ts`.
  *
+ * In order: a per-chain override (`VITE_KEEPER_URLS`), then the multi-chain keeper's base URL plus the
+ * chain's network name (`VITE_KEEPER_BASE_URL` + `/xdai`), then the single keeper (`VITE_KEEPER_URL`).
+ * With no chain given, the default chain stands in — what the About tab shows.
+ *
  * `chainId` is optional so that the many "is there a keeper at all" checks stay unchanged, but pass it
  * wherever the chain is known — and it always is, since a recipe carries one. It matters most for a
  * drop funded across a bridge, which lives on the destination chain rather than the one the wallet is
@@ -30,9 +37,15 @@ import { configuredKeeperUrl, configuredKeeperUrls } from './runtimeConfig'
  */
 export function keeperUrl(chainId?: number): string | null {
   const urls = configuredKeeperUrls()
-  const forChain = chainId === undefined ? undefined : urls[chainId]
+  const chain = chainId ?? DEFAULT_CHAIN_ID
+  const forChain = urls[chain]
+
+  const baseUrl = configuredKeeperBaseUrl()
+  const network = getDropChain(chain)?.network
+  const fromBase = baseUrl && network ? `${baseUrl.replace(/\/+$/, '')}/${network}` : undefined
+
   // With no single keeper configured, any entry is better than none for the "have we got one" checks.
-  const raw = forChain ?? configuredKeeperUrl() ?? Object.values(urls)[0]
+  const raw = forChain ?? fromBase ?? configuredKeeperUrl() ?? Object.values(urls)[0]
 
   if (raw === undefined) return null
   return raw.replace(/\/+$/, '')

@@ -63,11 +63,11 @@ export RPC_URL=https://rpc.gnosischain.com
 ### UI
 
 ```bash
-VITE_KEEPER_URL=http://localhost:8787 pnpm --filter @cowprotocol/cow-drop-web dev
+VITE_KEEPER_BASE_URL=http://localhost:8787 pnpm --filter @cowprotocol/cow-drop-web dev
 # http://localhost:5173
 ```
 
-Drop `VITE_KEEPER_URL` to hide the **Hand to keeper** button. `VITE_RPC_URL` overrides the RPC.
+Drop `VITE_KEEPER_BASE_URL` to hide the **Hand to keeper** button. `VITE_RPC_URL` overrides the RPC.
 
 Once a keeper is watching a drop, that button becomes **Stop keeper watching** — the recipe is the
 authorisation for both directions, and stopping is reversible.
@@ -78,11 +78,13 @@ Activates registered drops and pays the gas, so it needs a funded hot key. It ru
 tower in-process — **don't run both.**
 
 ```bash
-KEEPER_PRIVATE_KEY=0x<hot-key> pnpm --filter @cowprotocol/cow-drop-keeper start --rpc-url $RPC_URL
+KEEPER_PRIVATE_KEY=0x<hot-key> pnpm --filter @cowprotocol/cow-drop-keeper start --chains 100,1,8453
 ```
 
-Add `--dry-run` to decide and simulate without broadcasting. `curl localhost:8787/v1/health` for the
-payer, its balance and the budget left. The default policy subsidises every owner up to a small daily
+One process keeps every chain listed, each at `/<network>/v1` (`/xdai/v1`, `/mainnet/v1`, `/base/v1`)
+and each on `$RPC_URL_<chainId>`, else a public endpoint. Add `--dry-run` to decide and simulate
+without broadcasting. `curl localhost:8787/xdai/v1/health` for that chain's payer, its balance and the
+budget left. The default policy subsidises every owner up to a small daily
 budget — pass `--policy` before pointing anything public at it.
 
 ### Watch tower

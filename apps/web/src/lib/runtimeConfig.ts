@@ -18,6 +18,8 @@ declare global {
   interface Window {
     __COW_DROP_CONFIG__?: {
       keeperUrl?: string
+      /** A multi-chain keeper's root: each chain is `<keeperBaseUrl>/<network>`. */
+      keeperBaseUrl?: string
       /**
        * Keepers by chain id, for a deployment that watches more than one.
        *
@@ -43,7 +45,19 @@ export function configuredKeeperUrl(): string | undefined {
 }
 
 /**
- * The keepers this deployment talks to, by chain id.
+ * The root of a keeper serving several chains, each under its CoW network name — so
+ * `https://drop.barn.cow.fi/keeper` means `…/keeper/xdai` for Gnosis, `…/keeper/mainnet` for Ethereum.
+ * One setting for every chain; `configuredKeeperUrls` still overrides it chain by chain.
+ */
+export function configuredKeeperBaseUrl(): string | undefined {
+  return (
+    clean(globalThis.window?.__COW_DROP_CONFIG__?.keeperBaseUrl) ?? clean(import.meta.env.VITE_KEEPER_BASE_URL)
+  )
+}
+
+/**
+ * The keepers this deployment talks to, by chain id. Overrides for `configuredKeeperBaseUrl`, for a
+ * chain whose keeper lives somewhere else.
  *
  * Bridging is what makes this necessary: a drop being funded across a bridge lives on the
  * *destination* chain, and it has to be registered with the keeper watching that chain — the one the
