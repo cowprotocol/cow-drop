@@ -1,13 +1,19 @@
 import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http'
-import type { DropAddresses, DropDeployment, DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
+import type {
+  DropAddresses,
+  DropDeployment,
+  DropRecipeJson,
+  RecipeExportRequest,
+} from '@cowprotocol/cow-drop-sdk'
 import { getDropChain } from '@cowprotocol/cow-drop-sdk'
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
 import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
-import { keccak256, type Address } from 'viem'
+import { keccak256, type Address, type Hex } from 'viem'
 
 import type { Submitter } from './chain.js'
 import { matches, type EventBus } from './events.js'
 import { registerDrop, unregisterDrop } from './registry.js'
+import { createNonceLog, exportRecipes, type SignatureVerifier } from './export.js'
 import { frame, keepalive, retryAfter, SSE_HEADERS, writeEvent } from './sse.js'
 import type { KeeperStore } from './store.js'
 import { utcDay } from './store.js'
@@ -29,6 +35,15 @@ export interface ServerOptions {
   allowOrigin?: string
   keepaliveMs?: number
   logger?: Logger
+  /**
+   * Verifies the typed-data signature on `POST /v1/drops/export`.
+   *
+   * Injected rather than built here so the server can be tested without a chain, and so the one place
+   * that decides whether a signature is genuine is a single named function rather than a branch
+   * buried in a handler. Omit it and the endpoint answers 501: a keeper with no verifier must refuse
+   * rather than quietly serve recipes to anyone.
+   */
+  verifySignature?: SignatureVerifier
 }
 
 /** Everything the UI needs about one drop, with every bigint already a string. */
@@ -145,6 +160,12 @@ export const ROUTES: readonly RouteDoc[] = [
   },
   { method: 'POST', path: '/v1/drops', summary: 'Register a drop for the keeper to watch and pay for.' },
   { method: 'POST', path: '/v1/drops/unregister', summary: 'Stop watching a drop. Body carries the recipe, which is the proof.' },
+  {
+    method: 'POST',
+    path: '/v1/drops/export',
+    summary:
+      'Recover your own recipes. Body carries an EIP-712 signature from the owner; returns the recipe and its appData documents.',
+  },
   {
     method: 'GET',
     path: '/v1/drops/{address}',
@@ -307,9 +328,12 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
     allowOrigin = '*',
     keepaliveMs = 15_000,
     logger = silentLogger,
+    verifySignature,
   } = options
 
   const started = now()
+  // Per process: see `createNonceLog` on why these are not worth persisting.
+  const nonces = createNonceLog()
 
   return (request, response) => {
     void handle(request, response).catch((error: unknown) => {
@@ -370,6 +394,7 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
     if (request.method === 'GET' && path === '/v1/drops') return listByOwner(response, url)
     if (request.method === 'POST' && path === '/v1/drops') return register(request, response)
     if (request.method === 'POST' && path === '/v1/drops/unregister') return unregister(request, response)
+    if (request.method === 'POST' && path === '/v1/drops/export') return exportOwned(request, response)
     if (request.method === 'GET' && path === '/v1/events') return stream(request, response, url)
 
     const drop = /^\/v1\/drops\/(0x[0-9a-fA-F]{40})$/.exec(path)
@@ -589,6 +614,58 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
   }
 
   /**
+   * Give an owner their own recipes back.
+   *
+   * The whole argument for why a keeper may do this — and for the narrow thing a signature proves —
+   * is in the SDK's `recipeExport.ts`. What matters here: the body carries a signed EIP-712 message,
+   * `owner` comes out of that message and never out of a query string, and the response is the
+   * recipe plus its appData documents, which together reimport to byte-identical `setupData`.
+   *
+   * Not a GET, though it reads: the signature does not belong in a URL, where it would land in proxy
+   * logs and browser history and stay replayable for the rest of its window.
+   */
+  async function exportOwned(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!verifySignature) {
+      send(response, 501, {
+        error: 'unsupported',
+        message: 'this keeper has no signature verifier configured, so it cannot export recipes',
+      })
+      return
+    }
+
+    const body = await readJson(request, response, maxBodyBytes)
+    if (!body.ok) return
+
+    const input = body.value as { request?: RecipeExportRequest; signature?: Hex }
+    if (!input.request || typeof input.request !== 'object' || typeof input.signature !== 'string') {
+      send(response, 400, { error: 'invalid-request', message: 'a `request` and a `signature` are required' })
+      return
+    }
+
+    const result = await exportRecipes({
+      request: input.request,
+      signature: input.signature,
+      store,
+      chainId: deployment.chainId,
+      keeper: await submitter.payer(),
+      verify: verifySignature,
+      nonces,
+      now: Math.floor(now() / 1000),
+    })
+
+    if (!result.ok) {
+      // Logged at info, not warn: a stale signature from a page left open is ordinary, and an
+      // operator reading warnings should not be taught to ignore them.
+      logger.info(`recipe export refused (${result.error})`)
+      send(response, statusFor(result.error), result)
+      return
+    }
+
+    logger.info(`exported ${result.drops.length} recipe(s) to their owner`)
+    send(response, 200, { drops: result.drops })
+  }
+
+  /**
    * Stop watching a drop.
    *
    * A POST with the recipe in the body rather than a DELETE: holding the recipe is the proof, and
@@ -765,6 +842,17 @@ function statusFor(error: string): number {
       return 402
     case 'at-capacity':
       return 429
+    // The signature was readable and simply does not entitle the caller. 401, not 403: a fresh
+    // signature is exactly what would make it work, which is what `WWW-Authenticate` semantics mean.
+    case 'bad-signature':
+    case 'expired':
+    case 'replayed':
+    case 'wrong-keeper':
+      return 401
+    case 'window-too-long':
+      return 422
+    case 'not-found':
+      return 404
     default:
       return 400
   }

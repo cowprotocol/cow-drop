@@ -19,6 +19,7 @@ import { forwardOrderResults } from './orders.js'
 import { DEFAULT_POLICY } from './policy.js'
 import { orderBookPaymentQuoter, orderBookPrices } from './revenue.js'
 import { createMultiChainServer, type ChainMount } from './multiChain.js'
+import type { SignatureVerifier } from './export.js'
 import { createKeeperHandler, ROUTES } from './server.js'
 import { fileStore, memoryStore, utcDay, type KeeperStore } from './store.js'
 import type { DropStatus, SubsidyPolicy } from './types.js'
@@ -190,7 +191,35 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
     onResult: (result) => void forwardOrderResults({ store, events, chainId })(result),
   })
 
-  const handler = createKeeperHandler({ store, deployment, events, policy, submitter, allowOrigin, logger })
+  /**
+   * Whether a typed-data signature really comes from `owner`.
+   *
+   * `verifyTypedData` rather than `recoverTypedDataAddress`: it falls through to ERC-1271 when the
+   * address holds code, so a Safe-owned drop verifies by the same call as an EOA-owned one. A Safe
+   * cannot produce an ECDSA signature at all, and "recover and compare" would reject every one of
+   * them while looking perfectly correct.
+   *
+   * A failed verification is `false`, never a throw: an RPC that is down, or a wallet contract that
+   * reverts on a malformed signature, is a refusal and not a 500.
+   */
+  const verifySignature: SignatureVerifier = async ({ owner, typedData, signature }) => {
+    try {
+      return await client.verifyTypedData({ address: owner, ...typedData, signature })
+    } catch {
+      return false
+    }
+  }
+
+  const handler = createKeeperHandler({
+    store,
+    deployment,
+    events,
+    policy,
+    submitter,
+    allowOrigin,
+    logger,
+    verifySignature,
+  })
 
   return {
     mount: { chainId, network, handler } satisfies ChainMount,

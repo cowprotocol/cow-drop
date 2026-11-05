@@ -13,6 +13,11 @@ import type { Address } from 'viem'
  * gone for good — not just for you, for anyone. There is no owner override, because the owner needs the
  * same bytes everybody else does.
  *
+ * One hedge, and only one: a drop registered with a keeper can be recovered from it by signing for the
+ * owner — `exportKeeperRecipes` in `./keeper.ts`. That covers a cleared browser, not a keeper that has
+ * retired the record or shut down, and not a drop never registered at all. It is a second copy, not a
+ * backup service, and nothing here should be written as though the bytes are safe because of it.
+ *
  * (Once a drop *has* been activated the recipe is recoverable, since `setupData` appears in the
  * calldata of the deploying transaction. That only helps after the fact.)
  *

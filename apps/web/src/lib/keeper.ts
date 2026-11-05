@@ -1,7 +1,7 @@
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 
-import { getDropChain } from '@cowprotocol/cow-drop-sdk'
+import { getDropChain, recipeExportScope, recipeExportTypedData } from '@cowprotocol/cow-drop-sdk'
 
 import { DEFAULT_CHAIN_ID } from './chain.js'
 import { configuredKeeperBaseUrl, configuredKeeperUrl, configuredKeeperUrls } from './runtimeConfig'
@@ -221,4 +221,85 @@ export async function listKeeperDrops(owner: Address, chainId?: number): Promise
   const body = await parse(response)
   if (!response.ok) fail(response, body)
   return body as KeeperDropList
+}
+
+/**
+ * One recipe recovered from a keeper, with the documents needed to reimport it whole.
+ *
+ * `appDataDocuments` matter as much as the recipe: the chain carries only their hash, nothing can
+ * recover them from the recipe, and the order book rejects an appData hash it has never seen.
+ */
+export interface ExportedKeeperDrop {
+  address: Address
+  chainId: number
+  label: string
+  recipe: DropRecipeJson
+  appDataDocuments?: string[]
+}
+
+/**
+ * Ask a keeper for the recipes it holds for you, proving who you are with a signature.
+ *
+ * ## Why this is not a hole in the model
+ *
+ * Everywhere else this file insists the keeper hands out no recipes, and the Drops tab says so. The
+ * reasoning for the exception is in the SDK's `recipeExport.ts`: the bytes were never a theft
+ * capability — activation is permissionless and paying a keeper to do it is the product — so what is
+ * being protected is the *intent* in the recipe, and proof of control over the named owner is the
+ * right gate for that.
+ *
+ * ## What comes back is still untrusted
+ *
+ * A signature proves you control the address, not that you wrote the recipe that names it. Anyone may
+ * register a recipe naming any owner, and it may pay its surplus to a `receiver` that is not you. The
+ * caller must decode and show it before anyone funds anything — see `DropsTab`.
+ *
+ * Two round trips, deliberately: the keeper's payer is read first and signed into the message, so the
+ * signature is bound to this keeper and cannot be replayed at another one by the very party holding it.
+ */
+export async function exportKeeperRecipes(params: {
+  owner: Address
+  chainId: number
+  sign: (typedData: ReturnType<typeof recipeExportTypedData>) => Promise<Hex>
+}): Promise<ExportedKeeperDrop[]> {
+  const base = keeperUrl(params.chainId)
+  if (!base) throw new Error('no keeper is configured for this chain')
+
+  const health = await fetch(`${base}/v1/health`)
+  // 503 carries a full body — a payer below its floor still answers, and still names itself.
+  const reported = (await parse(health)) as { payer?: Address }
+  if (!reported.payer) throw new Error('this keeper did not report a payer, so a signature cannot be bound to it')
+
+  const issuedAt = Math.floor(Date.now() / 1000)
+  const request = {
+    owner: params.owner,
+    keeper: reported.payer,
+    scope: recipeExportScope(),
+    issuedAt,
+    // Two minutes: long enough to approve in a wallet, short enough that a leaked signature is stale
+    // before it is useful. The keeper refuses anything longer than its own maximum regardless.
+    expiresAt: issuedAt + 120,
+    nonce: randomNonce(),
+  }
+
+  const signature = await params.sign(recipeExportTypedData(request, params.chainId))
+
+  const response = await fetch(`${base}/v1/drops/export`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ request, signature }),
+  })
+  if (response.status === 404 || response.status === 501) {
+    throw new Error('this keeper cannot export recipes — it is older than this page')
+  }
+
+  const body = await parse(response)
+  if (!response.ok) fail(response, body)
+  return (body as { drops: ExportedKeeperDrop[] }).drops
+}
+
+/** 32 bytes from the platform CSPRNG, so one signature cannot be replayed inside its own window. */
+function randomNonce(): Hex {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`
 }

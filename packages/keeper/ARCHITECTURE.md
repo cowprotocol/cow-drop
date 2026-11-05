@@ -108,6 +108,7 @@ POST /v1/drops            { recipe, address } -> 201 { drop }, or 200 if already
 GET  /v1/drops?owner=0x…  -> every drop registered under one owner, newest first
 GET  /v1/drops/:address   -> the drop, its hints, and its activation history
 POST /v1/drops/unregister { recipe } -> 200, 409 while an activation is in flight
+POST /v1/drops/export     { request, signature } -> the owner's own recipes, with appData documents
 GET  /v1/events?drop=0x…&owner=0x…  -> SSE for those drops, and every drop of those owners
 GET  /v1/health           -> payer, balance, budget left, counts
 GET  /v1/policy           -> whether it is subsidising, before anyone commits
@@ -169,6 +170,11 @@ registry. `/v1/events` refuses an unfiltered stream for the same reason.
   simulation state. Keeping `setupData` out is not only privacy — it is the activation authority, and a
   one-shot recipe with no minimum-balance guard can be burned by anyone. What is new is the
   **aggregate**: everything one owner is waiting on, and how much is in each.
+- **Except to the owner.** `POST /v1/drops/export` returns the recipe and its appData documents to
+  whoever proves control of the address the recipe names, with an EIP-712 signature bound to this
+  keeper's payer and good for minutes. Both concerns above are concerns about *other people*: the owner
+  can already read their own intent and already activate their own drop. See the SDK's
+  `recipeExport.ts`.
 
 ## Money
 
@@ -284,8 +290,11 @@ Only `AlreadyConsumed`, `NotADrop`, `MalformedRecipe` and `TooLate` retire a dro
 
 A retired record keeps its recipe. This store holds the only server-side copy of `setupData`, and losing
 those bytes before activation loses the money for everyone including the owner.
-`GET /v1/drops/:address` keeps serving it, which makes the keeper an incidental recovery path — not a
-backup service, and not to be sold as one. Download the `.drop.json` regardless.
+`GET /v1/drops/:address` keeps serving the record, and `POST /v1/drops/export` returns the recipe
+itself to an owner who signs for it — which makes the keeper a real recovery path rather than an
+incidental one. Still not a backup service: it holds only what was registered with *it*, a retired
+record is kept at its discretion, and a keeper that is gone is gone. Download the `.drop.json`
+regardless.
 
 ## Tests
 

@@ -12,6 +12,7 @@ export * from './templates.js'
 export * from './tx.js'
 export * from './orderUid.js'
 export * from './rescue.js'
+export * from './recipeExport.js'
 export { ADDRESSES, DEPLOYMENTS, GENERATIONS, LATEST_GENERATION, getDeployment } from './generated/deployments.js'
 export {
   COW_SHED_EXECUTOR_FACTORY_ABI,
