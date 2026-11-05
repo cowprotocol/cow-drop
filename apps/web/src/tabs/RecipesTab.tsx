@@ -44,7 +44,6 @@ import { DropAddress } from '../components/DropAddress.js'
 import { RecipeJson } from '../components/RecipeJson.js'
 import { StepBuilder } from '../components/StepBuilder.js'
 import { RescuePanel } from '../components/RescuePanel.js'
-import { SavedDrops } from '../components/SavedDrops.js'
 import { TerminalPanel } from '../components/TerminalPanel.js'
 import { StepTable } from '../components/StepTable.js'
 import { PaymentPanel, paymentStepOf } from '../components/PaymentPanel.js'
@@ -417,7 +416,6 @@ export function RecipesTab({
   onDropsChanged,
   onChainSelected,
   onAddressChanged,
-  onSeeAll,
   onBridge,
 }: {
   /** Whether this is the tab on screen. */
@@ -439,7 +437,6 @@ export function RecipesTab({
   /** Reported up so the Drops tab can mark which saved drop is the one on screen. */
   onAddressChanged: (address: Address | null) => void
   /** Moves to the Drops tab, for the rows only the keeper knows about. */
-  onSeeAll: () => void
   /**
    * Hands this recipe to the Bridge tab, to be funded from another chain.
    *
@@ -980,17 +977,6 @@ export function RecipesTab({
   // themselves and nothing that frames them.
   return (
     <>
-      <SavedDrops
-        account={account}
-        revision={dropsRevision}
-        currentAddress={compiled.ok ? compiled.value.address : null}
-        onLoad={(loaded) => {
-          setImported(loaded)
-          setError(null)
-        }}
-        onSeeAll={onSeeAll}
-      />
-
       <section>
         <h2>1 &middot; Pick a recipe</h2>
         <div className="tabs">

@@ -7,6 +7,7 @@ import { viemChainReader } from './chain.js'
 import { defaultCursorPath, fileCursor } from './cursor.js'
 import { createWatchTower } from './watchTower.js'
 import { createLogger } from './logger.js'
+import { knownAppDataDocument } from '@cowprotocol/cow-drop-sdk'
 
 const USAGE = `cow-drop-watch-tower — post the discrete CoW orders contracts place on-chain
 
@@ -128,6 +129,8 @@ async function main(): Promise<void> {
     confirmations,
     maxBlockRange: BigInt(str(args, 'max-block-range') ?? 10_000),
     pollIntervalMs: pollSeconds * 1000,
+    // No keeper behind this one, so the only document it can upload is the standard appData.
+    appData: knownAppDataDocument,
     onlyDrops: args['only-drops'] === true,
     dryRun,
     logger,

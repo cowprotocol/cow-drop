@@ -5,6 +5,7 @@ import { getDropChain } from '@cowprotocol/cow-drop-sdk'
 
 import { DEFAULT_CHAIN_ID } from './chain.js'
 import { configuredKeeperBaseUrl, configuredKeeperUrl, configuredKeeperUrls } from './runtimeConfig'
+import { COW_DROP_APP_DATA_DOCUMENT } from '@cowprotocol/cow-drop-sdk'
 
 /**
  * Talking to a keeper.
@@ -125,7 +126,12 @@ export async function registerWithKeeper(params: {
   const response = await fetch(`${base}/v1/drops`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ recipe: params.recipe, address: params.address }),
+    // The order book rejects an appData hash it has never seen, and the keeper is what uploads it.
+    body: JSON.stringify({
+      recipe: params.recipe,
+      address: params.address,
+      appData: [COW_DROP_APP_DATA_DOCUMENT],
+    }),
   })
 
   const body = await parse(response)

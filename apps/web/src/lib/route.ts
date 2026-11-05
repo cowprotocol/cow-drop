@@ -24,10 +24,9 @@ export type Tab = 'recipes' | 'bridge' | 'drops' | 'about' | 'sdk' | 'share'
  */
 export const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'recipes', label: 'Recipes' },
-  // Next to Recipes because it is where a recipe goes once it exists: bridging is how a drop gets
-  // funded, not another kind of drop.
-  { id: 'bridge', label: 'Bridge & Swap' },
+  // Second because it is where you go after building one, and the builder no longer carries a list.
   { id: 'drops', label: 'Drops' },
+  { id: 'bridge', label: 'Bridge & Swap' },
   { id: 'about', label: 'About' },
   { id: 'sdk', label: 'SDK' },
 ]

@@ -6,6 +6,7 @@ import { GENERATIONS, LATEST_GENERATION, getDeployment } from './generated/deplo
 import { compileRecipe, type DropRecipeJson } from './recipe.js'
 import { stopLossOnArrival, swapOnArrival, twapOnArrival } from './templates.js'
 import type { DropDeployment } from './types.js'
+import { COW_DROP_APP_DATA } from './appData.js'
 
 const OWNER: Address = '0x1111111111111111111111111111111111111111'
 const WXDAI: Address = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d'
@@ -70,6 +71,8 @@ describe('compileRecipe', () => {
           // 0.02 with equal decimals reduces to 1/50.
           limitPrice: { numerator: '1', denominator: '50' },
           validitySeconds: 30 * 60,
+          // Also a template default.
+          appData: COW_DROP_APP_DATA,
         },
       ],
     })

@@ -227,7 +227,6 @@ export function App() {
             onDropsChanged={() => setDropsRevision((n) => n + 1)}
             onChainSelected={setConnectChainId}
             onAddressChanged={setDropAddress}
-            onSeeAll={() => navigate('drops')}
             onBridge={(recipe) => {
               setBridgeRecipe(recipe)
               setError(null)
