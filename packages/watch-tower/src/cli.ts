@@ -26,7 +26,6 @@ Options:
   --confirmations <n>   Blocks to stay behind the head. Default 2.
   --max-block-range <n> Largest getLogs range. Default 10000.
   --poll <seconds>      Seconds between passes once caught up. Default 15.
-  --env <prod|staging>  Which order book to post to. Default prod.
   --only-drops          Post only orders from a cow-drop activation, not every contract's.
   --once                Scan one range and exit. Useful in cron.
   --dry-run             Find and verify orders, post nothing.
@@ -118,10 +117,10 @@ async function main(): Promise<void> {
 
   const watchTower = createWatchTower({
     reader: viemChainReader(client),
-    orderBook: new OrderBookApi({
-      chainId: resolvedChainId as SupportedChainId,
-      env: str(args, 'env') === 'staging' ? 'staging' : 'prod',
-    }),
+    // Always prod. A drop presigns on the settlement contract in its deployment, and the order UID
+    // is derived from that address, so barn keys the same order differently and never sees the
+    // signature. See the note in the keeper's service.ts.
+    orderBook: new OrderBookApi({ chainId: resolvedChainId as SupportedChainId, env: 'prod' }),
     deployment,
     cursor: fileCursor(statePath, resolvedChainId),
     fromBlock: fromBlock === undefined ? 'latest' : BigInt(fromBlock),

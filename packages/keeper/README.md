@@ -80,7 +80,6 @@ the one route that needs the internet — `/v1/openapi.json` is served locally a
 --allow-origin <origins>   CORS origins, comma separated. Default *.
 --poll <seconds>           Seconds between passes. Default 12.
 --min-balance <native>     Warn at boot below this balance. Defaults to $KEEPER_MIN_BALANCE, else 0.1.
---env <prod|staging>       Which order book to post to. Default prod.
 --dry-run                  Decide and simulate everything, broadcast nothing.
 --quiet                    Errors only.
 ```
