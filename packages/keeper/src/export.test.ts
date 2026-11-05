@@ -7,24 +7,17 @@ import { createNonceLog, exportRecipes, type SignatureVerifier } from './export.
 import { recipeJson, registered } from './fixtures.js'
 import { memoryStore } from './store.js'
 
-/**
- * The signature gate, which is the whole security of the endpoint.
- *
- * Signed with a real key and verified by viem rather than by a stub: a test whose verifier always
- * says yes proves only that the happy path is wired, and every check below is about the paths where
- * it must say no.
- */
+/** Signed with a real key and verified by viem: a stub that always says yes proves nothing here. */
 
 const KEEPER: Address = '0x494b402C0656B1FC89D0A9522ae54047997687e0'
 const CHAIN_ID = 100
 const NOW = 1_800_000_000
 
-// Generated per run rather than pinned. These only have to sign and verify inside one test, and a
-// literal private key in the tree is something to explain forever — to a reader and to a scanner.
+// Generated per run: a literal private key in the tree is something to explain forever.
 const owner = privateKeyToAccount(generatePrivateKey())
 const other = privateKeyToAccount(generatePrivateKey())
 
-/** The production shape: recover-or-1271, exactly as `service.ts` wires it. */
+/** Exactly as `service.ts` wires it. */
 const verify: SignatureVerifier = async ({ owner: address, typedData, signature }) =>
   verifyTypedData({ address, ...typedData, signature })
 

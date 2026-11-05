@@ -192,15 +192,8 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
   })
 
   /**
-   * Whether a typed-data signature really comes from `owner`.
-   *
-   * `verifyTypedData` rather than `recoverTypedDataAddress`: it falls through to ERC-1271 when the
-   * address holds code, so a Safe-owned drop verifies by the same call as an EOA-owned one. A Safe
-   * cannot produce an ECDSA signature at all, and "recover and compare" would reject every one of
-   * them while looking perfectly correct.
-   *
-   * A failed verification is `false`, never a throw: an RPC that is down, or a wallet contract that
-   * reverts on a malformed signature, is a refusal and not a 500.
+   * `verifyTypedData`, not recover-and-compare: it falls through to ERC-1271, and a Safe cannot
+   * produce an ECDSA signature at all. A failure is `false`, never a throw — a down RPC is a refusal.
    */
   const verifySignature: SignatureVerifier = async ({ owner, typedData, signature }) => {
     try {

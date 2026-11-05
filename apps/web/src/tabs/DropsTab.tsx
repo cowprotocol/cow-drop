@@ -49,13 +49,7 @@ export function DropsTab({
   const primary = account ? groups.mine : groups.otherOwners
   const others = account ? groups.otherOwners : []
 
-  /**
-   * Ask the keeper for the recipes behind the rows below, proving the account with a signature.
-   *
-   * One signature for all of them rather than one per row: the scope is `all`, the keeper filters by
-   * the signer, and making someone approve a wallet prompt per drop would teach them to click through
-   * prompts — the opposite of what a signature is for here.
-   */
+  /** One signature for all the rows: a prompt per drop teaches people to click through prompts. */
   const recover = async () => {
     if (!account || !remote) return
 
@@ -68,8 +62,7 @@ export function DropsTab({
         chainId: remote.chainId,
         sign: (typedData) => signTypedDataWith(remote.chainId, account, typedData),
       })
-      // `saveDrop` recompiles and re-derives the address, so a recipe that does not hash to the
-      // address it claims never reaches the list.
+      // `saveDrop` re-derives the address, so a recipe that does not hash to it never lands.
       for (const drop of drops) saveDrop({ address: drop.address, recipe: drop.recipe })
       setRecovered(drops.length)
       reload()

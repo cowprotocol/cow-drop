@@ -35,14 +35,7 @@ export interface ServerOptions {
   allowOrigin?: string
   keepaliveMs?: number
   logger?: Logger
-  /**
-   * Verifies the typed-data signature on `POST /v1/drops/export`.
-   *
-   * Injected rather than built here so the server can be tested without a chain, and so the one place
-   * that decides whether a signature is genuine is a single named function rather than a branch
-   * buried in a handler. Omit it and the endpoint answers 501: a keeper with no verifier must refuse
-   * rather than quietly serve recipes to anyone.
-   */
+  /** Injected so the server tests without a chain. Omitted, the endpoint answers 501. */
   verifySignature?: SignatureVerifier
 }
 
@@ -614,15 +607,8 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
   }
 
   /**
-   * Give an owner their own recipes back.
-   *
-   * The whole argument for why a keeper may do this — and for the narrow thing a signature proves —
-   * is in the SDK's `recipeExport.ts`. What matters here: the body carries a signed EIP-712 message,
-   * `owner` comes out of that message and never out of a query string, and the response is the
-   * recipe plus its appData documents, which together reimport to byte-identical `setupData`.
-   *
-   * Not a GET, though it reads: the signature does not belong in a URL, where it would land in proxy
-   * logs and browser history and stay replayable for the rest of its window.
+   * Give an owner their own recipes back. `owner` comes out of the signed message, never a query
+   * string. A POST though it reads: a signature in a URL lands in proxy logs and history.
    */
   async function exportOwned(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (!verifySignature) {
@@ -654,8 +640,7 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
     })
 
     if (!result.ok) {
-      // Logged at info, not warn: a stale signature from a page left open is ordinary, and an
-      // operator reading warnings should not be taught to ignore them.
+      // Info, not warn: a stale signature from a page left open is ordinary.
       logger.info(`recipe export refused (${result.error})`)
       send(response, statusFor(result.error), result)
       return
@@ -842,8 +827,7 @@ function statusFor(error: string): number {
       return 402
     case 'at-capacity':
       return 429
-    // The signature was readable and simply does not entitle the caller. 401, not 403: a fresh
-    // signature is exactly what would make it work, which is what `WWW-Authenticate` semantics mean.
+    // 401, not 403: a fresh signature is exactly what would make it work.
     case 'bad-signature':
     case 'expired':
     case 'replayed':

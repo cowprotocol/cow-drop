@@ -223,12 +223,7 @@ export async function listKeeperDrops(owner: Address, chainId?: number): Promise
   return body as KeeperDropList
 }
 
-/**
- * One recipe recovered from a keeper, with the documents needed to reimport it whole.
- *
- * `appDataDocuments` matter as much as the recipe: the chain carries only their hash, nothing can
- * recover them from the recipe, and the order book rejects an appData hash it has never seen.
- */
+/** One recipe recovered from a keeper, with the documents needed to reimport it whole. */
 export interface ExportedKeeperDrop {
   address: Address
   chainId: number
@@ -238,24 +233,13 @@ export interface ExportedKeeperDrop {
 }
 
 /**
- * Ask a keeper for the recipes it holds for you, proving who you are with a signature.
+ * Ask a keeper for the recipes it holds for you, proving who you are with a signature. The exception
+ * to "the keeper hands out no recipes" above; why it is safe is in the SDK's `recipeExport.ts`.
  *
- * ## Why this is not a hole in the model
+ * What comes back is still untrusted — a signature proves you control the address, not that you wrote
+ * the recipe naming it. Decode and show it before anyone funds anything.
  *
- * Everywhere else this file insists the keeper hands out no recipes, and the Drops tab says so. The
- * reasoning for the exception is in the SDK's `recipeExport.ts`: the bytes were never a theft
- * capability — activation is permissionless and paying a keeper to do it is the product — so what is
- * being protected is the *intent* in the recipe, and proof of control over the named owner is the
- * right gate for that.
- *
- * ## What comes back is still untrusted
- *
- * A signature proves you control the address, not that you wrote the recipe that names it. Anyone may
- * register a recipe naming any owner, and it may pay its surplus to a `receiver` that is not you. The
- * caller must decode and show it before anyone funds anything — see `DropsTab`.
- *
- * Two round trips, deliberately: the keeper's payer is read first and signed into the message, so the
- * signature is bound to this keeper and cannot be replayed at another one by the very party holding it.
+ * Two round trips: the payer is read first and signed in, binding the signature to this keeper.
  */
 export async function exportKeeperRecipes(params: {
   owner: Address
@@ -276,8 +260,7 @@ export async function exportKeeperRecipes(params: {
     keeper: reported.payer,
     scope: recipeExportScope(),
     issuedAt,
-    // Two minutes: long enough to approve in a wallet, short enough that a leaked signature is stale
-    // before it is useful. The keeper refuses anything longer than its own maximum regardless.
+    // Long enough to approve in a wallet, short enough that a leak goes stale.
     expiresAt: issuedAt + 120,
     nonce: randomNonce(),
   }

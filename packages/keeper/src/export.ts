@@ -11,16 +11,10 @@ import {
 import type { DropStore } from './store.js'
 
 /**
- * Giving an owner their recipes back.
+ * The verifier for `POST /v1/drops/export`. Why it is safe to serve at all: the SDK's
+ * `recipeExport.ts`.
  *
- * The reasoning for why this is safe — and for what a signature does and does not prove — is in the
- * SDK's `recipeExport.ts`, next to the typed data both sides share. This module is the verifier: it
- * decides whether a request is genuine, and then reads the store.
- *
- * Everything here is pure but for the injected `verify` and `now`, so the checks can be tested
- * without a chain. The real verifier is viem's `verifyTypedData` against a public client, which
- * covers EOAs and ERC-1271 contract wallets with the same call — a Safe-owned drop has to work, and
- * a Safe cannot produce an ECDSA signature.
+ * Pure but for the injected `verify` and `now`, so the checks test without a chain.
  */
 
 export interface ExportedDrop {
@@ -29,12 +23,7 @@ export interface ExportedDrop {
   label: string
   /** Exactly what was registered. The client recompiles `setupData` and checks the address itself. */
   recipe: DropRecipeJson
-  /**
-   * The appData documents behind the recipe's committed hashes.
-   *
-   * Without these a reimport is incomplete: the chain carries only the hash, so nothing can recover
-   * them from the recipe, and the order book rejects an appData hash it has never seen.
-   */
+  /** Without these a reimport is incomplete — the chain carries only the hash. */
   appDataDocuments?: string[]
 }
 
@@ -59,13 +48,8 @@ export type SignatureVerifier = (input: {
 }) => Promise<boolean>
 
 /**
- * One-use nonces, in memory.
- *
- * A signature is replayable until it expires, so a nonce that has been spent is refused for the rest
- * of its window. In memory rather than in the store on purpose: the entries are worthless after
- * `RECIPE_EXPORT_MAX_WINDOW_SECONDS`, a restart only widens a window that was already minutes wide,
- * and persisting them would put a write on the read path of the one endpoint an owner reaches for
- * when something has already gone wrong.
+ * One-use nonces, in memory: entries are worthless after the window, and persisting them would put a
+ * write on the read path of the endpoint an owner reaches for when something has already gone wrong.
  */
 export interface NonceLog {
   /** True when this nonce had not been seen. False means it is a replay. */
@@ -99,13 +83,7 @@ export interface ExportInput {
   now: number
 }
 
-/**
- * Check the signature, then return the owner's recipes.
- *
- * The order of the checks is deliberate: everything cheap and local runs before the signature, which
- * may be an `eth_call` into a contract wallet. An expired or misaddressed request should never reach
- * the chain.
- */
+/** Cheap local checks run before the signature, which may be an `eth_call` into a contract wallet. */
 export async function exportRecipes(input: ExportInput): Promise<ExportResult> {
   const { request, signature, store, chainId, keeper, verify, nonces, now } = input
 
@@ -119,8 +97,7 @@ export async function exportRecipes(input: ExportInput): Promise<ExportResult> {
     return { ok: false, error: 'invalid-request', message: '`issuedAt` and `expiresAt` must be unix seconds' }
   }
 
-  // `keeper` is compared before the signature is even looked at: a signature meant for a different
-  // keeper is not a forgery, it is a replay, and saying so plainly is what makes the binding useful.
+  // A signature meant for another keeper is a replay, not a forgery — say so plainly.
   if (request.keeper.toLowerCase() !== keeper.toLowerCase()) {
     return { ok: false, error: 'wrong-keeper', message: 'this signature names a different keeper' }
   }
@@ -128,9 +105,7 @@ export async function exportRecipes(input: ExportInput): Promise<ExportResult> {
   if (request.expiresAt <= now) {
     return { ok: false, error: 'expired', message: 'this signature has expired — sign a fresh one' }
   }
-  // A signature issued in the future is either a clock problem or an attempt to mint a long-lived
-  // token by backdating the window. Either way it is not usable, and the window check below would
-  // not catch it.
+  // Backdating the window would otherwise mint a long-lived token past the cap below.
   if (request.issuedAt > now + 60) {
     return { ok: false, error: 'invalid-request', message: '`issuedAt` is in the future' }
   }
