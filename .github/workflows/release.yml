@@ -89,6 +89,7 @@ jobs:
           git diff --exit-code -- deployments/derivation-fixtures.json
 
       - name: Stamp the version and pack
+        id: pack
         working-directory: packages/sdk
         run: |
           npm pkg set version="${{ steps.version.outputs.version }}"
@@ -96,7 +97,11 @@ jobs:
           # `development` condition. Published, that condition would resolve to `src/index.ts` in any
           # consumer whose bundler honours it — Vite does, in dev — and break their build.
           pnpm pack --pack-destination ..
-          test -f "../cowprotocol-cow-drop-sdk-${{ steps.version.outputs.version }}.tgz"
+          # Absolute, and passed on to the publish step: npm reads a bare `dir/file.tgz` as the
+          # GitHub shorthand `owner/repo` and tries to clone it instead of publishing the file.
+          tarball="$GITHUB_WORKSPACE/packages/cowprotocol-cow-drop-sdk-${{ steps.version.outputs.version }}.tgz"
+          test -f "$tarball"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm
         env:
@@ -109,7 +114,7 @@ jobs:
             echo "@cowprotocol/cow-drop-sdk@$version is already on npm — nothing to publish"
             exit 0
           fi
-          npm publish "packages/cowprotocol-cow-drop-sdk-$version.tgz" \
+          npm publish "${{ steps.pack.outputs.tarball }}" \
             --access public \
             --provenance \
             --tag "${{ steps.version.outputs.npm_tag }}"
