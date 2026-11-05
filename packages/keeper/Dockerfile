@@ -42,7 +42,8 @@ RUN pnpm --filter @cowprotocol/cow-drop-sdk build && \
 RUN pnpm deploy --filter @cowprotocol/cow-drop-keeper --prod --legacy /app/deployed
 
 FROM base AS runtime
-RUN groupadd --system app && useradd --system -g app app
+# Fixed ids, so a pod can set fsGroup: 10001 and have a fresh volume writable by this user.
+RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 -g app app
 WORKDIR /app
 COPY --from=build --chown=app:app /app/deployed ./
 
