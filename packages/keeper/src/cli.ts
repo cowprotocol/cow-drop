@@ -43,7 +43,6 @@ Options:
   --allow-origin <origins>   CORS origins, comma separated. Default *.
   --poll <seconds>           Seconds between passes. Default 12.
   --min-balance <native>     Warn at boot below this balance. Defaults to $KEEPER_MIN_BALANCE, else 0.1.
-  --env <prod|staging>       Which order book to post to. Default prod.
   --dry-run                  Decide and simulate everything, broadcast nothing.
   --quiet                    Errors only.
   --help                     This.
@@ -213,7 +212,6 @@ async function main(): Promise<void> {
   const pollSeconds = num(args, 'poll') ?? 12
   const dryRun = args['dry-run'] === true
   const minBalanceWarnWei = parseEther(str(args, 'min-balance') ?? process.env['KEEPER_MIN_BALANCE'] ?? '0.1')
-  const env = str(args, 'env') === 'staging' ? 'staging' : 'prod'
   const generation = num(args, 'generation')
 
   // The whole configuration, at boot, before the first RPC call that can hang.
@@ -242,7 +240,6 @@ async function main(): Promise<void> {
       generation,
       pollIntervalMs: pollSeconds * 1000,
       dryRun,
-      env,
       minBalanceWarnWei,
     })),
   })

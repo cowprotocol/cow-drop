@@ -63,6 +63,6 @@ EXPOSE 8787
 # The chains come from $CHAINS (e.g. "100,1,8453") and each chain's RPC from $RPC_URL_<chainId>, so
 # one container keeps every chain and serves each under /<network>/v1. Each chain's state and cursor
 # are /data/state-<chainId>.json and /data/cursor-<chainId>.json. Override CMD to add --policy (do that
-# before pointing anything public at it), --dry-run, or --env.
+# before pointing anything public at it) or --dry-run.
 ENTRYPOINT ["node", "dist/cli.js"]
 CMD ["--state-dir", "/data"]

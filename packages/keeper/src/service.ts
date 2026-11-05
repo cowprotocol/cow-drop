@@ -35,7 +35,6 @@ export interface ChainKeeperOptions {
   cursorPath?: string
   pollIntervalMs?: number
   dryRun?: boolean
-  env?: 'prod' | 'staging'
   /** Should name the chain: every line it prints is about that chain alone. */
   logger?: Logger
   /**
@@ -126,7 +125,6 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
     cursorPath,
     pollIntervalMs,
     dryRun = false,
-    env = 'prod',
     logger = silentLogger,
     minBalanceWarnWei = 10n ** 17n, // 0.1 native
   } = options
@@ -139,7 +137,15 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
   const store = options.store ?? (statePath ? fileStore(statePath, chainId) : memoryStore())
   const events = createEventBus()
   const submitter = viemSubmitter(client, account, chainId)
-  const orderBook = new OrderBookApi({ chainId: chainId as SupportedChainId, env })
+  // The production order book, whatever environment this keeper itself runs in.
+  //
+  // A drop sets its pre-signature on the settlement contract baked into its deployment, and an
+  // order's UID is an EIP-712 digest over a domain whose `verifyingContract` is that address. Every
+  // generation targets prod's GPv2Settlement, so barn derives a different UID for the same order:
+  // posting there leaves an order waiting on a signature made under another name, which never
+  // arrives and never fills. Serving barn would take a drop generation deployed against barn's
+  // settlement, not a flag.
+  const orderBook = new OrderBookApi({ chainId: chainId as SupportedChainId, env: 'prod' })
 
   const keeper = createKeeper({
     chain: viemKeeperChain(client),

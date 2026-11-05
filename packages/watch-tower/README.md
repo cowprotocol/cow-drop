@@ -37,7 +37,6 @@ visible, and a duplicate counts as success.
 --confirmations <n>   Blocks to stay behind the head. Default 2.
 --max-block-range <n> Largest getLogs range. Default 10000.
 --poll <seconds>      Seconds between passes once caught up. Default 15.
---env <prod|staging>  Which order book to post to. Default prod.
 --only-drops          Post only orders from a cow-drop activation, not every contract's.
 --once                Scan one range and exit. For cron.
 --dry-run             Find and verify orders, post nothing.
