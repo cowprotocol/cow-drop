@@ -8,6 +8,7 @@ import { PAYMENT_SLIPPAGE_BPS, requiredPayment } from './price.js'
 import { compileRecipe, type DropRecipeJson } from './recipe.js'
 import { paymentRequest } from './templates.js'
 import { buildActivatePaymentTx } from './tx.js'
+import { COW_DROP_APP_DATA } from './appData.js'
 
 const OWNER: Address = '0x1111111111111111111111111111111111111111'
 const PAYEE: Address = '0x4444444444444444444444444444444444444444'
@@ -149,7 +150,14 @@ describe('paymentRequest', () => {
     const recipe = paymentRequest({ chainId: 100, owner: OWNER, buyToken: COW, buyAmount: 5n })
     expect(recipe.once).toBe(false)
     expect(recipe.steps).toEqual([
-      { type: 'payment', buyToken: COW, buyAmount: '5', receiver: OWNER, validitySeconds: 1800, appData: undefined },
+      {
+        type: 'payment',
+        buyToken: COW,
+        buyAmount: '5',
+        receiver: OWNER,
+        validitySeconds: 1800,
+        appData: COW_DROP_APP_DATA,
+      },
     ])
     expect(() => compileRecipe(recipe)).not.toThrow()
   })

@@ -2,6 +2,7 @@ import type { Address, Hex } from 'viem'
 
 import { LATEST_GENERATION } from './generated/deployments.js'
 import type { DropRecipeJson, LimitPriceJson } from './recipe.js'
+import { COW_DROP_APP_DATA } from './appData.js'
 
 /**
  * The guards every template accepts.
@@ -135,7 +136,7 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
             haircutBps: params.oracle.haircutBps ?? 50,
           },
           validitySeconds: params.validitySeconds ?? 30 * 60,
-          appData: params.appData,
+          appData: params.appData ?? COW_DROP_APP_DATA,
         }
       : {
           type: 'presignSellAll',
@@ -144,7 +145,7 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
           receiver: params.receiver ?? params.owner,
           limitPrice: params.limitPrice,
           validitySeconds: params.validitySeconds ?? 30 * 60,
-          appData: params.appData,
+          appData: params.appData ?? COW_DROP_APP_DATA,
         },
   )
 
@@ -226,7 +227,7 @@ export function stopLossOnArrival(params: StopLossOnArrivalParams): DropRecipeJs
       maxTimeSinceLastOracleUpdate: params.maxTimeSinceLastOracleUpdate ?? 3600,
     },
     partiallyFillable: params.partiallyFillable,
-    appData: params.appData,
+    appData: params.appData ?? COW_DROP_APP_DATA,
   })
 
   return {
@@ -300,7 +301,7 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
     partDuration: params.partDuration,
     span: params.span,
     limitPrice: params.limitPrice,
-    appData: params.appData,
+    appData: params.appData ?? COW_DROP_APP_DATA,
   })
 
   return {
@@ -360,7 +361,7 @@ export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
         buyAmount: params.buyAmount.toString(),
         receiver: params.receiver ?? params.owner,
         validitySeconds: params.validitySeconds ?? 30 * 60,
-        appData: params.appData,
+        appData: params.appData ?? COW_DROP_APP_DATA,
       },
     ],
   }

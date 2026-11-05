@@ -22,6 +22,7 @@ import { createMultiChainServer, type ChainMount } from './multiChain.js'
 import { createKeeperHandler, ROUTES } from './server.js'
 import { fileStore, memoryStore, utcDay, type KeeperStore } from './store.js'
 import type { DropStatus, SubsidyPolicy } from './types.js'
+import { knownAppDataDocument } from '@cowprotocol/cow-drop-sdk'
 
 /** One chain this process keeps: where to reach it, and how to run its keeper there. */
 export interface ChainKeeperOptions {
@@ -181,7 +182,8 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
         const document = drop.appDataDocuments?.[hash]
         if (document) return document
       }
-      return undefined
+      // A drop registered before the client sent documents still carries the standard appData.
+      return knownAppDataDocument(hash)
     },
     dryRun,
     logger,
