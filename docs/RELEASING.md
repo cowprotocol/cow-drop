@@ -86,23 +86,35 @@ under `/data`. Mount it: see the note on each below for what losing it costs.
 Spends real money, so it needs a funded hot key and a policy. The key is read from a file or the
 environment, never an argument — an argument is readable by every other process on the host.
 
+One container keeps every chain. `CHAINS` lists them, each chain's RPC is `RPC_URL_<chainId>`, and each
+is served under its CoW network name — `/xdai/v1/…`, `/mainnet/v1/…`, `/base/v1/…`:
+
 ```bash
 docker run -d --name cow-drop-keeper \
   -p 8787:8787 \
   -v cow-drop-keeper:/data \
-  -e RPC_URL=https://rpc.gnosischain.com \
+  -e CHAINS=100,1,8453 \
+  -e RPC_URL_100=https://rpc.gnosischain.com \
+  -e RPC_URL_1=https://… \
+  -e RPC_URL_8453=https://… \
   -e KEEPER_PRIVATE_KEY=0x... \
   ghcr.io/cowprotocol/cow-drop/keeper:latest \
-  --state /data/state.json --cursor /data/cursor.json --policy /data/policy.json
+  --state-dir /data --policy /data/policy.json
 ```
 
 - **Set `--policy` before pointing anything public at it.** The default subsidises every owner up to a
   small daily budget.
-- `/data` holds the registry of watched drops and the spend ledger, neither reconstructible from the
-  chain. Lose it and the keeper forgets which drops it agreed to watch and how much of today's budget it
+- **Key the policy by chain id** (`{"100": {…}, "1": {…}}`): its amounts are in each chain's native
+  token. See [`packages/keeper/README.md`](../packages/keeper/README.md#cli).
+- `/data` holds each chain's `state-<chainId>.json` and `cursor-<chainId>.json`. The state files are the
+  registry of watched drops and the spend ledger, neither reconstructible from the chain. Lose it and the keeper forgets which drops it agreed to watch and how much of today's budget it
   already spent. Back it with real disk.
-- `GET /v1/health` reports the payer, its balance and the budget left. Browsable API docs are at
-  `/v1/docs`.
+- `GET /<network>/v1/health` reports that chain's payer, its balance and the budget left, with a 503
+  below the floor. `GET /v1/health` is process liveness — use it for probes, so one empty payer does not
+  restart every chain. Browsable API docs are at `/<network>/v1/docs`.
+- **Moving from one container per chain:** copy each old volume's `state.json` and `cursor.json` into the
+  shared volume as `state-<chainId>.json` and `cursor-<chainId>.json` before starting. The state files hold
+  the only server-side copy of each registered recipe.
 - It runs a watch tower in-process, so **do not** also run the watch-tower image for the same chain.
 
 ### Watch tower
@@ -130,17 +142,17 @@ container:
 docker build -f apps/web/Dockerfile -t cow-drop-web .
 docker run -d --name cow-drop-web \
   -p 8080:80 \
-  -e KEEPER_URL=https://keeper.example.com \
+  -e KEEPER_BASE_URL=https://keeper.example.com \
   -e RPC_URL=https://rpc.gnosischain.com \
   cow-drop-web
 ```
 
 It is configured at **container start**, not at build time, so one image is promotable across
-environments. The entrypoint writes `$KEEPER_URL` and `$RPC_URL` into `/config.js` before nginx
+environments. The entrypoint writes `$KEEPER_BASE_URL` (or `$KEEPER_URLS` / `$KEEPER_URL`) and `$RPC_URL` into `/config.js` before nginx
 starts; see [`apps/web/src/lib/runtimeConfig.ts`](../apps/web/src/lib/runtimeConfig.ts).
 
-Both are optional. With no `KEEPER_URL` the page hides **Hand to keeper** and keeps drops locally
-only; with no `RPC_URL` it falls back to its built-in public endpoints. Locally, `VITE_KEEPER_URL`
+Both are optional. With no keeper URL the page hides **Hand to keeper** and keeps drops locally
+only; with no `RPC_URL` it falls back to its built-in public endpoints. Locally, `VITE_KEEPER_BASE_URL`
 and `VITE_RPC_URL` still work exactly as before — the runtime values just take precedence.
 
 ## Building an image locally

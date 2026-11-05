@@ -7,6 +7,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { DEFAULT_POLICY, TYPICAL_ACTIVATION_GAS, activationCostAt, defaultPolicyFor, parsePolicy } from './policy.js'
 import { startKeeperService } from './service.js'
 import { createLogger } from '@cowprotocol/cow-drop-watch-tower'
+import { getChainInfo, type SupportedChainId } from '@cowprotocol/cow-sdk'
 
 const USAGE = `cow-drop-keeper — watch registered drops, activate them, pay the gas
 
@@ -18,17 +19,26 @@ Registering is not authorisation: activation is permissionless anyway, so this o
 pays. What it does spend is real money — see --policy.
 
 Usage:
-  cow-drop-keeper --rpc-url <url> --private-key-file <path> [options]
+  cow-drop-keeper --chains 100,1,8453 --private-key-file <path> [options]
+  cow-drop-keeper --rpc-url <url> --private-key-file <path> [options]     (one chain)
+
+One process keeps any number of chains, each served under its CoW network name:
+http://localhost:8787/xdai/v1/drops, /mainnet/v1/…, /base/v1/… — GET /v1/networks lists them.
 
 Options:
-  --rpc-url <url>            RPC endpoint. Defaults to $RPC_URL.
-  --chain-id <id>            Defaults to $CHAIN_ID, else whatever the RPC says.
+  --chains <ids>             Chain ids to keep, comma separated. Defaults to $CHAINS. Each chain's RPC
+                             is $RPC_URL_<chainId>, falling back to a public endpoint (with a warning).
+  --rpc-url <url>            One chain only: its RPC. Defaults to $RPC_URL.
+  --chain-id <id>            One chain only. Defaults to $CHAIN_ID, else whatever the RPC says.
   --generation <n>           Contract generation. Defaults to the SDK's latest.
   --private-key-file <path>  File holding the hot key. Defaults to $KEEPER_PRIVATE_KEY.
-  --policy <path>            JSON subsidy policy. Omitted fields fall back to limits sized from
-                             this chain's gas price. Default: subsidise-all within those limits.
-  --state <path>             Registry and spend ledger. Default out/keeper/state-<chainId>.json.
-  --cursor <path>            Watch tower block cursor. Default out/keeper/cursor-<chainId>.json.
+  --policy <path>            JSON subsidy policy: one policy for every chain, or one per chain keyed by
+                             chain id ({"100": {…}, "1": {…}}). Omitted fields fall back to limits sized
+                             from that chain's gas price. Default: subsidise-all within those limits.
+  --state-dir <dir>          Where each chain's state-<id>.json and cursor-<id>.json live.
+                             Default out/keeper.
+  --state <path>             One chain only: the registry and spend ledger file.
+  --cursor <path>            One chain only: the watch tower block cursor file.
   --port <n>                 HTTP port. Default 8787.
   --allow-origin <origins>   CORS origins, comma separated. Default *.
   --poll <seconds>           Seconds between passes. Default 12.
@@ -38,7 +48,7 @@ Options:
   --quiet                    Errors only.
   --help                     This.
 
-Browsable API docs are served at http://localhost:<port>/v1/docs once it is up.
+Browsable API docs are served at http://localhost:<port>/<network>/v1/docs once it is up.
 
 The hot key is read from a file or the environment, never from the command line: an argument is
 readable by every other process on the machine.
@@ -113,10 +123,75 @@ export async function loadPrivateKey(args: Args): Promise<`0x${string}`> {
  * would otherwise fight over the same file.
  */
 export function resolvePaths(args: Args, chainId: number): { statePath: string; cursorPath: string } {
+  const dir = (str(args, 'state-dir') ?? 'out/keeper').replace(/\/+$/, '')
   return {
-    statePath: str(args, 'state') ?? `out/keeper/state-${chainId}.json`,
-    cursorPath: str(args, 'cursor') ?? `out/keeper/cursor-${chainId}.json`,
+    statePath: str(args, 'state') ?? `${dir}/state-${chainId}.json`,
+    cursorPath: str(args, 'cursor') ?? `${dir}/cursor-${chainId}.json`,
   }
+}
+
+/**
+ * The chains to keep, and the RPC each is reached on.
+ *
+ * `--chains` (or `$CHAINS`) is the multi-chain form: each chain reads `$RPC_URL_<chainId>`, else the
+ * public endpoint cow-sdk names, which works and is rate limited — fine to try, wrong to rely on for a
+ * key that pays gas, so it is flagged. Without `--chains`, the single-chain form stands as it always did:
+ * `--rpc-url` / `$RPC_URL`, with the chain id from `--chain-id`, `$CHAIN_ID` or the RPC itself.
+ *
+ * The per-file flags (`--state`, `--cursor`, `--rpc-url`) name one chain's resources, so they are
+ * refused alongside several chains rather than silently applied to all of them.
+ */
+export function resolveChains(
+  args: Args,
+  env: Record<string, string | undefined> = process.env,
+): { chainId: number | undefined; rpcUrl: string | undefined; publicRpc: boolean }[] {
+  const list = str(args, 'chains') ?? env['CHAINS']
+
+  if (list === undefined || list.trim() === '') {
+    const rpcUrl = str(args, 'rpc-url') ?? env['RPC_URL']
+    if (!rpcUrl) {
+      throw new Error('say which chains to keep: --chains 100,1 (or $CHAINS), or --rpc-url for a single chain')
+    }
+    const chainId = num(args, 'chain-id') ?? (Number(env['CHAIN_ID'] ?? 0) || undefined)
+    return [{ chainId, rpcUrl, publicRpc: false }]
+  }
+
+  const chainIds = list.split(',').map((part) => {
+    const id = Number(part.trim())
+    if (!Number.isInteger(id) || id <= 0) throw new Error(`--chains: ${JSON.stringify(part.trim())} is not a chain id`)
+    return id
+  })
+  if (new Set(chainIds).size !== chainIds.length) throw new Error('--chains names a chain twice')
+
+  if (chainIds.length > 1) {
+    for (const flag of ['rpc-url', 'chain-id', 'state', 'cursor']) {
+      if (args[flag] !== undefined) {
+        throw new Error(`--${flag} names one chain's resource; with several chains use ${flag === 'rpc-url' ? '$RPC_URL_<chainId>' : '--state-dir'}`)
+      }
+    }
+  }
+
+  return chainIds.map((chainId) => {
+    const configured = env[`RPC_URL_${chainId}`] ?? (chainIds.length === 1 ? (str(args, 'rpc-url') ?? env['RPC_URL']) : undefined)
+    return { chainId, rpcUrl: configured, publicRpc: configured === undefined }
+  })
+}
+
+/**
+ * The policy for one chain, from a file that holds either one policy for every chain or one per chain
+ * keyed by chain id. Budgets are in each chain's native token, so a shared file is usually the wrong
+ * shape for more than one chain — but it is what a single-chain keeper always took.
+ */
+export function policyFor(raw: unknown, chainId: number): unknown {
+  if (typeof raw !== 'object' || raw === null) return raw
+  const keys = Object.keys(raw)
+  const keyed = keys.length > 0 && keys.every((key) => /^\d+$/.test(key))
+  if (!keyed) return raw
+  const entry = (raw as Record<string, unknown>)[String(chainId)]
+  if (entry === undefined) {
+    throw new Error(`the policy file has entries for chains ${keys.join(', ')} but none for ${chainId}`)
+  }
+  return entry
 }
 
 /** Resolve the configuration, print it, and run the service until a signal stops it. */
@@ -128,44 +203,89 @@ async function main(): Promise<void> {
     return
   }
 
-  const rpcUrl = str(args, 'rpc-url') ?? process.env['RPC_URL']
-  if (!rpcUrl) throw new Error('an RPC endpoint is required: pass --rpc-url or set $RPC_URL')
-
   const account = privateKeyToAccount(await loadPrivateKey(args))
-
-  const chainId = num(args, 'chain-id') ?? Number(process.env['CHAIN_ID'] ?? 0)
-  const resolvedChainId = chainId || (await chainIdFromRpc(rpcUrl))
-
-  // Sized from the chain's own gas price rather than from a constant, because two of the limits mean
-  // nothing in absolute wei: the same 0.02 native is five activations of reserve on Ethereum and six
-  // thousand on Base. Sampled once, here, so `/v1/health` stays a cheap read and the numbers hold
-  // still for the process — an operator reading a log line needs the figure that will actually apply.
-  const activationCostWei = activationCostAt(await gasPriceFromRpc(rpcUrl))
-  const defaults = defaultPolicyFor(activationCostWei)
+  const quiet = args['quiet'] === true
+  const logger = createLogger({ name: 'keeper', quiet })
 
   const policyPath = str(args, 'policy')
-  const policy = policyPath ? parsePolicy(JSON.parse(await readFile(policyPath, 'utf8')), defaults) : defaults
+  const policyFile: unknown = policyPath ? JSON.parse(await readFile(policyPath, 'utf8')) : undefined
 
-  // After the chain is resolved, not before: every line this process prints carries the chain, and a
-  // boot banner logged under the wrong one is exactly the confusion the prefix exists to remove.
-  const logger = createLogger({ name: 'keeper', chainId: resolvedChainId, quiet: args['quiet'] === true })
-
-  const { statePath, cursorPath } = resolvePaths(args, resolvedChainId)
-
-  const port = num(args, 'port') ?? 8787
   const pollSeconds = num(args, 'poll') ?? 12
   const dryRun = args['dry-run'] === true
   const minBalanceWarnWei = parseEther(str(args, 'min-balance') ?? process.env['KEEPER_MIN_BALANCE'] ?? '0.1')
+  const env = str(args, 'env') === 'staging' ? 'staging' : 'prod'
+  const generation = num(args, 'generation')
 
   // The whole configuration, at boot, before the first RPC call that can hang.
   //
   // This process spends real money on behalf of whoever can reach it, and every line here changes how
   // much and for whom. Printing it is what makes a running keeper auditable from its logs alone
   // rather than from whichever shell invocation someone has since scrolled past.
-  logger.info(`starting — generation ${num(args, 'generation') ?? 'latest'}`)
-  logger.info(`paying from payer ${account.address}`)
-  logger.info(`state ${statePath}`)
-  logger.info(`block cursor ${cursorPath}`)
+  logger.info(`starting — generation ${generation ?? 'latest'}, paying from payer ${account.address}`)
+  logger.info(`polling every ${pollSeconds}s, warning below ${formatEther(minBalanceWarnWei)} native`)
+  if (dryRun) logger.warn('dry run: everything is decided and simulated, nothing is broadcast')
+
+  const chains = []
+  for (const resolved of resolveChains(args)) {
+    const rpcUrl = resolved.rpcUrl ?? publicRpcUrl(resolved.chainId!)
+    const chainId = resolved.chainId ?? (await chainIdFromRpc(rpcUrl))
+    chains.push(await configureChain({ args, chainId, rpcUrl, publicRpc: resolved.publicRpc, policyFile, quiet }))
+  }
+
+  const service = await startKeeperService({
+    account,
+    port: num(args, 'port') ?? 8787,
+    allowOrigin: str(args, 'allow-origin') ?? '*',
+    logger,
+    chains: chains.map((chain) => ({
+      ...chain,
+      generation,
+      pollIntervalMs: pollSeconds * 1000,
+      dryRun,
+      env,
+      minBalanceWarnWei,
+    })),
+  })
+
+  // Stop after the tick in flight, so a run is never cut between broadcasting and recording it.
+  const stop = new AbortController()
+  process.on('SIGINT', () => stop.abort())
+  process.on('SIGTERM', () => stop.abort())
+
+  await service.run(stop.signal)
+  await service.close()
+}
+
+/**
+ * One chain's resolved configuration, printed as it is resolved.
+ *
+ * The policy is sized from the chain's own gas price rather than from a constant, because two of the
+ * limits mean nothing in absolute wei: the same 0.02 native is five activations of reserve on Ethereum
+ * and six thousand on Base. Sampled once, here, so `/v1/health` stays a cheap read and the numbers hold
+ * still for the process — an operator reading a log line needs the figure that will actually apply.
+ */
+async function configureChain(params: {
+  args: Args
+  chainId: number
+  rpcUrl: string
+  publicRpc: boolean
+  policyFile: unknown
+  quiet: boolean
+}) {
+  const { args, chainId, rpcUrl, publicRpc, policyFile, quiet } = params
+
+  // Every line about this chain carries it, so several chains in one log stay readable.
+  const logger = createLogger({ name: 'keeper', chainId, quiet })
+
+  const activationCostWei = activationCostAt(await gasPriceFromRpc(rpcUrl))
+  const defaults = defaultPolicyFor(activationCostWei)
+  const policy = policyFile === undefined ? defaults : parsePolicy(policyFor(policyFile, chainId), defaults)
+  const { statePath, cursorPath } = resolvePaths(args, chainId)
+
+  if (publicRpc) {
+    logger.warn(`no $RPC_URL_${chainId}: using the public endpoint ${rpcUrl}, which is rate limited`)
+  }
+  logger.info(`state ${statePath}, block cursor ${cursorPath}`)
   logger.info(
     `policy ${policy.mode}, ${policy.dailyBudgetWei} wei/day` +
       `${policy.perOwnerDailyBudgetWei > 0n ? `, ${policy.perOwnerDailyBudgetWei} wei/day per owner` : ''}`,
@@ -178,8 +298,6 @@ async function main(): Promise<void> {
       `${formatEther(policy.minPayerBalanceWei)} (${policy.minPayerBalanceWei / activationCostWei} activations) ` +
       `and one activation may cost up to ${formatEther(policy.maxCostPerActivationWei)}`,
   )
-  logger.info(`polling every ${pollSeconds}s`)
-  logger.info(`warning below ${formatEther(minBalanceWarnWei)} native`)
   if (policy.mode === 'all') {
     // Said out loud, because the default is the risky one: `owner` comes from the submitted recipe,
     // so per-owner caps do not bind and the daily budget is the only thing that does.
@@ -188,32 +306,28 @@ async function main(): Promise<void> {
         `Anyone who can reach this service can spend that.`,
     )
   }
-  if (dryRun) logger.warn('dry run: everything is decided and simulated, nothing is broadcast')
 
-  const service = await startKeeperService({
-    rpcUrl,
-    chainId: resolvedChainId,
-    generation: num(args, 'generation'),
-    account,
-    policy,
-    statePath,
-    cursorPath,
-    port,
-    allowOrigin: str(args, 'allow-origin') ?? '*',
-    pollIntervalMs: pollSeconds * 1000,
-    dryRun,
-    env: str(args, 'env') === 'staging' ? 'staging' : 'prod',
-    minBalanceWarnWei,
-    logger,
-  })
+  return { chainId, rpcUrl, policy, statePath, cursorPath, logger }
+}
 
-  // Stop after the tick in flight, so a run is never cut between broadcasting and recording it.
-  const stop = new AbortController()
-  process.on('SIGINT', () => stop.abort())
-  process.on('SIGTERM', () => stop.abort())
+/**
+ * The public RPC for a chain, for when `$RPC_URL_<chainId>` is unset.
+ *
+ * cow-sdk's endpoint, except where it does not answer — the same overrides the web app carries.
+ */
+export function publicRpcUrl(chainId: number): string {
+  const override = PUBLIC_RPC_OVERRIDES[chainId]
+  if (override) return override
+  const info = getChainInfo(chainId as SupportedChainId)
+  const url = info && 'rpcUrls' in info ? info.rpcUrls.default.http[0] : undefined
+  if (!url) throw new Error(`no public RPC known for chain ${chainId}; set $RPC_URL_${chainId}`)
+  return url
+}
 
-  await service.run(stop.signal)
-  await service.close()
+const PUBLIC_RPC_OVERRIDES: Record<number, string> = {
+  1: 'https://ethereum-rpc.publicnode.com',
+  137: 'https://polygon-bor-rpc.publicnode.com',
+  11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
 }
 
 /** Ask the endpoint which chain it is, for when neither the flag nor the environment says. */

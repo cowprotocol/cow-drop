@@ -32,6 +32,12 @@ export type DropChainId = (typeof DropChainId)[keyof typeof DropChainId]
 export interface DropChain {
   chainId: DropChainId
   name: string
+  /**
+   * The chain's path segment in CoW's order book API — `api.cow.fi/<network>/…` — and so the name a
+   * multi-chain keeper serves it under: `<keeper>/<network>/v1/…`. One vocabulary for both, so a
+   * keeper URL reads like the API it posts to.
+   */
+  network: string
 }
 
 /**
@@ -44,16 +50,16 @@ export interface DropChain {
  * listed here, so there is nothing to warn about and the flag is gone.
  */
 export const DROP_CHAINS: readonly DropChain[] = [
-  { chainId: DropChainId.MAINNET, name: 'Ethereum' },
-  { chainId: DropChainId.GNOSIS_CHAIN, name: 'Gnosis' },
-  { chainId: DropChainId.ARBITRUM_ONE, name: 'Arbitrum One' },
-  { chainId: DropChainId.BASE, name: 'Base' },
-  { chainId: DropChainId.BNB, name: 'BNB Chain' },
-  { chainId: DropChainId.LINEA, name: 'Linea' },
-  { chainId: DropChainId.PLASMA, name: 'Plasma' },
-  { chainId: DropChainId.POLYGON, name: 'Polygon' },
-  { chainId: DropChainId.AVALANCHE, name: 'Avalanche' },
-  { chainId: DropChainId.SEPOLIA, name: 'Sepolia' },
+  { chainId: DropChainId.MAINNET, name: 'Ethereum', network: 'mainnet' },
+  { chainId: DropChainId.GNOSIS_CHAIN, name: 'Gnosis', network: 'xdai' },
+  { chainId: DropChainId.ARBITRUM_ONE, name: 'Arbitrum One', network: 'arbitrum_one' },
+  { chainId: DropChainId.BASE, name: 'Base', network: 'base' },
+  { chainId: DropChainId.BNB, name: 'BNB Chain', network: 'bnb' },
+  { chainId: DropChainId.LINEA, name: 'Linea', network: 'linea' },
+  { chainId: DropChainId.PLASMA, name: 'Plasma', network: 'plasma' },
+  { chainId: DropChainId.POLYGON, name: 'Polygon', network: 'polygon' },
+  { chainId: DropChainId.AVALANCHE, name: 'Avalanche', network: 'avalanche' },
+  { chainId: DropChainId.SEPOLIA, name: 'Sepolia', network: 'sepolia' },
 ]
 
 /**
@@ -63,4 +69,9 @@ export const DROP_CHAINS: readonly DropChain[] = [
  */
 export function getDropChain(chainId: number): DropChain | undefined {
   return DROP_CHAINS.find((chain) => chain.chainId === chainId)
+}
+
+/** The chain a CoW network name stands for — `xdai` is Gnosis — or undefined. */
+export function getDropChainByNetwork(network: string): DropChain | undefined {
+  return DROP_CHAINS.find((chain) => chain.network === network)
 }

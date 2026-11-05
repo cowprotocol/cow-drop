@@ -298,9 +298,12 @@ pinning.
 
 - **Payment drops see ERC20 transfers only.** Native-currency payments are not detected; the owner can
   sweep them.
-- **One chain per process.** The hot key, the nonce, the deployment and the cursor are all per chain, which
-  is why a recipe for another chain is a 422 rather than something stored and never looked at.
-- **One process per key.** Two keepers sharing a key would read the same nonce and stall each other.
+- **Chains share a process, not state.** One process keeps any number of chains (`--chains`), but each has
+  its own RPC, store, budget, nonce and cursor, and is served under its own network name (`/xdai/v1/…`,
+  see `src/multiChain.ts`). A recipe sent to the wrong chain's routes is a 422 rather than something stored
+  and never looked at. A chain's ticks and failures stay its own; only a crash of the process stops them all.
+- **One process per key.** Two keepers sharing a key would read the same nonce and stall each other. One
+  process sharing the key across chains is fine — the nonce is per chain.
 - **The keeper cannot hold the moment exclusively.** A user may hit Activate mid-flight; the simulation
   immediately before the send is the narrowest window obtainable off-chain, and the residual cost is one
   reverted transaction's gas.

@@ -1,4 +1,4 @@
-import { getDeployment } from '@cowprotocol/cow-drop-sdk'
+import { getDeployment, getDropChain } from '@cowprotocol/cow-drop-sdk'
 import { OrderBookApi, type SupportedChainId } from '@cowprotocol/cow-sdk'
 import {
   createWatchTower,
@@ -18,25 +18,25 @@ import { createKeeper } from './keeper.js'
 import { forwardOrderResults } from './orders.js'
 import { DEFAULT_POLICY } from './policy.js'
 import { orderBookPaymentQuoter, orderBookPrices } from './revenue.js'
-import { createKeeperServer, ROUTES } from './server.js'
+import { createMultiChainServer, type ChainMount } from './multiChain.js'
+import { createKeeperHandler, ROUTES } from './server.js'
 import { fileStore, memoryStore, utcDay, type KeeperStore } from './store.js'
 import type { DropStatus, SubsidyPolicy } from './types.js'
 
-export interface KeeperServiceOptions {
+/** One chain this process keeps: where to reach it, and how to run its keeper there. */
+export interface ChainKeeperOptions {
   rpcUrl: string
   chainId: number
   generation?: number
-  account: PrivateKeyAccount
   policy?: SubsidyPolicy
   /** Path for the registry and the spend ledger. Omit for memory only. */
   statePath?: string
   /** Separate file for the watch tower's block cursor. */
   cursorPath?: string
-  port?: number
-  allowOrigin?: string
   pollIntervalMs?: number
   dryRun?: boolean
   env?: 'prod' | 'staging'
+  /** Should name the chain: every line it prints is about that chain alone. */
   logger?: Logger
   /**
    * Warn at boot when the payer holds less than this.
@@ -50,37 +50,89 @@ export interface KeeperServiceOptions {
   store?: KeeperStore
 }
 
+export interface KeeperServiceOptions {
+  chains: readonly ChainKeeperOptions[]
+  /** One hot key for every chain. Its nonce is per chain, so sharing it across chains is safe. */
+  account: PrivateKeyAccount
+  port?: number
+  allowOrigin?: string
+  /** For what is not about one chain: the HTTP server and its routes. */
+  logger?: Logger
+}
+
 export interface KeeperService {
   server: Server
-  /** Runs both loops until the signal aborts. */
+  /** Runs every chain's loops until the signal aborts. */
   run(signal: AbortSignal): Promise<void>
   close(): Promise<void>
 }
 
 /**
- * Wire the whole thing together: registry, watcher, activator, and the watch tower that posts.
+ * Wire the whole thing together: for each chain a registry, watcher, activator and the watch tower
+ * that posts; and one HTTP server in front of them all.
  *
- * The only place that composes. Two loops run side by side — the keeper decides what to activate and
- * pays for it, and an in-process watch tower turns the resulting `OrderPlacement` logs into posted
- * orders. Neither knows about the other except through the event bus.
+ * Each chain is fully separate — its own RPC, store, budget, nonce and cursor — because those are all
+ * per chain on-chain too. What is shared is the process, the hot key and the port: the server mounts
+ * each chain under its CoW network name (`/xdai/v1/…`), see `createMultiChainServer`.
  */
 export async function startKeeperService(options: KeeperServiceOptions): Promise<KeeperService> {
+  const { chains, account, port = 8787, allowOrigin = '*', logger = silentLogger } = options
+  if (chains.length === 0) throw new Error('the keeper needs at least one chain')
+
+  const seen = new Set<number>()
+  for (const chain of chains) {
+    if (seen.has(chain.chainId)) throw new Error(`chain ${chain.chainId} is configured twice`)
+    seen.add(chain.chainId)
+  }
+
+  const started = await Promise.all(chains.map((chain) => startChain(chain, account, allowOrigin)))
+
+  const server = createMultiChainServer({ mounts: started.map((chain) => chain.mount), allowOrigin, logger })
+  await new Promise<void>((resolve) => server.listen(port, resolve))
+
+  logger.info(`up — HTTP on :${port}, ${started.length} chain(s)`)
+  for (const { mount } of started) {
+    logger.info(`  ${mount.network.padEnd(14)} http://localhost:${port}/${mount.network}/v1  (chain ${mount.chainId})`)
+  }
+  if (started.length === 1) logger.info(`  also unprefixed at http://localhost:${port}/v1`)
+  logger.info(`api docs at /<network>/v1/docs; GET /v1/networks lists the chains. Routes per chain:`)
+  for (const route of ROUTES) {
+    logger.info(`  ${route.method.padEnd(4)} ${route.path.padEnd(24)} ${route.summary}`)
+  }
+
+  for (const chain of started) await chain.report()
+
+  return {
+    server,
+    run: (signal) => Promise.all(started.map((chain) => chain.run(signal))).then(() => undefined),
+    close: () =>
+      new Promise<void>((resolve) => {
+        // `close` alone waits for open connections to finish, and an SSE stream never does — a
+        // shutdown with one subscriber attached would hang forever. Cut them first.
+        server.closeAllConnections()
+        server.close(() => resolve())
+      }),
+  }
+}
+
+/** One chain's keeper and watch tower, ready to run, and its HTTP surface ready to mount. */
+async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccount, allowOrigin: string) {
   const {
     rpcUrl,
     chainId,
     generation,
-    account,
     policy = DEFAULT_POLICY,
     statePath,
     cursorPath,
-    port = 8787,
-    allowOrigin = '*',
     pollIntervalMs,
     dryRun = false,
     env = 'prod',
     logger = silentLogger,
     minBalanceWarnWei = 10n ** 17n, // 0.1 native
   } = options
+
+  const network = getDropChain(chainId)?.network
+  if (!network) throw new Error(`cow-drop does not support chain ${chainId}`)
 
   const deployment = getDeployment(chainId, generation)
   const client = options.client ?? keeperClient(rpcUrl)
@@ -130,38 +182,16 @@ export async function startKeeperService(options: KeeperServiceOptions): Promise
     onResult: (result) => void forwardOrderResults({ store, events, chainId })(result),
   })
 
-  const server = createKeeperServer({
-    store,
-    deployment,
-    events,
-    policy,
-    submitter,
-    allowOrigin,
-    logger,
-  })
-
-  await new Promise<void>((resolve) => server.listen(port, resolve))
-
-  logger.info(`up — HTTP on :${port}`)
-  logger.info(`base url http://localhost:${port}/v1`)
-  logger.info(`api docs http://localhost:${port}/v1/docs`)
-  for (const route of ROUTES) {
-    logger.info(`  ${route.method.padEnd(4)} ${route.path.padEnd(24)} ${route.summary}`)
-  }
-
-  await reportPayerBalance({ submitter, policy, minBalanceWarnWei, logger })
-  await reportState({ store, chainId, policy, logger })
+  const handler = createKeeperHandler({ store, deployment, events, policy, submitter, allowOrigin, logger })
 
   return {
-    server,
-    run: (signal) => Promise.all([keeper.run(signal), watchTower.run(signal)]).then(() => undefined),
-    close: () =>
-      new Promise<void>((resolve) => {
-        // `close` alone waits for open connections to finish, and an SSE stream never does — a
-        // shutdown with one subscriber attached would hang forever. Cut them first.
-        server.closeAllConnections()
-        server.close(() => resolve())
-      }),
+    mount: { chainId, network, handler } satisfies ChainMount,
+    run: (signal: AbortSignal) =>
+      Promise.all([keeper.run(signal), watchTower.run(signal)]).then(() => undefined),
+    report: async () => {
+      await reportPayerBalance({ submitter, policy, minBalanceWarnWei, logger })
+      await reportState({ store, chainId, policy, logger })
+    },
   }
 }
 

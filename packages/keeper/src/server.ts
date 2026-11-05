@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http'
 import type { DropAddresses, DropDeployment, DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import { getDropChain } from '@cowprotocol/cow-drop-sdk'
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
@@ -259,6 +259,32 @@ function docsPage(): string {
  * recipe in the body, which proves the caller holds the one thing that matters.
  */
 export function createKeeperServer(options: ServerOptions): Server {
+  return createServer(createKeeperHandler(options))
+}
+
+/**
+ * Set the CORS response headers for a normal (non-preflight) request.
+ *
+ * Exported for the multi-chain router, which answers some requests — an unknown network, the index —
+ * without reaching any one chain's handler, and those must be readable cross-origin too.
+ */
+export function applyCors(allowOrigin: string, request: IncomingMessage, response: ServerResponse): void {
+  const origin = request.headers.origin
+  if (allowOrigin === '*') {
+    response.setHeader('access-control-allow-origin', '*')
+  } else if (origin && allowOrigin.split(',').includes(origin)) {
+    response.setHeader('access-control-allow-origin', origin)
+    response.setHeader('vary', 'Origin')
+  }
+  // Never `allow-credentials`: there is no auth on these routes, and it is invalid with `*`.
+}
+
+/**
+ * One chain's HTTP surface as a request listener, so a server can mount it — alone at `/`, or under
+ * `/<network>` beside other chains' (see `./multiChain.ts`). It answers paths relative to its mount:
+ * the caller strips the prefix from `request.url` before handing the request over.
+ */
+export function createKeeperHandler(options: ServerOptions): RequestListener {
   const {
     store,
     deployment,
@@ -276,24 +302,16 @@ export function createKeeperServer(options: ServerOptions): Server {
 
   const started = now()
 
-  return createServer((request, response) => {
+  return (request, response) => {
     void handle(request, response).catch((error: unknown) => {
       logger.error(`request failed: ${error instanceof Error ? error.message : String(error)}`)
       if (!response.headersSent) send(response, 500, { error: 'internal' })
       else response.end()
     })
-  })
+  }
 
-  /** Set the CORS response headers for a normal (non-preflight) request. */
   function cors(request: IncomingMessage, response: ServerResponse): void {
-    const origin = request.headers.origin
-    if (allowOrigin === '*') {
-      response.setHeader('access-control-allow-origin', '*')
-    } else if (origin && allowOrigin.split(',').includes(origin)) {
-      response.setHeader('access-control-allow-origin', origin)
-      response.setHeader('vary', 'Origin')
-    }
-    // Never `allow-credentials`: there is no auth on these routes, and it is invalid with `*`.
+    applyCors(allowOrigin, request, response)
   }
 
   /** Send an HTML response and end it. */

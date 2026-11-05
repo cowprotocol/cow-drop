@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { loadPrivateKey, parseArgs, resolvePaths } from './cli.js'
+import { loadPrivateKey, parseArgs, policyFor, resolveChains, resolvePaths } from './cli.js'
 
 const KEY = `0x${'11'.repeat(32)}`
 
@@ -63,5 +63,61 @@ describe('resolvePaths', () => {
       statePath: './s.json',
       cursorPath: './c.json',
     })
+  })
+})
+
+describe('resolvePaths with --state-dir', () => {
+  it('puts each chain\'s files in the directory', () => {
+    expect(resolvePaths({ 'state-dir': '/data/' }, 8453)).toEqual({
+      statePath: '/data/state-8453.json',
+      cursorPath: '/data/cursor-8453.json',
+    })
+  })
+})
+
+describe('resolveChains', () => {
+  it('reads each chain\'s RPC from RPC_URL_<id>, and flags the ones falling back to public', () => {
+    expect(resolveChains({ chains: '100,8453' }, { RPC_URL_100: 'https://gnosis' })).toEqual([
+      { chainId: 100, rpcUrl: 'https://gnosis', publicRpc: false },
+      { chainId: 8453, rpcUrl: undefined, publicRpc: true },
+    ])
+  })
+
+  it('takes the list from $CHAINS', () => {
+    expect(resolveChains({}, { CHAINS: '1', RPC_URL_1: 'https://eth' })).toEqual([
+      { chainId: 1, rpcUrl: 'https://eth', publicRpc: false },
+    ])
+  })
+
+  it('keeps the single-chain form working', () => {
+    expect(resolveChains({ 'rpc-url': 'https://x', 'chain-id': '100' }, {})).toEqual([
+      { chainId: 100, rpcUrl: 'https://x', publicRpc: false },
+    ])
+  })
+
+  it('refuses one-chain flags alongside several chains', () => {
+    expect(() => resolveChains({ chains: '100,1', state: './s.json' }, {})).toThrow(/--state-dir/)
+    expect(() => resolveChains({ chains: '100,1', 'rpc-url': 'https://x' }, {})).toThrow(/RPC_URL_<chainId>/)
+  })
+
+  it('refuses nonsense and duplicates, and says what is needed when nothing is given', () => {
+    expect(() => resolveChains({ chains: '100,gnosis' }, {})).toThrow(/not a chain id/)
+    expect(() => resolveChains({ chains: '100,100' }, {})).toThrow(/twice/)
+    expect(() => resolveChains({}, {})).toThrow(/--chains/)
+  })
+})
+
+describe('policyFor', () => {
+  it('applies a plain policy to every chain', () => {
+    const policy = { mode: 'all' }
+    expect(policyFor(policy, 100)).toBe(policy)
+  })
+
+  it('picks the chain\'s entry from a file keyed by chain id', () => {
+    expect(policyFor({ '100': { mode: 'all' }, '1': { mode: 'paying' } }, 1)).toEqual({ mode: 'paying' })
+  })
+
+  it('refuses a keyed file with no entry for the chain, rather than silently using defaults', () => {
+    expect(() => policyFor({ '100': { mode: 'all' } }, 8453)).toThrow(/none for 8453/)
   })
 })

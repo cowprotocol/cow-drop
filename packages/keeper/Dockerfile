@@ -59,7 +59,9 @@ ENV COMMIT_HASH=$COMMIT_HASH
 
 EXPOSE 8787
 
-# --rpc-url is deliberately not defaulted: it comes from $RPC_URL, and there is no sane fallback.
-# Override CMD to add --policy (do that before pointing anything public at it), --dry-run, or --env.
+# The chains come from $CHAINS (e.g. "100,1,8453") and each chain's RPC from $RPC_URL_<chainId>, so
+# one container keeps every chain and serves each under /<network>/v1. Each chain's state and cursor
+# are /data/state-<chainId>.json and /data/cursor-<chainId>.json. Override CMD to add --policy (do that
+# before pointing anything public at it), --dry-run, or --env.
 ENTRYPOINT ["node", "dist/cli.js"]
-CMD ["--state", "/data/state.json", "--cursor", "/data/cursor.json"]
+CMD ["--state-dir", "/data"]
