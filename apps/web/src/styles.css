@@ -118,8 +118,10 @@ section {
   margin-bottom: 1.1rem;
 }
 
+/* `.button` is for the anchors that act as buttons — a navigation that should look like an action. */
 button,
-.upload {
+.upload,
+.button {
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
@@ -130,8 +132,19 @@ button,
 }
 
 button:hover:not(:disabled),
-.upload:hover {
+.upload:hover,
+.button:hover {
   border-color: var(--accent);
+}
+
+a.button {
+  display: inline-block;
+  text-decoration: none;
+  color: var(--text);
+}
+
+a.button.secondary {
+  background: transparent;
 }
 
 button:disabled {
@@ -316,6 +329,12 @@ code {
 .actions a {
   color: var(--accent);
   font-size: 0.85rem;
+}
+
+/* Wins over the rule above, which is for the plain text links that sit beside the buttons. */
+.actions a.button {
+  color: var(--text);
+  font-size: inherit;
 }
 
 .hint {
@@ -1122,4 +1141,149 @@ label.radio input {
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--muted);
+}
+
+/*
+ * The share card.
+ *
+ * Its own shell (see `App.tsx`), so these are page-level rules rather than a panel's. Two jobs: be
+ * scannable from across a room, and be readable by someone who followed a link and has never seen
+ * this project.
+ */
+
+.share-main {
+  max-width: 1040px;
+}
+
+.share-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 2rem;
+}
+
+.share-brand:hover {
+  color: var(--text);
+}
+
+.share-head {
+  margin-bottom: 2rem;
+}
+
+.share-head h1 {
+  font-size: 1.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.share-headline {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.15rem;
+  line-height: 1.5;
+  max-width: 52ch;
+}
+
+.share-body {
+  display: flex;
+  gap: 2.5rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+/*
+ * The QR column is sized before the text column so it keeps its width when they sit side by side,
+ * and `flex-wrap` drops the table underneath on a phone rather than squeezing both.
+ */
+.share-qr {
+  flex: 0 1 380px;
+}
+
+.share-what {
+  flex: 1 1 380px;
+  min-width: 0;
+}
+
+/*
+ * Scaled off the viewport, not fixed: this is shown on laptops and projected in rooms, and the
+ * largest square that fits is the one a phone camera locks onto fastest. Capped so it cannot grow
+ * past its column on a wide screen.
+ *
+ * The white plate and its padding are the quiet zone. A QR rendered straight onto this page's dark
+ * background is not a styling choice — most scanners simply will not read it.
+ */
+.share-qr img {
+  display: block;
+  width: 100%;
+  max-width: min(68vmin, 380px);
+  height: auto;
+  aspect-ratio: 1;
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 0.9rem;
+  /* Nearest-neighbour: the data URL is 720px and almost always scaled down, and smoothing the edges
+     of QR modules is what makes a borderline scan fail. */
+  image-rendering: pixelated;
+}
+
+/* Small enough that a checksummed address fits on one line in this column, which is what makes it
+   readable as an address rather than as two fragments. */
+.share-address {
+  font-size: 0.8rem;
+}
+
+.share-actions {
+  margin-bottom: 0.4rem;
+}
+
+.share-table {
+  font-size: 0.95rem;
+}
+
+.share-table caption {
+  text-align: left;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  font-weight: 600;
+  padding-bottom: 0.6rem;
+}
+
+/* A label column wide enough that no row's label wraps to two lines, but not so wide it reads as a
+   heading column in a data table — this is a definition list that happens to be a table. */
+.share-table th[scope='row'] {
+  width: 11rem;
+  color: var(--muted);
+  font-weight: 500;
+  vertical-align: top;
+}
+
+.share-table td {
+  vertical-align: top;
+}
+
+.share-table .hint {
+  margin-top: 0.2rem;
+}
+
+.warn-note {
+  color: var(--warn);
+  border-left: 2px solid var(--warn);
+  padding-left: 0.7rem;
+  margin-top: 1rem;
+}
+
+.share-empty {
+  max-width: 48ch;
+  margin: 3rem 0;
+}
+
+.share-empty .button {
+  margin-top: 1rem;
 }

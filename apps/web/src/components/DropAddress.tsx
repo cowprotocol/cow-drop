@@ -3,6 +3,8 @@ import QRCode from 'qrcode'
 import { useEffect, useState } from 'react'
 import type { Address } from 'viem'
 
+import { routeHash } from '../lib/route.js'
+
 /**
  * The address panel: big, copyable, and scannable, since the whole point is to send funds here.
  *
@@ -66,6 +68,15 @@ export function DropAddress({
         <div className="actions">
           <button onClick={() => void copy()}>{copied ? 'Copied' : 'Copy address'}</button>
           <button onClick={download}>Save recipe file</button>
+          {/*
+            A link, not a button, because it is a navigation and worth opening in a new tab: the
+            usual move is to keep building here while the card is shown or pasted somewhere. It
+            remembers the recipe on the way out for the same reason copying does — handing the
+            address to someone else is a moment the recipe must survive.
+          */}
+          <a className="button" href={routeHash({ tab: 'share', recipe })} onClick={onRemember}>
+            Share
+          </a>
           <span className={saved ? 'ok' : 'warn'}>{saved ? 'recipe remembered' : 'recipe not saved yet'}</span>
         </div>
 

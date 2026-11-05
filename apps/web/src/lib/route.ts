@@ -13,9 +13,15 @@ import { recipeFromHash, recipeToHash } from './storage.js'
  * without a browser; `useRoute.ts` owns the reading and writing.
  */
 
-export type Tab = 'recipes' | 'bridge' | 'drops' | 'about' | 'sdk'
+export type Tab = 'recipes' | 'bridge' | 'drops' | 'about' | 'sdk' | 'share'
 
-/** Screen order. Recipes is first because it is what the page is for. */
+/**
+ * Screen order in the tab bar.
+ *
+ * Recipes is first because it is what the page is for. **`share` is deliberately absent**: it is a
+ * destination, not a section — somewhere a link lands, never somewhere you navigate to from the nav.
+ * Listing it would also put a tab on screen that is blank without a recipe.
+ */
 export const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'recipes', label: 'Recipes' },
   // Next to Recipes because it is where a recipe goes once it exists: bridging is how a drop gets
@@ -38,9 +44,12 @@ export interface Route {
  * Both of them work on one, and neither can reconstruct it from anywhere else — the recipe is the
  * key, not a convenience, and a drop funded against a recipe nobody kept is unrecoverable. So the
  * Bridge tab has to survive a refresh exactly as the builder does, and the fragment it already shares
- * is the obvious place. Drops, About and SDK carry none because they need none.
+ * is the obvious place. `share` carries one for the same reason and more bluntly: the recipe is the
+ * entire content of that page, so a share link without it is a blank card.
+ *
+ * Drops, About and SDK carry none because they need none.
  */
-const RECIPE_TABS: ReadonlySet<Tab> = new Set<Tab>(['recipes', 'bridge'])
+const RECIPE_TABS: ReadonlySet<Tab> = new Set<Tab>(['recipes', 'bridge', 'share'])
 
 const TABS_BY_ID: Record<string, Tab> = {
   recipes: 'recipes',
@@ -48,6 +57,7 @@ const TABS_BY_ID: Record<string, Tab> = {
   drops: 'drops',
   about: 'about',
   sdk: 'sdk',
+  share: 'share',
 }
 
 /**
@@ -63,6 +73,7 @@ const TABS_BY_ID: Record<string, Tab> = {
  * | `#/recipes/<base64url>` | the builder, carrying a recipe |
  * | `#/recipes` | the builder, nothing in the URL yet |
  * | `#/bridge/<base64url>` | the bridge tab, carrying the recipe being funded |
+ * | `#/share/<base64url>` | the share card for that recipe — the link you hand someone |
  * | `#/drops`, `#/about`, `#/sdk` | those tabs, which never carry a recipe |
  * | `#<base64url>` | **legacy** — every link shared before there were tabs |
  * | anything else | the builder, empty |

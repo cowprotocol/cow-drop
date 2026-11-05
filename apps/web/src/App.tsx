@@ -10,6 +10,7 @@ import { AboutTab } from './tabs/AboutTab.js'
 import { BridgeTab } from './tabs/BridgeTab.js'
 import { DropsTab } from './tabs/DropsTab.js'
 import { RecipesTab } from './tabs/RecipesTab.js'
+import { ShareTab } from './tabs/ShareTab.js'
 import { SdkTab } from './tabs/SdkTab.js'
 
 /**
@@ -114,6 +115,36 @@ export function App() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
+  }
+
+  /*
+   * The share card gets its own shell, and returns before the one below.
+   *
+   * Everything the normal shell provides — the wallet button, the tab bar, the heading and tagline —
+   * is chrome belonging to someone who is *building* a drop. This page is read by someone who was
+   * sent a link, often on a phone, and is frequently on a screen being shown across a room. So the
+   * page is the card: one wordmark back into the app, and nothing else competing with the QR.
+   *
+   * It also keeps the builder from mounting at all on this route. Hidden, it is merely idle; absent,
+   * it cannot put ~30 form controls in front of a reader who never asked for them.
+   *
+   * The beta notice stays. It is the one piece of chrome that earns its place on the most public
+   * surface in the app, and dropping it from exactly the page strangers see would be the wrong way
+   * round.
+   */
+  if (route.tab === 'share') {
+    return (
+      <>
+        <BetaNotice />
+        <main className="share-main">
+          <a className="share-brand" href={routeHash({ tab: 'recipes' })}>
+            <img src="/logo.png" alt="" width={28} height={28} />
+            <span>cow-drop</span>
+          </a>
+          <ShareTab recipe={route.recipe} />
+        </main>
+      </>
+    )
   }
 
   return (
