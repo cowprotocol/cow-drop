@@ -1158,10 +1158,10 @@ label.radio input {
 .share-brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
   color: var(--muted);
   text-decoration: none;
-  font-size: 0.85rem;
+  font-size: 0.95rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   margin-bottom: 2rem;
@@ -1206,6 +1206,21 @@ label.radio input {
 .share-what {
   flex: 1 1 380px;
   min-width: 0;
+}
+
+/* Once the columns stack, centre the QR, its address and its buttons in the full row. */
+@media (max-width: 880px) {
+  .share-qr {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .share-actions {
+    justify-content: center;
+  }
 }
 
 /*
@@ -1302,4 +1317,90 @@ label.radio input {
   min-width: 6rem;
   height: 0.4rem;
   accent-color: var(--accent);
+}
+
+/* Keeper activity toasts, bottom right; full width on a phone. */
+.toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: min(380px, calc(100vw - 2rem));
+}
+
+.toast {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.75rem 0.9rem;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
+}
+
+.toast-ok { border-left-color: var(--ok); }
+.toast-warn { border-left-color: var(--warn); }
+.toast-error { border-left-color: var(--error, #e5534b); }
+
+.toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.toast-links {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* The Drops tab's activity history. */
+.activity {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.activity li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--border);
+}
+
+.activity li.activity-ok { border-left-color: var(--ok); }
+.activity li.activity-warn { border-left-color: var(--warn); }
+.activity li.activity-error { border-left-color: var(--error, #e5534b); }
+
+.activity time {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.activity a {
+  font-size: 0.85rem;
+  color: var(--accent);
 }
