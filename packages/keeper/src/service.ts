@@ -19,6 +19,7 @@ import { forwardOrderResults } from './orders.js'
 import { DEFAULT_POLICY } from './policy.js'
 import { orderBookPaymentQuoter, orderBookPrices } from './revenue.js'
 import { createMultiChainServer, type ChainMount } from './multiChain.js'
+import type { SignatureVerifier } from './export.js'
 import { createKeeperHandler, ROUTES } from './server.js'
 import { fileStore, memoryStore, utcDay, type KeeperStore } from './store.js'
 import type { DropStatus, SubsidyPolicy } from './types.js'
@@ -190,7 +191,28 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
     onResult: (result) => void forwardOrderResults({ store, events, chainId })(result),
   })
 
-  const handler = createKeeperHandler({ store, deployment, events, policy, submitter, allowOrigin, logger })
+  /**
+   * `verifyTypedData`, not recover-and-compare: it falls through to ERC-1271, and a Safe cannot
+   * produce an ECDSA signature at all. A failure is `false`, never a throw — a down RPC is a refusal.
+   */
+  const verifySignature: SignatureVerifier = async ({ owner, typedData, signature }) => {
+    try {
+      return await client.verifyTypedData({ address: owner, ...typedData, signature })
+    } catch {
+      return false
+    }
+  }
+
+  const handler = createKeeperHandler({
+    store,
+    deployment,
+    events,
+    policy,
+    submitter,
+    allowOrigin,
+    logger,
+    verifySignature,
+  })
 
   return {
     mount: { chainId, network, handler } satisfies ChainMount,

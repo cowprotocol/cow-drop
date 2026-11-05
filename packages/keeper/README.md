@@ -49,6 +49,7 @@ OpenAPI document.
 
 ```bash
 curl 'localhost:8787/v1/drops?owner=0x…'  # every drop registered under one owner
+# POST /v1/drops/export — your own recipes back, proved with an EIP-712 signature. See ARCHITECTURE.md.
 curl localhost:8787/v1/health         # payer, balance, budget left
 curl localhost:8787/v1/policy         # whether it is subsidising, before anyone commits
 curl localhost:8787/v1/about          # the contracts behind the generation it serves

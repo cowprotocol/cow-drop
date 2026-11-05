@@ -1,7 +1,7 @@
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 
-import { getDropChain } from '@cowprotocol/cow-drop-sdk'
+import { getDropChain, recipeExportScope, recipeExportTypedData } from '@cowprotocol/cow-drop-sdk'
 
 import { DEFAULT_CHAIN_ID } from './chain.js'
 import { configuredKeeperBaseUrl, configuredKeeperUrl, configuredKeeperUrls } from './runtimeConfig'
@@ -221,4 +221,68 @@ export async function listKeeperDrops(owner: Address, chainId?: number): Promise
   const body = await parse(response)
   if (!response.ok) fail(response, body)
   return body as KeeperDropList
+}
+
+/** One recipe recovered from a keeper, with the documents needed to reimport it whole. */
+export interface ExportedKeeperDrop {
+  address: Address
+  chainId: number
+  label: string
+  recipe: DropRecipeJson
+  appDataDocuments?: string[]
+}
+
+/**
+ * Ask a keeper for the recipes it holds for you, proving who you are with a signature. The exception
+ * to "the keeper hands out no recipes" above; why it is safe is in the SDK's `recipeExport.ts`.
+ *
+ * What comes back is still untrusted — a signature proves you control the address, not that you wrote
+ * the recipe naming it. Decode and show it before anyone funds anything.
+ *
+ * Two round trips: the payer is read first and signed in, binding the signature to this keeper.
+ */
+export async function exportKeeperRecipes(params: {
+  owner: Address
+  chainId: number
+  sign: (typedData: ReturnType<typeof recipeExportTypedData>) => Promise<Hex>
+}): Promise<ExportedKeeperDrop[]> {
+  const base = keeperUrl(params.chainId)
+  if (!base) throw new Error('no keeper is configured for this chain')
+
+  const health = await fetch(`${base}/v1/health`)
+  // 503 carries a full body — a payer below its floor still answers, and still names itself.
+  const reported = (await parse(health)) as { payer?: Address }
+  if (!reported.payer) throw new Error('this keeper did not report a payer, so a signature cannot be bound to it')
+
+  const issuedAt = Math.floor(Date.now() / 1000)
+  const request = {
+    owner: params.owner,
+    keeper: reported.payer,
+    scope: recipeExportScope(),
+    issuedAt,
+    // Long enough to approve in a wallet, short enough that a leak goes stale.
+    expiresAt: issuedAt + 120,
+    nonce: randomNonce(),
+  }
+
+  const signature = await params.sign(recipeExportTypedData(request, params.chainId))
+
+  const response = await fetch(`${base}/v1/drops/export`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ request, signature }),
+  })
+  if (response.status === 404 || response.status === 501) {
+    throw new Error('this keeper cannot export recipes — it is older than this page')
+  }
+
+  const body = await parse(response)
+  if (!response.ok) fail(response, body)
+  return (body as { drops: ExportedKeeperDrop[] }).drops
+}
+
+/** 32 bytes from the platform CSPRNG, so one signature cannot be replayed inside its own window. */
+function randomNonce(): Hex {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`
 }

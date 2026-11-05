@@ -378,6 +378,24 @@ export async function connect(chainId: number): Promise<Address> {
 }
 
 /** Send one transaction from the connected account. The caller has already built the calldata. */
+/**
+ * Sign an EIP-712 payload. Through viem rather than a raw `eth_signTypedData_v4` request, so the
+ * payload is serialised by the same code that verifies it — a hand-rolled `EIP712Domain` that differs
+ * by one entry signs something nothing will verify.
+ */
+export async function signTypedDataWith<const T extends Parameters<ReturnType<typeof createWalletClient>['signTypedData']>[0]>(
+  chainId: number,
+  account: Address,
+  typedData: Omit<T, 'account'>,
+): Promise<Hex> {
+  const wallet = createWalletClient({
+    account,
+    chain: viemChain(chainId),
+    transport: custom(injected()),
+  })
+  return wallet.signTypedData(typedData as T)
+}
+
 export async function sendTransaction(params: {
   chainId: number
   account: Address

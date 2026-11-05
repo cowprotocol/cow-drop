@@ -5,8 +5,10 @@ import { useState } from 'react'
 
 import { DropRow } from '../components/DropRow.js'
 import { useDropList } from '../components/DropList.js'
+import { isUserRejection, signTypedDataWith } from '../lib/chain.js'
 import type { MergedDrop } from '../lib/dropList.js'
-import { keeperUrl } from '../lib/keeper.js'
+import { exportKeeperRecipes, keeperUrl } from '../lib/keeper.js'
+import { saveDrop } from '../lib/storage.js'
 
 /**
  * Every drop associated with the connected account, from both sides that know anything about one.
@@ -32,6 +34,10 @@ export function DropsTab({
   const { groups, remote, remoteFailed, loading, total, reload, forget } = useDropList(account, revision)
   /** Key of the drop whose Forget was clicked, waiting to be confirmed. */
   const [pendingForget, setPendingForget] = useState<string | null>(null)
+  /** The recipe recovery below: in flight, how many came back, and why it did not. */
+  const [recovering, setRecovering] = useState(false)
+  const [recovered, setRecovered] = useState<number | null>(null)
+  const [recoverError, setRecoverError] = useState<string | null>(null)
   const hasKeeper = keeperUrl() !== null
   const keeperChain = remote ? (getDropChain(remote.chainId)?.name ?? `chain ${remote.chainId}`) : null
 
@@ -42,6 +48,36 @@ export function DropsTab({
    */
   const primary = account ? groups.mine : groups.otherOwners
   const others = account ? groups.otherOwners : []
+
+  /** One signature for all the rows: a prompt per drop teaches people to click through prompts. */
+  const recover = async () => {
+    if (!account || !remote) return
+
+    setRecovering(true)
+    setRecovered(null)
+    setRecoverError(null)
+    try {
+      const drops = await exportKeeperRecipes({
+        owner: account,
+        chainId: remote.chainId,
+        sign: (typedData) => signTypedDataWith(remote.chainId, account, typedData),
+      })
+      // `saveDrop` re-derives the address, so a recipe that does not hash to it never lands.
+      for (const drop of drops) saveDrop({ address: drop.address, recipe: drop.recipe })
+      setRecovered(drops.length)
+      reload()
+    } catch (cause) {
+      setRecoverError(
+        isUserRejection(cause)
+          ? 'Signature rejected — nothing was fetched.'
+          : cause instanceof Error
+            ? cause.message
+            : String(cause),
+      )
+    } finally {
+      setRecovering(false)
+    }
+  }
 
   const rows = (drops: MergedDrop[]) => (
     <ul className="saved-list">
@@ -107,10 +143,26 @@ export function DropsTab({
           <h2>The keeper for {keeperChain} also has</h2>
           <p className="hint">
             This keeper holds a recipe naming your account as owner, and this browser does not have it.
-            You can see these and follow them on a block explorer, but you cannot load, activate or
-            rescue them from here: all three need the recipe bytes, and the keeper does not hand those
-            out. Import the <code>.drop.json</code>, or open this page in the browser you made it in.
+            Until the recipe is here you cannot load, activate or rescue these — all three need the
+            recipe bytes. Prove the account is yours and the keeper will hand them back, or import the{' '}
+            <code>.drop.json</code>, or open this page in the browser you made it in.
           </p>
+
+          <div className="saved-actions">
+            <button type="button" onClick={() => void recover()} disabled={recovering || !account}>
+              {recovering ? 'Waiting for your signature…' : 'Recover these recipes'}
+            </button>
+          </div>
+
+          {recovered !== null ? (
+            <p className="hint">
+              Recovered {recovered} {recovered === 1 ? 'recipe' : 'recipes'} into this browser — they are
+              under <strong>Your drops</strong> above. <strong>Read one before funding it.</strong> A
+              signature proves you control this account, not that you wrote the recipe that names it: it
+              may pay its surplus to someone else.
+            </p>
+          ) : null}
+          {recoverError ? <p className="hint warn-box">{recoverError}</p> : null}
           <p className="hint warn-box">
             <strong>A row here is not proof that you made it.</strong> Anyone may register a recipe
             naming any owner, so this means <em>someone registered this and said you own it</em>. Never
