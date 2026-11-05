@@ -6,7 +6,7 @@ import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
 import { keccak256, type Address } from 'viem'
 
 import type { Submitter } from './chain.js'
-import type { EventBus } from './events.js'
+import { matches, type EventBus } from './events.js'
 import { registerDrop, unregisterDrop } from './registry.js'
 import { frame, keepalive, retryAfter, SSE_HEADERS, writeEvent } from './sse.js'
 import type { KeeperStore } from './store.js'
@@ -156,7 +156,11 @@ export const ROUTES: readonly RouteDoc[] = [
   {
     method: 'GET',
     path: '/v1/events',
-    summary: 'Server-sent event stream of registrations, activations and posted orders.',
+    summary: 'Server-sent event stream of registrations, activations and posted orders. Filter with `drop` and/or `owner` (repeatable).',
+    parameters: [
+      { name: 'drop', in: 'query', required: false, schema: { type: 'string', pattern: ADDRESS_PATTERN } },
+      { name: 'owner', in: 'query', required: false, schema: { type: 'string', pattern: ADDRESS_PATTERN } },
+    ],
     produces: 'text/event-stream',
   },
 ]
@@ -205,7 +209,8 @@ export function openApiDocument(chainId: number, generation: number): unknown {
  * The spec URL is derived from `location.pathname` rather than hardcoded, so the page works behind
  * whatever host, port or subpath a proxy puts the keeper on. Derived rather than written as
  * `./openapi.json` because the router strips trailing slashes and therefore also serves `/v1/docs/`,
- * where a relative URL would resolve to `/v1/docs/openapi.json` and 404.
+ * where a relative URL would resolve to `/v1/docs/openapi.json` and 404. The same prefix becomes the
+ * spec's `servers` entry, or "Try it out" would call `/v1/…` at the host root and miss the proxy.
  *
  * Derived with string operations rather than a regex on purpose: this script is the body of a
  * template literal, so TypeScript consumes `\/` before the browser ever sees it. A regex written the
@@ -234,11 +239,15 @@ function docsPage(): string {
     <script>
       var path = location.pathname
       if (path.charAt(path.length - 1) === '/') path = path.slice(0, -1)
-      window.ui = SwaggerUIBundle({
-        url: path.slice(0, path.lastIndexOf('/') + 1) + 'openapi.json',
-        dom_id: '#swagger-ui',
-        deepLinking: true,
-      })
+      var specUrl = path.slice(0, path.lastIndexOf('/') + 1) + 'openapi.json'
+      // Whatever prefix a proxy put in front of /v1, e.g. /keeper/xdai.
+      var root = path.slice(0, path.lastIndexOf('/v1/'))
+      fetch(specUrl)
+        .then(function (response) { return response.json() })
+        .then(function (spec) {
+          spec.servers = [{ url: location.origin + root }]
+          window.ui = SwaggerUIBundle({ spec: spec, dom_id: '#swagger-ui', deepLinking: true })
+        })
     </script>
   </body>
 </html>
@@ -640,10 +649,17 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
    */
   async function stream(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const drops = url.searchParams.getAll('drop').map((drop) => drop.toLowerCase() as Address)
-    if (drops.length === 0) {
-      send(response, 400, { error: 'invalid-request', message: 'at least one `drop` is required' })
+    const owners = url.searchParams.getAll('owner').map((owner) => owner.toLowerCase() as Address)
+    if (drops.length === 0 && owners.length === 0) {
+      send(response, 400, { error: 'invalid-request', message: 'at least one `drop` or `owner` is required' })
       return
     }
+    const invalid = [...drops, ...owners].find((address) => !/^0x[0-9a-f]{40}$/.test(address))
+    if (invalid) {
+      send(response, 400, { error: 'invalid-request', message: `not an address: ${invalid}` })
+      return
+    }
+    const filter = { drops, owners }
 
     response.writeHead(200, { ...SSE_HEADERS, ...corsHeader(request) })
     response.write(retryAfter(3000))
@@ -653,16 +669,23 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
       const drop = await store.get(deployment.chainId, address)
       if (drop) snapshots.push(toWire(drop))
     }
+    if (owners.length > 0) {
+      // Bounded like the owner listing: a full scan, capped at what one response may carry.
+      const owned = (await store.all(deployment.chainId))
+        .filter((drop) => owners.includes(drop.owner.toLowerCase() as Address) && !drops.includes(drop.address))
+        .slice(0, maxListed)
+      snapshots.push(...owned.map(toWire))
+    }
     response.write(frame({ name: 'hello', data: { head: events.head(), drops: snapshots } }))
 
     const lastEventId = Number(request.headers['last-event-id'])
     if (Number.isFinite(lastEventId)) {
       const missed = events.since(lastEventId)
       if (missed === undefined) response.write(frame({ name: 'gap', data: { head: events.head() } }))
-      else for (const event of missed.filter((e) => drops.includes(e.drop))) writeEvent(response, event)
+      else for (const event of missed.filter((e) => matches(filter, e))) writeEvent(response, event)
     }
 
-    const unsubscribe = events.subscribe(drops, (event) => writeEvent(response, event))
+    const unsubscribe = events.subscribe(filter, (event) => writeEvent(response, event))
     // `unref` so a quiet stream does not by itself keep the process alive — the server's own handle
     // is what should decide that.
     const timer = setInterval(() => response.write(keepalive()), keepaliveMs)

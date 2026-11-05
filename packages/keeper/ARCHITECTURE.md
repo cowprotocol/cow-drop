@@ -108,7 +108,7 @@ POST /v1/drops            { recipe, address } -> 201 { drop }, or 200 if already
 GET  /v1/drops?owner=0x…  -> every drop registered under one owner, newest first
 GET  /v1/drops/:address   -> the drop, its hints, and its activation history
 POST /v1/drops/unregister { recipe } -> 200, 409 while an activation is in flight
-GET  /v1/events?drop=0x…  -> SSE
+GET  /v1/events?drop=0x…&owner=0x…  -> SSE for those drops, and every drop of those owners
 GET  /v1/health           -> payer, balance, budget left, counts
 GET  /v1/policy           -> whether it is subsidising, before anyone commits
 GET  /v1/about            -> chain, generation, and the contract addresses those stand for

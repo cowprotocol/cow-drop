@@ -2,7 +2,7 @@ import { compileRecipe, type DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import QRCode from 'qrcode'
 import { useEffect, useMemo, useState } from 'react'
 
-import { blockExplorer, chainLabel } from '../lib/chain.js'
+import { blockExplorer, chainLabel, cowExplorer } from '../lib/chain.js'
 import { routeHash } from '../lib/route.js'
 import { summariseRecipe } from '../lib/shareSummary.js'
 import { fetchTokenList, findToken, type TokenInfo } from '../lib/tokenList.js'
@@ -219,6 +219,10 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
                 a different recipe is a different address.{' '}
               </>
             )}
+            <a href={`${cowExplorer(recipe.chainId)}/address/${address ?? ''}`} target="_blank" rel="noreferrer">
+              View orders on CoW Explorer
+            </a>
+            {' · '}
             <a href={`${explorer.url}/address/${address ?? ''}`} target="_blank" rel="noreferrer">
               View on {explorer.name}
             </a>

@@ -1,8 +1,12 @@
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import type { Address } from 'viem'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
+import { ActivityLog } from './components/ActivityLog.js'
 import { BetaNotice } from './components/BetaNotice.js'
+import { TOAST_MS, Toasts } from './components/Toasts.js'
+import type { ActivityEntry } from './lib/activity.js'
+import { useFillTracker, useKeeperActivity } from './lib/keeperStream.js'
 import { DEFAULT_CHAIN_ID, connect, onAccountsChanged, readAccount } from './lib/chain.js'
 import { TABS, parseRoute, routeHash } from './lib/route.js'
 import { useExternalRoute, useRoute, writeHash } from './lib/useRoute.js'
@@ -44,6 +48,19 @@ export function App() {
    * then disables the button.
    */
   const [dropsRevision, setDropsRevision] = useState(0)
+
+  /** Keeper activity for this browser's drops, raised as toasts; the history lives in the Drops tab. */
+  const [toasts, setToasts] = useState<ActivityEntry[]>([])
+  const dismissToast = useCallback((id: string) => setToasts((current) => current.filter((t) => t.id !== id)), [])
+  const showToast = useCallback(
+    (entry: ActivityEntry) => {
+      setToasts((current) => [...current.slice(-4), entry])
+      if (entry.tone !== 'error') setTimeout(() => dismissToast(entry.id), TOAST_MS)
+    },
+    [dismissToast],
+  )
+  useKeeperActivity({ account, revision: dropsRevision, onNew: showToast })
+  useFillTracker(showToast)
   /**
    * The recipe handed to the Bridge tab, which builds none of its own.
    *
@@ -138,11 +155,12 @@ export function App() {
         <BetaNotice />
         <main className="share-main">
           <a className="share-brand" href={routeHash({ tab: 'recipes' })}>
-            <img src="/logo.png" alt="" width={28} height={28} />
+            <img src="/logo.png" alt="" width={44} height={44} />
             <span>cow-drop</span>
           </a>
           <ShareTab recipe={route.recipe} />
         </main>
+        <Toasts toasts={toasts} onDismiss={dismissToast} />
       </>
     )
   }
@@ -242,6 +260,7 @@ export function App() {
         {route.tab === 'bridge' && (
           <BridgeTab account={account} recipe={bridgeRecipe} onBuildRecipe={() => navigate('recipes')} />
         )}
+        {route.tab === 'drops' && <ActivityLog />}
         {route.tab === 'drops' && (
           <DropsTab
             account={account}
@@ -257,6 +276,7 @@ export function App() {
         {route.tab === 'about' && <AboutTab />}
         {route.tab === 'sdk' && <SdkTab />}
       </main>
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
     </>
   )
 }
