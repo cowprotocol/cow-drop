@@ -6,7 +6,19 @@ Three things ship from this repo: two container images and one npm package.
 | --- | --- | --- |
 | `ghcr.io/cowprotocol/cow-drop/keeper` | Activates registered drops and pays the gas. Holds a hot key. | GitHub Container Registry |
 | `ghcr.io/cowprotocol/cow-drop/watch-tower` | Posts on-chain orders to the order book. No key. | GitHub Container Registry |
-| `@cowprotocol/cow-drop-sdk` | Compile a recipe, derive an address, build the activation tx. | [npm](https://www.npmjs.com/package/@cowprotocol/cow-drop-sdk) |
+| `@cowprotocol/cow-drop-sdk` | Compile a recipe, derive an address, build the activation tx. | [npm](https://www.npmjs.com/package/@cowprotocol/cow-drop-sdk) — **not published yet**, see below |
+
+> **npm publishing is off — come back to this.** The SDK has never reached npm: `NPM_TOKEN` cannot
+> create `@cowprotocol/cow-drop-sdk` (v0.4.1 failed with `E404` on the publish). Until that is fixed,
+> `release.yml` builds and checks the tarball but skips the publish, and the rest of a release —
+> images, GitHub release — ships as normal. To turn it back on:
+>
+> 1. Create an npm granular access token with **read and write on the `@cowprotocol` organisation**
+>    (a token limited to specific packages cannot create a new one), from an account that can publish
+>    there, and store it: `gh secret set NPM_TOKEN --repo cowprotocol/cow-drop`.
+> 2. Set the repository variable: `gh variable set NPM_PUBLISH --body true --repo cowprotocol/cow-drop`.
+> 3. Re-run the last release's failed job, or cut a new release.
+> 4. Once the package exists, consider npm trusted publishing so there is no token left to expire.
 
 The web app is **not** one of them: it deploys from Vercel, which builds it out of this repo, so no
 image of it is published. `apps/web/Dockerfile` is still here and still builds — see [Building an
@@ -34,7 +46,8 @@ Either way, the tag fires two workflows:
 
 - [`release.yml`](../.github/workflows/release.yml) — re-checks the address derivation against the
   contracts, publishes the SDK to [npm](https://www.npmjs.com/package/@cowprotocol/cow-drop-sdk)
-  with a provenance attestation, and — only if the tag arrived without one — opens the GitHub
+  with a provenance attestation (only while the `NPM_PUBLISH` variable is `true` — off for now, see
+  above), and — only if the tag arrived without one — opens the GitHub
   release itself, with generated notes. A release you published from the UI is left exactly as you
   wrote it.
 - [`docker.yml`](../.github/workflows/docker.yml) — builds and pushes both images to
@@ -69,7 +82,8 @@ retractable — which is why the derivation checks run before the publish, not a
 
 | secret / setting | used by | needed for |
 | --- | --- | --- |
-| `NPM_TOKEN` | `release.yml` | Publishing the SDK. An automation token for the `@cowprotocol` org, with publish rights. |
+| `NPM_TOKEN` | `release.yml` | Publishing the SDK. A granular token with read/write on the `@cowprotocol` org. The current one cannot publish. |
+| `NPM_PUBLISH` (variable) | `release.yml` | `true` turns the npm publish on. Unset for now, see above. |
 | `AUTODEPLOY_URL`, `AUTODEPLOY_TOKEN` | `docker.yml` | Rolling the `:main` images out after a push to `main`. |
 | Workflow read/write permissions | `release.yml` | Creating the GitHub release. |
 
