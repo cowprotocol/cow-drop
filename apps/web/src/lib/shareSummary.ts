@@ -157,23 +157,16 @@ export function summariseRecipe(
     const receiver = payment.receiver
     const toOwner = !receiver || receiver.toLowerCase() === recipe.owner.toLowerCase()
 
-    headline = `Pay ${amount} ${buy.name} here, in any token.`
-    rows.push({ label: 'Asks for', value: `${amount} ${buy.name}`, hint: buy.hint })
-    rows.push({
-      label: 'Pay with',
-      value: 'Any token the market can price',
-      hint: 'send the amount quoted below; what arrives is sold for at least the price',
-    })
-    rows.push({
-      label: 'How',
-      value: 'One swap per payment',
-      hint: `order valid for ${formatDuration(asNumber(payment.validitySeconds))}; any surplus over the price goes to the receiver`,
-    })
-    rows.push({
-      label: 'Paid to',
-      value: toOwner ? 'The owner' : short(receiver),
-      hint: toOwner ? recipe.owner : receiver,
-    })
+    // A payer needs the amount, who gets it and the network — nothing about how the address works.
+    return {
+      headline: `Pay ${amount} ${buy.name}, in any token.`,
+      rows: [
+        { label: 'Amount', value: `${amount} ${buy.name}`, hint: buy.hint },
+        { label: 'To', value: short(toOwner ? recipe.owner : receiver!), hint: toOwner ? recipe.owner : receiver },
+        { label: 'Network', value: chainLabel(recipe.chainId) },
+      ],
+      notes: [],
+    }
   } else if (action) {
     const sell = token(action.sellToken, symbolOf)
     const buy = token(action.buyToken, symbolOf)

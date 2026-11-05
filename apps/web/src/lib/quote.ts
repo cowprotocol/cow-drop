@@ -72,7 +72,17 @@ export interface PaymentQuote {
   send: bigint
   /** The market cost alone — the least the keeper will accept as covering the price. */
   atMarket: bigint
+  /** When this was quoted, in ms. With `expiresAt`, what a countdown measures against. */
+  quotedAt: number
+  /**
+   * When the order book stops standing behind this quote, in ms — its `expiration`. `null` for a
+   * payment in the price token itself, which is a fixed amount and never goes stale.
+   */
+  expiresAt: number | null
 }
+
+/** If the order book's `expiration` cannot be read, treat a quote as good for this long. */
+const FALLBACK_QUOTE_LIFETIME_MS = 60_000
 
 /**
  * How much of `sellToken` pays a payment drop, from a **buy** quote for its price.
@@ -92,7 +102,7 @@ export async function quotePayment(params: {
 }): Promise<PaymentQuote> {
   if (params.sellToken.toLowerCase() === params.buyToken.toLowerCase()) {
     // Paid in the token the owner wants: no trade, the drop forwards it.
-    return { send: params.buyAmount, atMarket: params.buyAmount }
+    return { send: params.buyAmount, atMarket: params.buyAmount, quotedAt: Date.now(), expiresAt: null }
   }
 
   const request: OrderQuoteRequest = {
@@ -106,14 +116,22 @@ export async function quotePayment(params: {
     signingScheme: SigningScheme.PRESIGN,
   }
 
-  const { quote } = await getOrderBookApi(params.chainId)
+  const { quote, expiration } = await getOrderBookApi(params.chainId)
     .getQuote(request)
     .catch((cause: unknown) => {
       throw new Error(describeOrderBookError(cause), { cause })
     })
 
   const amounts = { sellAmount: BigInt(quote.sellAmount), feeAmount: BigInt(quote.feeAmount) }
-  return { send: requiredPayment(amounts, PAYMENT_SLIPPAGE_BPS), atMarket: requiredPayment(amounts, 0) }
+  const quotedAt = Date.now()
+  const expires = Date.parse(expiration)
+  return {
+    send: requiredPayment(amounts, PAYMENT_SLIPPAGE_BPS),
+    atMarket: requiredPayment(amounts, 0),
+    quotedAt,
+    // An expiry already past (clock skew) or unreadable falls back rather than re-quoting in a loop.
+    expiresAt: Number.isFinite(expires) && expires > quotedAt ? expires : quotedAt + FALLBACK_QUOTE_LIFETIME_MS,
+  }
 }
 
 const PRICE_DECIMALS = 10

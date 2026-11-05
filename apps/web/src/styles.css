@@ -1287,3 +1287,19 @@ label.radio input {
 .share-empty .button {
   margin-top: 1rem;
 }
+
+/* The payment panel's quote countdown: a bar that drains to the order book's expiry. */
+.quote-countdown {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.quote-countdown progress {
+  flex: 1 1 8rem;
+  min-width: 6rem;
+  height: 0.4rem;
+  accent-color: var(--accent);
+}

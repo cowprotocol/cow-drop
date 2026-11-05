@@ -154,6 +154,7 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
   }
 
   const explorer = blockExplorer(recipe.chainId)
+  const isPayment = paymentStepOf(recipe) !== undefined
 
   return (
     <section className="share">
@@ -173,16 +174,20 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
             <button onClick={() => void copyLink()}>{copied === 'link' ? 'Link copied' : 'Copy link'}</button>
             {nativeShare && <button onClick={nativeShare}>Share…</button>}
           </div>
-          <p className="hint">
-            Scan it, or send {chainLabel(recipe.chainId)} funds to the address by bridge, exchange
-            withdrawal or plain transfer. Nothing is deployed here yet — the recipe spends whatever
-            arrives when it runs.
-          </p>
+          {isPayment ? (
+            <p className="hint">Pay on {chainLabel(recipe.chainId)} only.</p>
+          ) : (
+            <p className="hint">
+              Scan it, or send {chainLabel(recipe.chainId)} funds to the address by bridge, exchange
+              withdrawal or plain transfer. Nothing is deployed here yet — the recipe spends whatever
+              arrives when it runs.
+            </p>
+          )}
         </div>
 
         <div className="share-what">
           <table className="share-table">
-            <caption>What this address does</caption>
+            <caption>{isPayment ? 'Payment request' : 'What this address does'}</caption>
             <tbody>
               {summary.rows.map((row) => (
                 <tr key={row.label}>
@@ -197,7 +202,7 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
           </table>
 
           {/* A payer's real question is "how much do I send": answered live, in the token they hold. */}
-          {paymentStepOf(recipe) && address && tokens.length > 0 && (
+          {isPayment && address && tokens.length > 0 && (
             <PaymentPanel recipe={recipe} address={address} deployment={compiled.value.deployment} tokens={tokens} />
           )}
 
@@ -208,21 +213,29 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
           ))}
 
           <p className="hint">
-            Anyone can trigger this, and nobody can change it: the address is a hash of the recipe, so
-            a different recipe is a different address.{' '}
+            {!isPayment && (
+              <>
+                Anyone can trigger this, and nobody can change it: the address is a hash of the recipe, so
+                a different recipe is a different address.{' '}
+              </>
+            )}
             <a href={`${explorer.url}/address/${address ?? ''}`} target="_blank" rel="noreferrer">
               View on {explorer.name}
             </a>
           </p>
 
-          <div className="actions">
-            <a className="button" href={routeHash({ tab: 'recipes', recipe })}>
-              Open in the builder
-            </a>
-            <a className="button secondary" href={routeHash({ tab: 'bridge', recipe })}>
-              Fund it from another chain
-            </a>
-          </div>
+          {/* A payer has no use for the builder, and a bridge cannot pay a payment request: it calls plain
+              `activate`, which a payment recipe refuses. */}
+          {!isPayment && (
+            <div className="actions">
+              <a className="button" href={routeHash({ tab: 'recipes', recipe })}>
+                Open in the builder
+              </a>
+              <a className="button secondary" href={routeHash({ tab: 'bridge', recipe })}>
+                Fund it from another chain
+              </a>
+            </div>
+          )}
         </div>
       </div>
     </section>
