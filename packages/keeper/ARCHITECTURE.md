@@ -66,6 +66,41 @@ refuses while the polled digest still matches, and the commitment ends on whiche
   the balance never moved. Before a uid exists the recipe's own validity window stands in, measured from
   the receipt, which errs late.
 
+## Payment drops
+
+A `payment` recipe — "pay me `buyAmount` of `buyToken`, in any token" — names no sell token, so the
+balance poll has nothing to poll and plain `activate` reverts. Three things differ.
+
+**Tokens come from logs.** Each tick reads ERC20 `Transfer` logs into every payment drop, in one
+`eth_getLogs` per block range with the drops as an OR list on the indexed `to`. Any token seen arriving
+is added to the drop's `payment.tokens` and joins the poll. Each drop keeps its own `scannedTo` cursor.
+A first scan reaches back `transferLookbackBlocks` (10,000), and a keeper that was down catches up
+`maxTransferChunksPerTick` ranges at a time. A failed read throws before anything is written, so a
+cursor never passes logs it did not read.
+
+**The market decides readiness, before the simulation does.** For each funded token the keeper asks the
+order book for a *buy* quote for `buyAmount`. It activates only if the balance covers `sellAmount +
+feeAmount`, since the drop's order is fee-less and the fee comes out of the sell side. The UI asks the
+payer for 50 bps more than that. The cushion absorbs the price moving between the two quotes, and
+anything it does not use reaches the receiver as surplus, since the drop sells the whole balance.
+
+- A short balance emits `payment-underpaid` with what the price needs.
+- A token the order book will not quote emits `payment-underpaid` with no `required`, and is never
+  activated. Spam sent to a payment address costs a quote, not a transaction.
+- Both are re-checked when the balance moves or every `resimulateIntervalMs`, which is how a price that
+  recovers gets noticed.
+
+A payment in `buyToken` itself needs no quote; it qualifies at `buyAmount` and the step forwards it.
+
+**The latch is per token.** A payment drop can hold several tokens, and a second token arriving must not
+release the first one's order. So a confirmed activation records `payment.committed[token]` — the
+balance it sold and a deadline of the recipe's validity from the receipt — instead of `committedDigest`.
+The token is skipped while its balance is unchanged and the deadline has not passed. One activation
+sells one token, and another token waits for the next tick.
+
+In `paying` mode the fee is valued against `buyAmount` of `buyToken`, since that is the trade's volume
+whatever pays for it.
+
 ## Registration
 
 ```
@@ -261,6 +296,8 @@ pinning.
 
 ## Known limits
 
+- **Payment drops see ERC20 transfers only.** Native-currency payments are not detected; the owner can
+  sweep them.
 - **One chain per process.** The hot key, the nonce, the deployment and the cursor are all per chain, which
   is why a recipe for another chain is a 422 rather than something stored and never looked at.
 - **One process per key.** Two keepers sharing a key would read the same nonce and stall each other.

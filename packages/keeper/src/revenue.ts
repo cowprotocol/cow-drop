@@ -1,3 +1,4 @@
+import { OrderQuoteSideKindBuy, SigningScheme, type OrderQuoteRequest } from '@cowprotocol/cow-sdk'
 import type { Address } from 'viem'
 
 /**
@@ -8,6 +9,48 @@ import type { Address } from 'viem'
  */
 export interface PriceOracle {
   nativePrice(token: Address): Promise<number | undefined>
+}
+
+/**
+ * What it costs, right now, to buy `buyAmount` of `buyToken` with `sellToken`.
+ *
+ * A payment drop's sell token is picked by the payer, so the only way to tell a payment that covers
+ * the owner's price from one that does not is to ask the market. `undefined` means the order book
+ * would not quote the pair — a spam token, typically — which is a refusal, not a zero.
+ */
+export interface PaymentQuoter {
+  quoteBuy(params: {
+    sellToken: Address
+    buyToken: Address
+    buyAmount: bigint
+    /** The drop, which is who signs the order. */
+    from: Address
+    receiver: Address
+  }): Promise<{ sellAmount: bigint; feeAmount: bigint } | undefined>
+}
+
+/** The order book's `/quote`, as a `PaymentQuoter`. Quoted as a pre-signed buy, since that is the price asked. */
+export function orderBookPaymentQuoter(api: {
+  getQuote(request: OrderQuoteRequest): Promise<{ quote: { sellAmount: string; feeAmount: string } }>
+}): PaymentQuoter {
+  return {
+    async quoteBuy({ sellToken, buyToken, buyAmount, from, receiver }) {
+      try {
+        const { quote } = await api.getQuote({
+          sellToken,
+          buyToken,
+          from,
+          receiver,
+          kind: OrderQuoteSideKindBuy.BUY,
+          buyAmountAfterFee: buyAmount.toString(),
+          signingScheme: SigningScheme.PRESIGN,
+        })
+        return { sellAmount: BigInt(quote.sellAmount), feeAmount: BigInt(quote.feeAmount) }
+      } catch {
+        return undefined
+      }
+    },
+  }
 }
 
 /**

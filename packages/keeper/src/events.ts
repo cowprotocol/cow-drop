@@ -33,6 +33,13 @@ export type KeeperEvent = Base &
     | { type: 'order-posted'; orderUid: Hex; status: 'posted' | 'duplicate' }
     | { type: 'order-rejected'; orderUid: Hex; detail: string }
     | { type: 'retired'; reason: RetiredReason }
+    /** A payment drop received a token it had not seen before. */
+    | { type: 'payment-detected'; token: Address }
+    /**
+     * A payment drop holds `balance` of `token`, and the market says that buys less than the price —
+     * or cannot price it at all, in which case `required` is absent. Emitted on a change only.
+     */
+    | { type: 'payment-underpaid'; token: Address; balance: string; required?: string }
   )
 
 /**

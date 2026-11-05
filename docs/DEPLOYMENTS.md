@@ -39,6 +39,7 @@ generate` pick the new directory up — it reads every `gen*/` and emits them al
 | `PresignSteps` | `0xd00cae373DE3a738D13ab7E1203a8d4662D4f1e0` | **not yet broadcast** | **moved** |
 | `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | **not yet broadcast** | same |
 | `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | **not yet broadcast** | same |
+| `PaymentSteps` | `0x8BA52FAcbeFCC97CB93ccfCB53e3f2204543EEe8` | live on Gnosis | new |
 | `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | **not yet broadcast** | **moved** |
 | `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | **not yet broadcast** | new |
 | `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis | same |
@@ -54,12 +55,17 @@ depends on it** — nothing in a recipe reaches a receiver, so it is not an inpu
 It is recorded here only because a bridge route is quoted against its address.
 `DropAddresses.bungeeReceiver` is optional in the SDK for the same reason.
 
+`PaymentSteps` joined generation 2 late too, for a narrower reason. It *is* an input to a drop address,
+but only to recipes that name a payment step, and none existed before it. Adding it moved no address,
+and generation 2 had not been broadcast. `DropAddresses.paymentSteps` is optional because generation 1
+has none.
+
 **Generation 2 has not been broadcast.** `pnpm generate` has already pointed the SDK at it, so a recipe
 compiled today resolves against the new `PresignSteps`. Until the deploy runs, activating a path-P drop
 reverts with `NoCodeAtDelegateTarget`, which the UI's `getCode` check surfaces before anyone funds anything.
 
 Both cow-shed contracts are the canonical ones already live on Gnosis, so **the only things this project
-deploys are its own seven contracts** and a drop address derives entirely from official cow-shed code.
+deploys are its own nine contracts** and a drop address derives entirely from official cow-shed code.
 Since a CREATE2 address comes from init code, landing on #79's addresses is proof this repo reproduces the
 deployed bytecode — which is why `contracts/foundry.toml` must stay byte-identical to cow-shed's.
 

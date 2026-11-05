@@ -1,4 +1,5 @@
 import {
+  buildActivatePaymentTx,
   buildActivateTx,
   compileRecipe,
   getDeployment,
@@ -9,7 +10,7 @@ import {
   type DropRecipeJson,
 } from '@cowprotocol/cow-drop-sdk'
 import type { OrderCreation } from '@cowprotocol/cow-sdk'
-import type { Address, Hex, TransactionReceipt } from 'viem'
+import { encodeFunctionData, type Address, type Hex, type TransactionReceipt } from 'viem'
 
 import {
   describeOrderBookError,
@@ -21,6 +22,13 @@ import {
 
 const ERC20_ABI = [
   { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'uint256' }] },
+  {
+    type: 'function',
+    name: 'transfer',
+    stateMutability: 'nonpayable',
+    inputs: [{ type: 'address' }, { type: 'uint256' }],
+    outputs: [{ type: 'bool' }],
+  },
 ] as const
 
 /**
@@ -199,6 +207,65 @@ export async function activateDrop(params: {
   const hash = await sendTransaction({ chainId, account: params.account, ...tx })
   const receipt = await getPublicClient(chainId).waitForTransactionReceipt({ hash })
   return { hash, receipt }
+}
+
+/**
+ * Activate a payment drop, paying with its balance of `sellToken`.
+ *
+ * A payment recipe names no sell token, so plain `activate` reverts with `NoPaymentToken`; this goes
+ * through `PaymentSteps.activatePayment` instead. As with `activateDrop`, the wallet only pays gas:
+ * whichever token is named, the order still guarantees the owner's price.
+ */
+export async function activatePaymentDrop(params: {
+  account: Address
+  recipe: DropRecipeJson
+  sellToken: Address
+}): Promise<{ hash: Hex; receipt: TransactionReceipt }> {
+  const compiled = compileRecipe(params.recipe)
+  const tx = buildActivatePaymentTx({
+    deployment: compiled.deployment,
+    owner: params.recipe.owner,
+    setupData: compiled.setupData,
+    sellToken: params.sellToken,
+  })
+
+  const chainId = compiled.deployment.chainId
+  const hash = await sendTransaction({ chainId, account: params.account, ...tx })
+  const receipt = await getPublicClient(chainId).waitForTransactionReceipt({ hash })
+  return { hash, receipt }
+}
+
+/**
+ * Pay a payment drop: a plain ERC20 `transfer` of `amount` from the connected wallet to the drop.
+ *
+ * Nothing drop-specific happens here, on purpose. The drop does not exist yet and needs no call: a
+ * transfer is all a payer does, from this page or from any wallet or exchange, and the keeper takes it
+ * from there. Resolves once the transfer is mined, so the balance read after it is the paid one.
+ */
+export async function sendPayment(params: {
+  chainId: number
+  account: Address
+  token: Address
+  drop: Address
+  amount: bigint
+}): Promise<{ hash: Hex; receipt: TransactionReceipt }> {
+  const hash = await sendTransaction({
+    chainId: params.chainId,
+    account: params.account,
+    to: params.token,
+    data: encodeFunctionData({ abi: ERC20_ABI, functionName: 'transfer', args: [params.drop, params.amount] }),
+    value: 0n,
+  })
+  const receipt = await getPublicClient(params.chainId).waitForTransactionReceipt({ hash })
+  if (receipt.status !== 'success') throw new Error(`The transfer reverted in ${hash}`)
+  return { hash, receipt }
+}
+
+/** One ERC20 balance of an address. A token that does not answer reads as zero. */
+export async function readTokenBalance(chainId: number, token: Address, holder: Address): Promise<bigint> {
+  return getPublicClient(chainId)
+    .readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [holder] })
+    .catch(() => 0n)
 }
 
 /**

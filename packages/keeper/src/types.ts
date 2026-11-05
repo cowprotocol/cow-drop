@@ -75,6 +75,12 @@ export interface WatchHints {
   notAfterIsHard: boolean
   /** Nothing could be inferred — an all-`raw` recipe. Simulated on a slow timer instead. */
   blind: boolean
+  /**
+   * Set for a recipe with a `payment` step. Such a recipe names no sell token, so `tokens` cannot say
+   * what to poll: the tokens are discovered from `Transfer` logs into the drop instead, and kept on
+   * `RegisteredDrop.payment`.
+   */
+  payment?: { buyToken: Address; buyAmount: string }
   /** Everything the decoder refused to name, surfaced to the operator and the UI. */
   warnings: string[]
 }
@@ -95,6 +101,33 @@ export interface PendingActivation {
    */
   sentAtBlock: string
   replacements: number
+  /** For a payment drop, the token this activation told it to sell. */
+  sellToken?: Address
+  /** And its balance at the simulation, which the order is sized to. */
+  sellBalance?: string
+}
+
+/**
+ * What the keeper knows about a payment drop beyond its recipe.
+ *
+ * A payment recipe commits to what the owner receives and not to what the payer sends, so the keeper
+ * learns which tokens to poll from `Transfer` logs into the drop.
+ */
+export interface PaymentState {
+  /** Every ERC20 seen arriving, lowercased, in discovery order. */
+  tokens: Address[]
+  /** The last block whose `Transfer` logs have been read for this drop. */
+  scannedTo?: string
+  /**
+   * Per token, the balance an activation committed to an order that may still fill.
+   *
+   * The per-token counterpart of `RegisteredDrop.committedDigest`: a payment drop can hold several
+   * tokens, and a second token arriving must not release the first token's latch. Released when the
+   * token's balance moves or `until` passes.
+   */
+  committed: Record<Address, { balance: string; until: number }>
+  /** The last underpayment reported per token, so `payment-underpaid` fires on a change only. */
+  underpaid?: Record<Address, string>
 }
 
 export interface ActivationRecord {
@@ -175,6 +208,8 @@ export interface RegisteredDrop {
    * cannot be posted without it.
    */
   appDataDocuments?: Record<Hex, string>
+  /** Present for a recipe with a `payment` step. */
+  payment?: PaymentState
   pending?: PendingActivation
   /** Newest last. */
   activations: ActivationRecord[]

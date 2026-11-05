@@ -1,4 +1,11 @@
-import { buildActivateTx, type DropDeployment, type DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
+import {
+  buildActivatePaymentTx,
+  buildActivateTx,
+  requiredPayment,
+  type DropDeployment,
+  type DropRecipeJson,
+  type EvmCall,
+} from '@cowprotocol/cow-drop-sdk'
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
 import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
 import type { Address } from 'viem'
@@ -7,7 +14,7 @@ import type { KeeperChain, Submitter } from './chain.js'
 import type { EventBus } from './events.js'
 import { balancesDigest, pollTargets, selfDriving } from './hints.js'
 import { evaluatePolicy } from './policy.js'
-import type { PriceOracle } from './revenue.js'
+import type { PaymentQuoter, PriceOracle } from './revenue.js'
 import { feeValueWei } from './revenue.js'
 import { classifyRevert } from './reverts.js'
 import { utcDay, type KeeperStore } from './store.js'
@@ -25,6 +32,17 @@ export interface KeeperOptions {
    * by the others.
    */
   prices?: PriceOracle
+  /**
+   * Prices a payment drop's incoming token against the owner's price. Without it a payment drop is
+   * never activated in any token but its own `buyToken`, since nothing else can be shown to cover it.
+   */
+  quoter?: PaymentQuoter
+  /** How far back a payment drop's first `Transfer` scan reaches, in blocks. */
+  transferLookbackBlocks?: bigint
+  /** The widest block range one `eth_getLogs` asks for. Public RPCs refuse wide ones. */
+  maxTransferRange?: bigint
+  /** Ranges per tick, so a keeper that was down a long time catches up over several ticks. */
+  maxTransferChunksPerTick?: number
   /** Injected, because the day a budget rolls over on is the thing most worth pinning in a test. */
   now?: () => number
   pollIntervalMs?: number
@@ -86,6 +104,10 @@ export function createKeeper(options: KeeperOptions): Keeper {
     policy,
     events,
     prices,
+    quoter,
+    transferLookbackBlocks = 10_000n,
+    maxTransferRange = 5_000n,
+    maxTransferChunksPerTick = 10,
     now = Date.now,
     pollIntervalMs = 12_000,
     resimulateIntervalMs = 5 * 60_000,
@@ -143,19 +165,27 @@ export function createKeeper(options: KeeperOptions): Keeper {
     }
     if (live.length === 0) return result
 
-    // 3. One batched read for every balance this tick needs. A throw here aborts the tick with
+    // 3. Payment drops name no sell token, so learn theirs from `Transfer` logs before polling.
+    const paymentTokens = await discoverPayments(live)
+    const targetsOf = (drop: RegisteredDrop) =>
+      pollTargets(drop.hints, paymentTokens.get(drop.address) ?? drop.payment?.tokens ?? [])
+
+    // 4. One batched read for every balance this tick needs. A throw here aborts the tick with
     //    nothing written — see the note above on why an unread balance must not become a zero.
-    const requests = live.flatMap((drop) =>
-      pollTargets(drop.hints).map((token) => ({ token, holder: drop.address })),
-    )
+    const requests = live.flatMap((drop) => targetsOf(drop).map((token) => ({ token, holder: drop.address })))
     const balances = await chain.getBalances(requests)
 
-    // 4. Attribute the results, record them, and decide who is worth simulating.
-    const candidates: { drop: RegisteredDrop; digest: string; balances: Record<string, bigint> }[] = []
+    // 5. Attribute the results, record them, and decide who is worth simulating.
+    const candidates: {
+      drop: RegisteredDrop
+      digest: string
+      balances: Record<string, bigint>
+      paymentTokens: Address[]
+    }[] = []
     let cursor = 0
 
     for (const drop of live) {
-      const targets = pollTargets(drop.hints)
+      const targets = targetsOf(drop)
       const mine = balances.slice(cursor, cursor + targets.length)
       cursor += targets.length
 
@@ -186,15 +216,174 @@ export function createKeeper(options: KeeperOptions): Keeper {
         events.emit({ type: 'funded', chainId, drop: drop.address, owner: drop.owner, native, tokens })
       }
 
-      if (shouldSimulate(drop, digest, funded)) candidates.push({ drop, digest, balances: byToken })
+      if (shouldSimulate(drop, digest, funded)) {
+        candidates.push({ drop, digest, balances: byToken, paymentTokens: paymentTokens.get(drop.address) ?? [] })
+      }
     }
 
     // 5. Simulate, in staleness order, up to the cap.
-    for (const { drop, digest, balances } of candidates.slice(0, maxSimulationsPerTick)) {
-      await consider(drop, digest, balances, result)
+    for (const { drop, digest, balances, paymentTokens: tokens } of candidates.slice(0, maxSimulationsPerTick)) {
+      await consider(drop, digest, balances, result, tokens)
     }
 
     return result
+  }
+
+  /**
+   * Read `Transfer` logs into payment drops, and remember every token seen arriving.
+   *
+   * A payment recipe names no sell token, so its hints cannot say what to poll. The logs can: whatever
+   * a payer sent shows up as a `Transfer` to the drop. Each drop keeps its own `scannedTo`, but the
+   * scan is one request per range for all of them, from the oldest cursor — a drop further ahead just
+   * sees logs it has seen before, which only re-adds a token it already holds.
+   *
+   * A failed read throws out of the tick before anything is written, so a cursor never advances past
+   * logs that were not read.
+   *
+   * @returns Each payment drop's tokens after this scan, by address.
+   */
+  async function discoverPayments(live: RegisteredDrop[]): Promise<Map<Address, Address[]>> {
+    const tokensByDrop = new Map<Address, Address[]>()
+    const payers = live.filter((drop) => drop.hints.payment)
+    if (payers.length === 0) return tokensByDrop
+
+    const head = await chain.getBlockNumber()
+    const firstScan = head > transferLookbackBlocks ? head - transferLookbackBlocks : 0n
+    const startOf = (drop: RegisteredDrop) =>
+      drop.payment?.scannedTo === undefined ? firstScan : BigInt(drop.payment.scannedTo) + 1n
+
+    let from = payers.map(startOf).reduce((a, b) => (a < b ? a : b))
+    let scannedTo: bigint | undefined
+    const found = new Map<Address, Set<Address>>()
+
+    for (let chunk = 0; chunk < maxTransferChunksPerTick && from <= head; chunk++) {
+      const to = from + maxTransferRange - 1n < head ? from + maxTransferRange - 1n : head
+      const transfers = await chain.getIncomingTransfers({
+        to: payers.map((drop) => drop.address),
+        fromBlock: from,
+        toBlock: to,
+      })
+      for (const transfer of transfers) {
+        const set = found.get(transfer.to) ?? new Set<Address>()
+        set.add(transfer.token)
+        found.set(transfer.to, set)
+      }
+      scannedTo = to
+      from = to + 1n
+    }
+
+    for (const drop of payers) {
+      const known = drop.payment?.tokens ?? []
+      const fresh = [...(found.get(drop.address) ?? [])].filter((token) => !known.includes(token))
+      const tokens = [...known, ...fresh]
+      tokensByDrop.set(drop.address, tokens)
+
+      const previous = drop.payment?.scannedTo === undefined ? undefined : BigInt(drop.payment.scannedTo)
+      const advanced = scannedTo !== undefined && (previous === undefined || scannedTo > previous)
+      if (fresh.length === 0 && !advanced) continue
+
+      await store.update(chainId, drop.address, (current) => ({
+        ...current,
+        payment: {
+          committed: {},
+          ...current.payment,
+          tokens,
+          scannedTo: advanced ? String(scannedTo) : current.payment?.scannedTo,
+        },
+        updatedAt: now(),
+      }))
+      for (const token of fresh) {
+        events.emit({ type: 'payment-detected', chainId, drop: drop.address, owner: drop.owner, token })
+        logger.info(`payment drop ${drop.address} received ${token}`)
+      }
+    }
+
+    return tokensByDrop
+  }
+
+  /**
+   * The token a payment drop should be activated with this tick, or `undefined` if none pays.
+   *
+   * A token qualifies when its balance covers the owner's price at the market — a buy quote for
+   * `buyAmount`, with the fee added since the drop's order is fee-less — and no live order already
+   * holds that balance. The payer was asked for 50 bps more than the quote, which is what absorbs the
+   * market moving between their quote and this one. A token the order book will not quote never
+   * qualifies: spam sent to a payment address costs the keeper a quote, not a transaction.
+   *
+   * `drop` is the record as loaded at the start of the tick, so its `payment.tokens` may predate this
+   * tick's scan — `tokens` is passed in for that reason.
+   */
+  async function choosePayment(
+    drop: RegisteredDrop,
+    tokens: readonly Address[],
+    balances: Record<string, bigint>,
+  ): Promise<{ sellToken: Address; balance: bigint } | undefined> {
+    const payment = drop.hints.payment
+    if (!payment) return undefined
+    const committedByToken = drop.payment?.committed ?? {}
+
+    for (const token of tokens) {
+      const balance = balances[token] ?? 0n
+      if (balance === 0n) continue
+
+      const committed = committedByToken[token]
+      if (committed && committed.balance === String(balance) && now() < committed.until) continue
+
+      let required: bigint | undefined
+      if (token === payment.buyToken) {
+        // Paid in the token the owner wants: nothing to trade, the step forwards it.
+        required = BigInt(payment.buyAmount)
+      } else if (quoter) {
+        const quote = await quoter.quoteBuy({
+          sellToken: token,
+          buyToken: payment.buyToken,
+          buyAmount: BigInt(payment.buyAmount),
+          from: drop.address,
+          receiver: receiverOf(drop),
+        })
+        required = quote ? requiredPayment(quote, 0) : undefined
+      }
+
+      if (required !== undefined && balance >= required) return { sellToken: token, balance }
+      await reportUnderpaid(drop, token, balance, required)
+    }
+    return undefined
+  }
+
+  /** Emit `payment-underpaid` when what is known about a token's shortfall changes. */
+  async function reportUnderpaid(
+    drop: RegisteredDrop,
+    token: Address,
+    balance: bigint,
+    required: bigint | undefined,
+  ): Promise<void> {
+    const key = `${balance}:${required ?? 'unquotable'}`
+    if (drop.payment?.underpaid?.[token] === key) return
+
+    await store.update(chainId, drop.address, (current) => ({
+      ...current,
+      payment: {
+        tokens: [],
+        committed: {},
+        ...current.payment,
+        underpaid: { ...current.payment?.underpaid, [token]: key },
+      },
+      updatedAt: now(),
+    }))
+    events.emit({
+      type: 'payment-underpaid',
+      chainId,
+      drop: drop.address,
+      owner: drop.owner,
+      token,
+      balance: String(balance),
+      ...(required !== undefined ? { required: String(required) } : {}),
+    })
+    logger.info(
+      required === undefined
+        ? `payment drop ${drop.address} holds ${balance} of ${token}, which the order book will not quote`
+        : `payment drop ${drop.address} holds ${balance} of ${token}; the price needs ${required}`,
+    )
   }
 
   /**
@@ -264,10 +453,35 @@ export function createKeeper(options: KeeperOptions): Keeper {
     digest: string,
     balances: Record<string, bigint>,
     result: KeeperTickResult,
+    /** For a payment drop, the tokens this tick's scan knows it received. */
+    paymentTokens: readonly Address[] = [],
   ): Promise<void> {
     result.simulated++
 
-    const call = buildActivateTx({ deployment, owner: drop.recipe.owner, setupData: drop.setupData })
+    let call: EvmCall
+    let paying: { sellToken: Address; balance: bigint } | undefined
+    if (drop.hints.payment) {
+      paying = await choosePayment(drop, paymentTokens, balances)
+      if (!paying) {
+        // Recorded like a failed simulation, so the digest gate holds the drop until a balance moves
+        // or `resimulateIntervalMs` passes — which is also how often an underpaid token is re-quoted.
+        await store.update(chainId, drop.address, (current) => ({
+          ...current,
+          lastSimulation: { at: now(), ok: false, balancesDigest: digest, revert: 'no payment covers the price' },
+          updatedAt: now(),
+        }))
+        return
+      }
+      call = buildActivatePaymentTx({
+        deployment,
+        owner: drop.recipe.owner,
+        setupData: drop.setupData,
+        sellToken: paying.sellToken,
+      })
+    } else {
+      call = buildActivateTx({ deployment, owner: drop.recipe.owner, setupData: drop.setupData })
+    }
+
     const payer = await submitter.payer()
     const simulation = await chain.simulateActivation({ call, from: payer })
 
@@ -334,7 +548,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
       return
     }
 
-    await send(drop, { call, gasLimit, ...fees, costWei: verdict.costWei }, result)
+    await send(drop, { call, gasLimit, ...fees, costWei: verdict.costWei, paying }, result)
   }
 
   /**
@@ -352,6 +566,8 @@ export function createKeeper(options: KeeperOptions): Keeper {
       maxFeePerGas: bigint
       maxPriorityFeePerGas: bigint
       costWei: bigint
+      /** For a payment drop, the token and balance this activation commits. */
+      paying?: { sellToken: Address; balance: bigint }
     },
     result: KeeperTickResult,
   ): Promise<void> {
@@ -397,6 +613,9 @@ export function createKeeper(options: KeeperOptions): Keeper {
           sentAt: now(),
           sentAtBlock: String(head),
           replacements: 0,
+          ...(plan.paying
+            ? { sellToken: plan.paying.sellToken, sellBalance: String(plan.paying.balance) }
+            : {}),
         },
         updatedAt: now(),
       }))
@@ -449,6 +668,9 @@ export function createKeeper(options: KeeperOptions): Keeper {
       const confirmed = receipt.status === 'success'
       const once = drop.recipe.once === true
       const parked = selfDriving(drop.recipe)
+      // A payment drop latches per token rather than on the whole digest: a second token arriving must
+      // not release the first token's order, and the first must not hold the second back.
+      const paidWith = confirmed && drop.hints.payment ? pending.sellToken : undefined
 
       await store.update(chainId, drop.address, (current) => ({
         ...current,
@@ -459,7 +681,24 @@ export function createKeeper(options: KeeperOptions): Keeper {
         // Those balances are committed to the order this activation signed, and they stay in the drop
         // until a solver settles it. Recorded so the next tick does not sign a second order for the
         // same money — see `shouldSimulate`.
-        committedDigest: confirmed && !once && !parked ? current.lastSimulation?.balancesDigest : undefined,
+        committedDigest:
+          confirmed && !once && !parked && !drop.hints.payment ? current.lastSimulation?.balancesDigest : undefined,
+        ...(paidWith && current.payment
+          ? {
+              payment: {
+                ...current.payment,
+                committed: {
+                  ...current.payment.committed,
+                  [paidWith]: {
+                    balance: pending.sellBalance ?? '0',
+                    // Measured from the receipt, which errs late — the safe direction for a gate that
+                    // stops one payment being sold twice.
+                    until: now() + committedValiditySeconds(drop.recipe) * 1000,
+                  },
+                },
+              },
+            }
+          : {}),
         pending: undefined,
         backoff: { failures: 0, nextAttemptAt: 0 },
         activations: [
@@ -592,7 +831,11 @@ export function createKeeper(options: KeeperOptions): Keeper {
   async function priceFee(drop: RegisteredDrop, balances: Record<string, bigint>): Promise<bigint | undefined> {
     if (!drop.fee || !prices) return undefined
 
-    const sellAmount = balances[drop.fee.sellToken] ?? 0n
+    // A payment drop's fee is registered against its buy token, since the sell token is the payer's
+    // choice; the volume is the price itself.
+    const sellAmount = drop.hints.payment
+      ? BigInt(drop.hints.payment.buyAmount)
+      : (balances[drop.fee.sellToken] ?? 0n)
     if (sellAmount === 0n) return 0n
 
     const nativePrice = await prices.nativePrice(drop.fee.sellToken)
@@ -633,6 +876,12 @@ export function createKeeper(options: KeeperOptions): Keeper {
       return blocks.length === 0 ? undefined : blocks.reduce((a, b) => (a < b ? a : b))
     },
   }
+}
+
+/** Who a payment drop pays: the step's receiver, defaulting to the owner as `compileRecipe` does. */
+function receiverOf(drop: RegisteredDrop): Address {
+  const step = drop.recipe.steps.find((candidate) => candidate.type === 'payment')
+  return ((step?.type === 'payment' ? step.receiver : undefined) ?? drop.recipe.owner) as Address
 }
 
 /** What the SDK's own templates default an order's lifetime to, and the fallback below with it. */

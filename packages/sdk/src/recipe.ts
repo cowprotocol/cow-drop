@@ -74,6 +74,20 @@ export type DropStepJson =
       appData?: Hex
       allowFailure?: boolean
     }
+  /**
+   * "Pay me `buyAmount` of `buyToken`, in any ERC20." No sell token: the activator names it, through
+   * `buildActivatePaymentTx`. `receiver` defaults to the recipe's owner — not to the drop, as the other
+   * order steps do, because a payment that lands in the drop has paid nobody.
+   */
+  | {
+      type: 'payment'
+      buyToken: Address
+      /** In `buyToken` atoms. */
+      buyAmount: number | string
+      receiver?: Address
+      validitySeconds: number | string
+      appData?: Hex
+    }
   | {
       type: 'requireCallResult'
       target: Address
@@ -197,11 +211,13 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
     throw new Error(`recipe salt must be a 32-byte hex string, got: ${String(json.salt)}`)
   }
 
+  assertPaymentStandsAlone(json.steps)
+
   const recipe: Recipe = {
     label: json.label,
     salt: json.salt ?? ZERO_SALT,
     once: json.once ?? false,
-    calls: json.steps.map((step) => compileStep(step, deployment)),
+    calls: json.steps.map((step) => compileStep(step, deployment, json.owner)),
   }
 
   // `once` and `allowFailure` are each fine alone and dangerous together: a step that fails without
@@ -228,11 +244,35 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
   }
 }
 
+const ORDER_STEPS = new Set<DropStepJson['type']>([
+  'presignSellAll',
+  'presignSellAllAtOracle',
+  'twapFromBalance',
+  'stopLossFromBalance',
+  'payment',
+])
+
+/**
+ * A payment recipe places exactly one order: the one paying the owner. A second payment step would
+ * read the same activator-chosen token and sell a balance the first already committed, and another
+ * order step would race the payment for the payer's money. Both are refused rather than warned about.
+ */
+function assertPaymentStandsAlone(steps: DropStepJson[]): void {
+  const payments = steps.filter((step) => step.type === 'payment').length
+  if (payments === 0) return
+  if (payments > 1) {
+    throw new Error('a recipe can hold at most one payment step')
+  }
+  if (steps.some((step) => step.type !== 'payment' && ORDER_STEPS.has(step.type))) {
+    throw new Error('a payment step cannot share a recipe with another order step')
+  }
+}
+
 /**
  * One recipe step into the call that performs it. The switch is exhaustive over `DropStepJson`, so
  * a new step type fails to compile here until it is handled.
  */
-function compileStep(step: DropStepJson, deployment: DropDeployment) {
+function compileStep(step: DropStepJson, deployment: DropDeployment, owner: Address) {
   switch (step.type) {
     case 'presignSellAll':
       return steps.presignSellAll(deployment, {
@@ -290,6 +330,14 @@ function compileStep(step: DropStepJson, deployment: DropDeployment) {
         validitySeconds: BigInt(step.validitySeconds),
         appData: step.appData,
         allowFailure: step.allowFailure,
+      })
+    case 'payment':
+      return steps.payment(deployment, {
+        buyToken: step.buyToken,
+        buyAmount: BigInt(step.buyAmount),
+        receiver: step.receiver ?? owner,
+        validitySeconds: BigInt(step.validitySeconds),
+        appData: step.appData,
       })
     case 'requireCallResult':
       return steps.requireCallResult(deployment, {

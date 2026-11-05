@@ -5,6 +5,7 @@ import {
   STOP_LOSS_STEPS_ABI,
   TWAP_STEPS_ABI,
   GUARD_STEPS_ABI,
+  PAYMENT_STEPS_ABI,
   PRESIGN_STEPS_ABI,
   TOKEN_STEPS_ABI,
 } from './generated/artifacts.js'
@@ -17,7 +18,13 @@ import type { DropDeployment } from './types.js'
  * person reading a recipe — "PresignSteps" is something they can go and look up on a block explorer,
  * where "presignSteps" is an internal detail of this package.
  */
-export type StepContractName = 'GuardSteps' | 'TokenSteps' | 'PresignSteps' | 'TwapSteps' | 'StopLossSteps'
+export type StepContractName =
+  | 'GuardSteps'
+  | 'TokenSteps'
+  | 'PresignSteps'
+  | 'TwapSteps'
+  | 'StopLossSteps'
+  | 'PaymentSteps'
 
 /** One decoded argument, with the name the contract gives it. */
 export interface DescribedArg {
@@ -58,6 +65,7 @@ const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   PresignSteps: PRESIGN_STEPS_ABI as unknown as Abi,
   TwapSteps: TWAP_STEPS_ABI as unknown as Abi,
   StopLossSteps: STOP_LOSS_STEPS_ABI as unknown as Abi,
+  PaymentSteps: PAYMENT_STEPS_ABI as unknown as Abi,
 }
 
 /**
@@ -102,6 +110,8 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
     [deployment.presignSteps.toLowerCase(), 'PresignSteps'],
     [deployment.twapSteps.toLowerCase(), 'TwapSteps'],
     [deployment.stopLossSteps.toLowerCase(), 'StopLossSteps'],
+    // Absent from generations that predate it; a step naming it there decodes as unknown, correctly.
+    ...(deployment.paymentSteps ? [[deployment.paymentSteps.toLowerCase(), 'PaymentSteps'] as const] : []),
   ])
 
   /** Each call named where the SDK recognises it, and flagged where it does not. */

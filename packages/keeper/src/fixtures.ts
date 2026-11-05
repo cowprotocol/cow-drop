@@ -123,6 +123,7 @@ export function fakeChain(setup: {
   nonce?: number
   head?: bigint
   maxFeePerGas?: bigint
+  transfers?: import('./chain.js').IncomingTransfer[]
 } = {}) {
   const calls: string[] = []
   const state = {
@@ -132,6 +133,9 @@ export function fakeChain(setup: {
     nonce: setup.nonce ?? 0,
     head: setup.head ?? 1000n,
     maxFeePerGas: setup.maxFeePerGas ?? 10n ** 9n,
+    transfers: setup.transfers ?? [],
+    /** Every `getIncomingTransfers` range asked for, so a test can check the cursor. */
+    transferScans: [] as { fromBlock: bigint; toBlock: bigint }[],
   }
 
   const chain: import('./chain.js').KeeperChain = {
@@ -147,6 +151,17 @@ export function fakeChain(setup: {
     getFees: async () => ({ maxFeePerGas: state.maxFeePerGas, maxPriorityFeePerGas: 10n ** 8n }),
     getTransactionCount: async () => state.nonce,
     getReceipt: async () => state.receipt,
+    getIncomingTransfers: async ({ to, fromBlock, toBlock }) => {
+      calls.push('getIncomingTransfers')
+      state.transferScans.push({ fromBlock, toBlock })
+      const watched = new Set(to.map((address) => address.toLowerCase()))
+      return state.transfers.filter(
+        (transfer) =>
+          watched.has(transfer.to.toLowerCase()) &&
+          transfer.blockNumber >= fromBlock &&
+          transfer.blockNumber <= toBlock,
+      )
+    },
   }
 
   return { chain, calls, state }

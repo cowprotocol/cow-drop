@@ -314,3 +314,54 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
     steps,
   }
 }
+
+export interface PaymentRequestParams extends Omit<RecipeGuards, 'minAmount'> {
+  chainId: number
+  owner: Address
+  /** The token the receiver is paid in. */
+  buyToken: Address
+  /** The price, in `buyToken` atoms: the least the receiver gets per payment. */
+  buyAmount: bigint
+  /** Who is paid. Defaults to the owner. */
+  receiver?: Address
+  /** Lifetime of each payment's order, from its activation. Defaults to 30 minutes. */
+  validitySeconds?: number
+  appData?: Hex
+  label?: string
+  salt?: Hex
+}
+
+/**
+ * "Pay me `buyAmount` of `buyToken`, in any token": a reusable address a payer funds with whatever they
+ * hold.
+ *
+ * The recipe names no sell token. Whoever activates names it — `buildActivatePaymentTx` — and the drop
+ * sells its whole balance of that token for at least `buyAmount`, paid to the receiver. A payer is told
+ * how much to send by a buy quote for `buyAmount` (see `requiredPayment`); any surplus over the price is
+ * the receiver's, because the order is a sell.
+ *
+ * Reusable rather than one-shot, so the same address can take one payment after another. No minimum
+ * balance guard: the sell token is unknown, so there is nothing to measure — the price is the guard.
+ */
+export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
+  return {
+    version: 1,
+    generation: LATEST_GENERATION,
+    label: params.label ?? 'payment request',
+    chainId: params.chainId,
+    owner: params.owner,
+    salt: params.salt,
+    once: false,
+    steps: [
+      ...timeGuards(params),
+      {
+        type: 'payment',
+        buyToken: params.buyToken,
+        buyAmount: params.buyAmount.toString(),
+        receiver: params.receiver ?? params.owner,
+        validitySeconds: params.validitySeconds ?? 30 * 60,
+        appData: params.appData,
+      },
+    ],
+  }
+}

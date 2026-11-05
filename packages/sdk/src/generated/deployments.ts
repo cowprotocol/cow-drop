@@ -41,6 +41,7 @@ export const GENERATIONS: Record<number, DropAddresses> = {
     composableCow: '0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74',
     shedImplementation: '0x1c4b988481d945c98a21446AB2960000d290aB22',
     bungeeReceiver: '0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C',
+    paymentSteps: '0x8BA52FAcbeFCC97CB93ccfCB53e3f2204543EEe8',
   },
 }
 

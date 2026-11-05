@@ -12,7 +12,7 @@ import {
   type Log,
 } from 'viem'
 
-import { DROP_EXECUTOR_ABI, ONCHAIN_ORDERS_ABI } from './generated/artifacts.js'
+import { DROP_EXECUTOR_ABI, ONCHAIN_ORDERS_ABI, PAYMENT_STEPS_ABI } from './generated/artifacts.js'
 import { cowDomainSeparator, orderUidFor, type CowOrderData } from './orderUid.js'
 import type { DropDeployment } from './types.js'
 
@@ -38,6 +38,35 @@ export function buildActivateTx(params: {
       abi: DROP_EXECUTOR_ABI,
       functionName: 'activate',
       args: [params.owner, params.setupData],
+    }),
+    value: 0n,
+  }
+}
+
+/**
+ * Activate a payment drop, telling it which of its balances pays.
+ *
+ * A payment recipe commits to what the owner receives and not to what the payer sends, so the sell
+ * token is supplied here rather than read from the recipe. Goes through `PaymentSteps.activatePayment`,
+ * which hands the token to the step and calls `activate`. Like `buildActivateTx`, anyone may send it:
+ * whichever token is named, the order still guarantees the owner's price.
+ */
+export function buildActivatePaymentTx(params: {
+  deployment: Pick<DropDeployment, 'paymentSteps'>
+  owner: Address
+  setupData: Hex
+  sellToken: Address
+}): EvmCall {
+  const target = params.deployment.paymentSteps
+  if (!target) {
+    throw new Error('this generation has no PaymentSteps deployment, so it cannot activate a payment drop')
+  }
+  return {
+    to: target,
+    data: encodeFunctionData({
+      abi: PAYMENT_STEPS_ABI,
+      functionName: 'activatePayment',
+      args: [params.owner, params.setupData, params.sellToken],
     }),
     value: 0n,
   }

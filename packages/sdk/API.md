@@ -38,7 +38,8 @@ await walletClient.sendTransaction(tx)
 | `swapOnArrival(params)` | Template: sell whatever lands here, once, at a limit price. Reusable — later arrivals get sold too. |
 | `twapOnArrival(params)` | Template: split whatever lands here into parts and sell over time. One-shot. |
 | `stopLossOnArrival(params)` | Template: sell whatever lands here once a feed pair crosses a strike. One-shot, and self-driving — the watch tower polls the condition. |
-| `steps.*` | Build individual steps by hand: `presignSellAll`, `presignSellAllAtOracle`, `twapFromBalance`, `stopLossFromBalance`, `requireCallResult`, `requireMinBalance`, `requireTimeWindow`, `wrapNative`, `approveMax`, `approveBalance`, `sweep`, and `raw` for anything else. |
+| `paymentRequest(params)` | Template: "pay me `buyAmount` of `buyToken`, in any token". Reusable. The recipe names no sell token; activate it with `buildActivatePaymentTx`. Takes the time guards only. |
+| `steps.*` | Build individual steps by hand: `presignSellAll`, `presignSellAllAtOracle`, `twapFromBalance`, `stopLossFromBalance`, `payment`, `requireCallResult`, `requireMinBalance`, `requireTimeWindow`, `wrapNative`, `approveMax`, `approveBalance`, `sweep`, and `raw` for anything else. |
 | `describeRecipe(setupData, deployment)` | The inverse: committed bytes → named steps, decoded arguments, and warnings. See below. |
 
 All three templates take the same optional guards (`minAmount`, `notBefore`, `notAfter`), and
@@ -62,6 +63,7 @@ so asking a guard for `deployment.twapSteps` would misstate what moves that guar
 | | |
 |---|---|
 | `buildActivateTx({ deployment, owner, setupData })` | `{ to, data, value }` for deploying the drop and running its recipe. Idempotent — safe to send twice. |
+| `buildActivatePaymentTx({ deployment, owner, setupData, sellToken })` | The same for a payment recipe, naming which of the drop's balances pays. Goes through `PaymentSteps.activatePayment`; plain activation of a payment recipe reverts with `NoPaymentToken`. |
 | `parseOrderPlacement(log, { chainId, settlement })` | Decode an `OrderPlacement` event into the order that was placed, with the owner taken from the field its scheme puts it in and the uid recomputed. |
 | `toOrderBookPayload(order)` | That order as a `POST /api/v1/orders` body, forwarding the scheme and signature the event carried. |
 | `parseExtraData(extraData)` | The `int64 quoteId ++ uint32 validTo` the `data` field carries, or `undefined` if it is some other length. |
@@ -118,6 +120,7 @@ All owner-only, none needing a signature. Prefer designing the recipe so rescue 
 | | |
 |---|---|
 | `limitPriceToFraction(price, sellDecimals, buyDecimals)` | `'0.95'` → an exact integer fraction. |
+| `requiredPayment(quote, slippageBps = PAYMENT_SLIPPAGE_BPS)` | What pays a payment drop, from a CoW **buy** quote for its price: `sellAmount + feeAmount`, plus `slippageBps`, rounded up. Ask a payer for the default 50 bps extra; the keeper accepts at `0`. |
 
 Prices are never floats. The result is committed into an address, so a rounding difference between
 your code and the SDK would produce a *different address*, not a slightly different price.

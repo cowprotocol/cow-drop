@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { blockExplorer, chainLabel } from '../lib/chain.js'
 import { routeHash } from '../lib/route.js'
-import { summariseRecipe, type SymbolLookup } from '../lib/shareSummary.js'
-import { fetchTokenList, findToken } from '../lib/tokenList.js'
+import { summariseRecipe } from '../lib/shareSummary.js'
+import { fetchTokenList, findToken, type TokenInfo } from '../lib/tokenList.js'
+import { PaymentPanel, paymentStepOf } from '../components/PaymentPanel.js'
 
 /**
  * The share card: one drop, one big QR, and a plain-language table of what it does.
@@ -44,7 +45,7 @@ export function ShareTab({ recipe }: { recipe: DropRecipeJson | null }) {
 function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
   const [qr, setQr] = useState<string | null>(null)
   const [copied, setCopied] = useState<'address' | 'link' | null>(null)
-  const [symbols, setSymbols] = useState<SymbolLookup>(() => () => undefined)
+  const [tokens, setTokens] = useState<TokenInfo[]>([])
 
   /*
    * A recipe off a URL is untrusted input — a truncated paste, or a link from an older generation
@@ -87,8 +88,7 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
     let cancelled = false
     void fetchTokenList(recipe.chainId)
       .then((tokens) => {
-        if (cancelled) return
-        setSymbols(() => (value: string) => findToken(tokens, value)?.symbol)
+        if (!cancelled) setTokens(tokens)
       })
       .catch(() => undefined)
     return () => {
@@ -96,7 +96,15 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
     }
   }, [recipe.chainId])
 
-  const summary = useMemo(() => summariseRecipe(recipe, symbols), [recipe, symbols])
+  const summary = useMemo(
+    () =>
+      summariseRecipe(
+        recipe,
+        (value) => findToken(tokens, value)?.symbol,
+        (value) => findToken(tokens, value)?.decimals,
+      ),
+    [recipe, tokens],
+  )
 
   const shareUrl = `${window.location.origin}${window.location.pathname}${routeHash({ tab: 'share', recipe })}`
 
@@ -187,6 +195,11 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
               ))}
             </tbody>
           </table>
+
+          {/* A payer's real question is "how much do I send": answered live, in the token they hold. */}
+          {paymentStepOf(recipe) && address && tokens.length > 0 && (
+            <PaymentPanel recipe={recipe} address={address} deployment={compiled.value.deployment} tokens={tokens} />
+          )}
 
           {summary.notes.map((note) => (
             <p key={note} className="hint warn-note">

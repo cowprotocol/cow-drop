@@ -1,5 +1,15 @@
 import type { EvmCall } from '@cowprotocol/cow-drop-sdk'
-import { createPublicClient, http, keccak256, type Address, type Hex, type PublicClient } from 'viem'
+import {
+  createPublicClient,
+  getAddress,
+  http,
+  keccak256,
+  pad,
+  toEventSelector,
+  type Address,
+  type Hex,
+  type PublicClient,
+} from 'viem'
 import type { PrivateKeyAccount } from 'viem/accounts'
 
 /** What a simulation said. Never a boolean — the revert data is what classifies the drop. */
@@ -7,8 +17,20 @@ export type SimulationResult =
   | { ok: true; gas: bigint }
   | { ok: false; revertData?: Hex; message: string }
 
+/** One ERC20 `Transfer` into a watched address. The amount is not kept: the balance poll is the truth. */
+export interface IncomingTransfer {
+  /** The emitting contract, lowercased — the token. */
+  token: Address
+  /** The recipient, lowercased. */
+  to: Address
+  blockNumber: bigint
+}
+
+/** `Transfer(address indexed from, address indexed to, uint256 value)`. */
+export const TRANSFER_TOPIC: Hex = toEventSelector('Transfer(address,address,uint256)')
+
 /**
- * The six things the keeper needs from a chain.
+ * The things the keeper needs from a chain.
  *
  * Narrow for the same reason the watch tower's `ChainReader` is: everything interesting here is a
  * *decision* — is it ready, can we afford it, did it land — and a fake with six methods lets a test
@@ -23,6 +45,13 @@ export interface KeeperChain {
   getFees(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>
   getTransactionCount(address: Address): Promise<number>
   getReceipt(hash: Hex): Promise<{ status: 'success' | 'reverted'; blockNumber: bigint; costWei: bigint } | undefined>
+  /**
+   * ERC20 transfers into any of `to` over an inclusive block range — how a payment drop learns which
+   * token it was paid in. One `eth_getLogs`, with the recipients as an OR list on the indexed `to`.
+   */
+  getIncomingTransfers(params: { to: readonly Address[]; fromBlock: bigint; toBlock: bigint }): Promise<
+    IncomingTransfer[]
+  >
 }
 
 export interface PreparedActivation {
@@ -122,6 +151,33 @@ export function viemKeeperChain(client: PublicClient): KeeperChain {
     },
 
     getTransactionCount: (address) => client.getTransactionCount({ address, blockTag: 'pending' }),
+
+    async getIncomingTransfers({ to, fromBlock, toBlock }) {
+      if (to.length === 0) return []
+      // `eth_getLogs` directly, for the reason the watch tower gives: `client.getLogs` derives topics
+      // from an event and has no way to pass an OR list on an indexed argument.
+      const logs = (await client.request({
+        method: 'eth_getLogs',
+        params: [
+          {
+            topics: [TRANSFER_TOPIC, null, to.map((address) => pad(address, { size: 32 }))],
+            fromBlock: `0x${fromBlock.toString(16)}`,
+            toBlock: `0x${toBlock.toString(16)}`,
+          },
+        ],
+      })) as { address: Address; topics: Hex[]; blockNumber: Hex | null }[]
+
+      return (
+        logs
+          // ERC721 shares the signature but indexes a fourth topic, the token id. Not a payment.
+          .filter((log) => log.topics.length === 3 && log.topics[2] !== undefined)
+          .map((log) => ({
+            token: log.address.toLowerCase() as Address,
+            to: getAddress(`0x${log.topics[2]!.slice(-40)}`).toLowerCase() as Address,
+            blockNumber: log.blockNumber === null ? toBlock : BigInt(log.blockNumber),
+          }))
+      )
+    },
 
     async getReceipt(hash) {
       try {

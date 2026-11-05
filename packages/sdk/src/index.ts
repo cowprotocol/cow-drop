@@ -23,4 +23,5 @@ export {
   TOKEN_STEPS_ABI,
   PROXY_CREATION_CODE,
   STOP_LOSS_STEPS_ABI,
+  PAYMENT_STEPS_ABI,
 } from './generated/artifacts.js'

@@ -1,6 +1,6 @@
 # Contract architecture
 
-`DropExecutor`, five step contracts, four shared pieces. `DropExecutor` carries the security argument;
+`DropExecutor`, six step contracts, four shared pieces. `DropExecutor` carries the security argument;
 the split of the rest is an address-stability argument. For the overall design see
 [docs/DESIGN.md](../docs/DESIGN.md); for addresses see [docs/DEPLOYMENTS.md](../docs/DEPLOYMENTS.md).
 
@@ -85,6 +85,7 @@ the TWAP handler address did.
 | `PresignSteps` | settlement, vault relayer | `presignSellAll(…)`, `presignSellAllAtOracle(…)` |
 | `TwapSteps` | vault relayer, ComposableCoW, TWAP handler, timestamp factory | `twapFromBalance(…)` |
 | `StopLossSteps` | vault relayer, ComposableCoW, StopLoss handler | `stopLossFromBalance(…)` |
+| `PaymentSteps` | settlement, vault relayer, `DropExecutor` | `presignPayment(…)`, plus the entry point `activatePayment(…)` |
 
 - `requireMinBalance` / `requireTimeWindow` — revert unless enough has arrived, or outside an absolute
   window. `token = address(0)` guards the native balance; a `0` bound means unbounded.
@@ -110,9 +111,39 @@ the TWAP handler address did.
   fill is refused. It resolves the deadline as well as the amount — `StopLoss` takes an absolute
   `uint32 validTo`, so the step takes a duration and resolves it at activation.
 
+- `presignPayment` — "pay me `buyAmount` of `buyToken`, in any token". The recipe names no sell
+  token; the activator does, so the step sells the drop's whole balance of whichever token it is told
+  for at least `buyAmount`, paid to `receiver`, as one pre-signed sell order. A payment in `buyToken`
+  itself is forwarded with no order. See below for how the token gets in.
+
 A recipe may mix targets. `_amountFromBalance` and `_register` live in `lib/ComposableBase.sol`, which
 is what a second handler is built from. Events are emitted *from the drop*, since that is
 `address(this)` under delegatecall.
+
+## `PaymentSteps` — the one step with a runtime input
+
+`activate(owner, setupData)` takes nothing else, and everything in `setupData` is part of the address.
+That suits every other step, which reads what it needs off the drop's balances. A payment request
+cannot: its sell token is whatever the payer chose to send, which is not knowable when the address is
+derived.
+
+So the token travels through **transient storage on `PaymentSteps`**. `activatePayment(owner,
+setupData, sellToken)` is a plain call, not a step: it writes the token into a slot keyed by the drop,
+calls `DropExecutor.activate`, and clears the slot. `presignPayment`, delegatecalled inside the drop,
+reads it back with an external call to `PAYMENT_STEPS` — the contract's own address, captured as an
+immutable because `address(this)` under delegatecall is the drop. Plain `activate` on a payment recipe
+reverts with `NoPaymentToken`.
+
+**Why handing the activator that choice is safe.** Activation is permissionless, so anyone may call
+`activatePayment` with any token. But the order is a *sell* whose `buyToken`, minimum `buyAmount` and
+`receiver` all come from the committed recipe, so whatever token is named, the receiver gets at least
+the price or nothing fills. The worst an activator can do is choose *which* held token pays. Surplus
+over the price is the receiver's, because it is a sell order.
+
+`DropExecutor` is unchanged, so no existing drop address moved. `PaymentSteps` takes the executor as a
+constructor argument because `activatePayment` calls it, so the executor's address is part of
+`PaymentSteps`' own. The slot is keyed by the drop, so a payment drop activated from inside another
+drop's activation cannot read the outer one's token.
 
 ## Announcing an order: `OrderPlacement`
 
@@ -228,6 +259,7 @@ addresses cow-shed#79 records as live on Gnosis is proof it reproduces the canon
 | `OnchainOrders.t.sol` | That the redeclared events still carry EthFlow's topics, the on-chain scheme numbering, and the twelve-byte `data` layout. |
 | `CowOrderPoster.t.sol` | Both integration shapes plus the refusals: announcing an unsigned order, and either entry point reached the wrong way. |
 | `steps/TwapSteps.t.sol` | The TWAP step, plus a hermetic assertion that `TwapData` still encodes as the ten words the deployed handler decodes. |
+| `steps/PaymentSteps.t.sol` | Activating with a token the recipe never named, the committed price and receiver holding whatever token is chosen, payment in the buy token forwarded without an order, plain `activate` refused, and the transient input scoped to one drop and cleared after the call. |
 | `steps/StopLossSteps.t.sol` | The stop-loss step, the deadline running from activation, and the thirteen-word `StopLossData` layout. |
 | `steps/ComposableBase.t.sol` | The half `TwapSteps` does not reach: `divisor == 1`, and a zero value factory routing to plain `create`. Uses a throwaway handler so the branch a future step will take does not ship unexercised. |
 | `DropGnosisFork.t.sol` | Against the real Gnosis deployments. Skipped unless `GNOSIS_RPC_URL` is set. |

@@ -45,6 +45,7 @@ const tokenOps = artifact('TokenSteps.sol/TokenSteps.json')
 const presign = artifact('PresignSteps.sol/PresignSteps.json')
 const twap = artifact('TwapSteps.sol/TwapSteps.json')
 const stopLoss = artifact('StopLossSteps.sol/StopLossSteps.json')
+const payment = artifact('PaymentSteps.sol/PaymentSteps.json')
 
 const proxyCreationCode = proxy.bytecode.object
 if (!proxyCreationCode || proxyCreationCode === '0x') {
@@ -86,8 +87,12 @@ const FIELDS = [
  * to a generation that already exists without moving anything. Generation 1's records were written
  * before it existed and simply do not carry one. Emitting `undefined` for those would put a broken
  * address in the SDK, and backfilling them would be recording a deployment that never happened.
+ *
+ * `paymentSteps` is optional for the narrower reason that it joined generation 2 late. It *is* an
+ * input to a drop address, but only to recipes that name a payment step, so adding it moved no
+ * existing drop. Generation 1 never had it.
  */
-const OPTIONAL_FIELDS = ['bungeeReceiver']
+const OPTIONAL_FIELDS = ['bungeeReceiver', 'paymentSteps']
 
 const byGeneration = new Map()
 for (const dir of readdirSync(deploymentsDir)) {
@@ -170,6 +175,8 @@ export const PRESIGN_STEPS_ABI = ${JSON.stringify(presign.abi, null, 2)} as cons
 export const TWAP_STEPS_ABI = ${JSON.stringify(twap.abi, null, 2)} as const
 
 export const STOP_LOSS_STEPS_ABI = ${JSON.stringify(stopLoss.abi, null, 2)} as const
+
+export const PAYMENT_STEPS_ABI = ${JSON.stringify(payment.abi, null, 2)} as const
 
 export const DROP_EXECUTOR_ABI = ${JSON.stringify(executor.abi, null, 2)} as const
 

@@ -2,6 +2,7 @@ import { encodeFunctionData, type Address, type Hex } from 'viem'
 
 import {
   GUARD_STEPS_ABI,
+  PAYMENT_STEPS_ABI,
   PRESIGN_STEPS_ABI,
   STOP_LOSS_STEPS_ABI,
   TOKEN_STEPS_ABI,
@@ -76,6 +77,21 @@ export interface StopLossTrigger {
   strike: bigint
   /** How stale a feed may be before the handler refuses to price the pair. */
   maxTimeSinceLastOracleUpdate: bigint
+}
+
+export interface PaymentParams {
+  /** The token the receiver is paid in. */
+  buyToken: Address
+  /** The price: the minimum the receiver gets, in `buyToken` atoms. */
+  buyAmount: bigint
+  /**
+   * Who is paid. Required, unlike the other order steps: the zero address there means "the drop", and
+   * a payment that lands back in the drop has paid nobody. `compileRecipe` defaults it to the owner.
+   */
+  receiver: Address
+  /** Order lifetime from activation. */
+  validitySeconds: bigint
+  appData?: Hex
 }
 
 /** Comparison operators, in the order `GuardSteps.Comparison` declares them. */
@@ -250,6 +266,46 @@ export const steps = {
         ],
       }),
       params.allowFailure,
+    )
+  },
+
+  /**
+   * Receive at least `buyAmount` of `buyToken`, paid in whatever token arrives (path P).
+   *
+   * The recipe does not name a sell token. The activator does, through `PaymentSteps.activatePayment`
+   * (`buildActivatePaymentTx`), and the step sells the drop's whole balance of it in a pre-signed sell
+   * order whose minimum output is `buyAmount`. Safe to leave to an activator because the buy side is
+   * committed: whatever token is chosen, the receiver gets at least the price, and the surplus is
+   * theirs. Plain `activate` on a payment recipe reverts with `NoPaymentToken`.
+   */
+  payment(deployment: Pick<DropDeployment, 'paymentSteps'>, params: PaymentParams): DropCall {
+    if (!deployment.paymentSteps) {
+      throw new Error('this generation has no PaymentSteps deployment; compile against generation 2 or later')
+    }
+    if (params.buyAmount <= 0n) {
+      throw new Error('a payment needs a positive buyAmount')
+    }
+    if (params.validitySeconds <= 0n) {
+      throw new Error('a payment needs a positive validitySeconds; it is measured from activation')
+    }
+    if (params.receiver.toLowerCase() === ZERO_ADDRESS) {
+      throw new Error('a payment needs a receiver; the zero address would leave the money in the drop')
+    }
+    return stepCall(
+      deployment.paymentSteps,
+      encodeFunctionData({
+        abi: PAYMENT_STEPS_ABI,
+        functionName: 'presignPayment',
+        args: [
+          params.buyToken,
+          params.buyAmount,
+          params.receiver,
+          params.validitySeconds,
+          params.appData ?? ZERO_BYTES32,
+        ],
+      }),
+      // Never failable: a payment that silently does nothing is a payment the payer made for nothing.
+      false,
     )
   },
 

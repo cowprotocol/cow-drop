@@ -43,3 +43,30 @@ function gcd(a: bigint, b: bigint): bigint {
   }
   return a === 0n ? 1n : a
 }
+
+/** The slippage the UI adds to what it asks a payer to send to a payment drop: 50 bps. */
+export const PAYMENT_SLIPPAGE_BPS = 50
+
+/**
+ * How much of a token pays for a payment drop, from a CoW **buy** quote for the drop's `buyAmount`.
+ *
+ * The order the drop places is fee-less (`feeAmount: 0`), so the network fee comes out of the sell
+ * amount: what has to arrive is the quote's `sellAmount` *plus* its `feeAmount`. `slippageBps` is
+ * added on top and rounded up.
+ *
+ * The two callers use it differently on purpose. The UI asks the payer for `PAYMENT_SLIPPAGE_BPS`
+ * extra; the keeper accepts a payment at `0`. The gap is the cushion that absorbs the price moving
+ * between the payer's quote and the keeper's, and since the drop sells its whole balance in a sell
+ * order, whatever the cushion does not use reaches the receiver as surplus.
+ */
+export function requiredPayment(
+  quote: { sellAmount: bigint; feeAmount: bigint },
+  slippageBps: number = PAYMENT_SLIPPAGE_BPS,
+): bigint {
+  if (!Number.isInteger(slippageBps) || slippageBps < 0) {
+    throw new Error(`slippageBps must be a non-negative integer, got: ${slippageBps}`)
+  }
+  const base = quote.sellAmount + quote.feeAmount
+  const scaled = base * BigInt(10_000 + slippageBps)
+  return (scaled + 9_999n) / 10_000n
+}

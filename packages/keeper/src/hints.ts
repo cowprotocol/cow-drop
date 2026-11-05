@@ -10,7 +10,7 @@ import type { WatchHints } from './types.js'
  * pin the poll set for the life of a registration — a drop stuck `blind` forever because the SDK that
  * first saw it could not name a step the current one can.
  */
-export const HINTS_VERSION = '1'
+export const HINTS_VERSION = '2'
 
 const ZERO: Address = '0x0000000000000000000000000000000000000000'
 
@@ -33,6 +33,7 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
   const warnings: string[] = []
 
   let native = false
+  let payment: WatchHints['payment']
   let notBefore: number | null = null
   let notAfter: number | null = null
   let timeWindows = 0
@@ -44,6 +45,11 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
       case 'twapFromBalance':
       case 'stopLossFromBalance':
         tokens.add(lower(step.sellToken))
+        break
+
+      case 'payment':
+        // No sell token to poll: the payer picks it. The tokens come from `Transfer` logs instead.
+        payment = { buyToken: lower(step.buyToken), buyAmount: String(step.buyAmount) }
         break
 
       case 'wrapNative':
@@ -87,7 +93,7 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
     }
   }
 
-  const blind = tokens.size === 0 && !native
+  const blind = tokens.size === 0 && !native && !payment
 
   return {
     tokens: [...tokens],
@@ -103,6 +109,7 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
     notAfterIsHard: notAfter !== null && timeWindows === 1 && warnings.length === 0,
     blind,
     warnings,
+    ...(payment ? { payment } : {}),
   }
 }
 
@@ -121,7 +128,6 @@ function minOf(current: number | null, next: number): number {
   return current === null ? next : Math.min(current, next)
 }
 
-/** Every `(token | native)` balance worth reading for a drop. */
 /**
  * Steps that hand the drop to ComposableCoW rather than signing one order here.
  *
@@ -144,8 +150,14 @@ export function selfDriving(recipe: DropRecipeJson): boolean {
   return recipe.steps.some((step) => SELF_DRIVING_STEPS.has(step.type))
 }
 
-export function pollTargets(hints: WatchHints): (Address | null)[] {
-  return [...(hints.native || hints.blind ? [null] : []), ...hints.tokens]
+/**
+ * Every `(token | native)` balance worth reading for a drop.
+ *
+ * `paymentTokens` are the tokens a payment drop has been seen receiving, which its hints cannot name.
+ */
+export function pollTargets(hints: WatchHints, paymentTokens: readonly Address[] = []): (Address | null)[] {
+  const tokens = [...hints.tokens, ...paymentTokens.filter((token) => !hints.tokens.includes(token))]
+  return [...(hints.native || hints.blind ? [null] : []), ...tokens]
 }
 
 /**
@@ -189,6 +201,11 @@ export function tradesOf(recipe: DropRecipeJson): RecipeTrade[] {
       case 'twapFromBalance':
       case 'stopLossFromBalance':
         trades.push({ sellToken: lower(step.sellToken), appData: step.appData ?? ZERO_APP_DATA })
+        break
+      case 'payment':
+        // The sell token is unknown until a payer picks one, so a fee is valued against what the order
+        // must buy instead — `buyAmount` of `buyToken` is the trade's volume, whatever pays for it.
+        trades.push({ sellToken: lower(step.buyToken), appData: step.appData ?? ZERO_APP_DATA })
         break
       default:
         break

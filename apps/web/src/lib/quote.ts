@@ -1,4 +1,10 @@
-import { OrderQuoteSideKindSell, SigningScheme, type OrderQuoteRequest } from '@cowprotocol/cow-sdk'
+import { PAYMENT_SLIPPAGE_BPS, requiredPayment } from '@cowprotocol/cow-drop-sdk'
+import {
+  OrderQuoteSideKindBuy,
+  OrderQuoteSideKindSell,
+  SigningScheme,
+  type OrderQuoteRequest,
+} from '@cowprotocol/cow-sdk'
 import type { Address } from 'viem'
 
 import { describeOrderBookError, getOrderBookApi } from './chain.js'
@@ -58,6 +64,56 @@ export async function quoteMarketPrice(params: {
     buyAmount,
     feeAmount: BigInt(quote.feeAmount),
   }
+}
+
+/** What a payer should send to a payment drop, in one token. */
+export interface PaymentQuote {
+  /** What to ask the payer for: the market cost plus `PAYMENT_SLIPPAGE_BPS`, rounded up. */
+  send: bigint
+  /** The market cost alone — the least the keeper will accept as covering the price. */
+  atMarket: bigint
+}
+
+/**
+ * How much of `sellToken` pays a payment drop, from a **buy** quote for its price.
+ *
+ * Quoted as the drop, pre-signed, paying `receiver` — exactly the order the drop will place, so the
+ * fee in the quote is the fee that order pays. The payer is asked for 50 bps more than the market:
+ * that cushion absorbs the price moving before the order is placed, and since the drop sells its
+ * whole balance, whatever the cushion does not use reaches the receiver as surplus.
+ */
+export async function quotePayment(params: {
+  sellToken: Address
+  buyToken: Address
+  buyAmount: bigint
+  drop: Address
+  receiver: Address
+  chainId: number
+}): Promise<PaymentQuote> {
+  if (params.sellToken.toLowerCase() === params.buyToken.toLowerCase()) {
+    // Paid in the token the owner wants: no trade, the drop forwards it.
+    return { send: params.buyAmount, atMarket: params.buyAmount }
+  }
+
+  const request: OrderQuoteRequest = {
+    sellToken: params.sellToken,
+    buyToken: params.buyToken,
+    from: params.drop,
+    receiver: params.receiver,
+    kind: OrderQuoteSideKindBuy.BUY,
+    buyAmountAfterFee: params.buyAmount.toString(),
+    validFor: 30 * 60,
+    signingScheme: SigningScheme.PRESIGN,
+  }
+
+  const { quote } = await getOrderBookApi(params.chainId)
+    .getQuote(request)
+    .catch((cause: unknown) => {
+      throw new Error(describeOrderBookError(cause), { cause })
+    })
+
+  const amounts = { sellAmount: BigInt(quote.sellAmount), feeAmount: BigInt(quote.feeAmount) }
+  return { send: requiredPayment(amounts, PAYMENT_SLIPPAGE_BPS), atMarket: requiredPayment(amounts, 0) }
 }
 
 const PRICE_DECIMALS = 10

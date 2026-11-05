@@ -74,9 +74,17 @@ export interface DropAddresses {
    * Optional, and outside the commitment even more thoroughly than `cowOrderPoster`: no recipe
    * reaches it *and* it reaches no recipe, since all it does is call `activate`, which anyone may.
    * So a receiver can be added to a generation that already exists, and a generation predating it
-   * simply has none — which is why this is the one address here that may be missing.
+   * simply has none.
    */
   bungeeReceiver?: Address
+  /**
+   * `PaymentSteps` — hosts the `payment` step and `activatePayment`, the entry point that tells a
+   * payment drop which of its balances to sell.
+   *
+   * Optional because it joined generation 2 after the rest. It *is* an input to a drop address, but
+   * only to recipes naming a payment step, so adding it moved no existing drop. Generation 1 has none.
+   */
+  paymentSteps?: Address
   /**
    * `GPv2Settlement` and `ComposableCoW`. Not cow-drop's own contracts and not inputs to a drop
    * address — but they *are* constructor inputs to the step contracts, so they belong to the

@@ -17,7 +17,7 @@ import { createEventBus } from './events.js'
 import { createKeeper } from './keeper.js'
 import { forwardOrderResults } from './orders.js'
 import { DEFAULT_POLICY } from './policy.js'
-import { orderBookPrices } from './revenue.js'
+import { orderBookPaymentQuoter, orderBookPrices } from './revenue.js'
 import { createKeeperServer, ROUTES } from './server.js'
 import { fileStore, memoryStore, utcDay, type KeeperStore } from './store.js'
 import type { DropStatus, SubsidyPolicy } from './types.js'
@@ -100,6 +100,7 @@ export async function startKeeperService(options: KeeperServiceOptions): Promise
     // revenue estimate whatever the mode — which is how an operator sanity-checks the numbers
     // before turning the gate on.
     prices: orderBookPrices(orderBook),
+    quoter: orderBookPaymentQuoter(orderBook),
     pollIntervalMs,
     dryRun,
     logger,

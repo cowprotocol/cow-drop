@@ -1,6 +1,7 @@
 import {
   compileRecipe,
   getDropChain,
+  paymentRequest,
   stopLossOnArrival,
   swapOnArrival,
   twapOnArrival,
@@ -8,7 +9,7 @@ import {
   type DropStepJson,
   type LimitPriceJson,
 } from '@cowprotocol/cow-drop-sdk'
-import { formatUnits, isAddress, type Address } from 'viem'
+import { formatUnits, isAddress, parseUnits, type Address } from 'viem'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
@@ -46,13 +47,14 @@ import { RescuePanel } from '../components/RescuePanel.js'
 import { SavedDrops } from '../components/SavedDrops.js'
 import { TerminalPanel } from '../components/TerminalPanel.js'
 import { StepTable } from '../components/StepTable.js'
+import { PaymentPanel, paymentStepOf } from '../components/PaymentPanel.js'
 
 /**
  * Which recipe to build. Named for what the user sees: the SDK calls these templates, because
  * there a template is a function that produces a recipe — a distinction worth keeping in code and
  * not worth making a user learn.
  */
-type RecipeKind = 'swap' | 'twap' | 'stoploss'
+type RecipeKind = 'swap' | 'twap' | 'stoploss' | 'payment'
 
 const PLACEHOLDER_OWNER: Address = '0x0000000000000000000000000000000000000001'
 
@@ -97,6 +99,8 @@ interface FormState {
   oracleHaircutBps: string
   strike: string
   stopLossDays: string
+  /** The payment recipe's price, in whole `buyToken` units as typed. */
+  payAmount: string
 }
 
 const INITIAL: FormState = {
@@ -121,6 +125,7 @@ const INITIAL: FormState = {
   oracleHaircutBps: '50',
   strike: '',
   stopLossDays: '7',
+  payAmount: '100',
 }
 
 /** A blank guard field means "no guard", not "zero". */
@@ -171,6 +176,21 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
         }
       : undefined
 
+  if (form.recipeKind === 'payment') {
+    // No sell token, no limit price, no balance guard: the payer picks the token, and the price — a
+    // fixed amount of the buy token — is the only thing the address commits to.
+    return paymentRequest({
+      chainId: form.chainId,
+      owner,
+      buyToken: form.buyToken,
+      buyAmount: parsePayAmount(form.payAmount, buyDecimals),
+      receiver,
+      validitySeconds: Number(form.validityMinutes) * 60,
+      notBefore: guards.notBefore,
+      notAfter: guards.notAfter,
+    })
+  }
+
   if (form.recipeKind === 'stoploss') {
     return stopLossOnArrival({
       chainId: form.chainId,
@@ -218,6 +238,18 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
   })
 }
 
+/**
+ * The typed price in atoms, or zero when it is not a number yet — which `compileRecipe` refuses with a
+ * message about the price, rather than this throwing on every half-typed keystroke.
+ */
+function parsePayAmount(value: string, decimals: number): bigint {
+  try {
+    return parseUnits(value.trim() || '0', decimals)
+  } catch {
+    return 0n
+  }
+}
+
 /** A unix timestamp back into the local `datetime-local` value that produces it. */
 function toLocalDateTime(seconds: number | string): string {
   const date = new Date(Number(seconds) * 1000)
@@ -263,6 +295,17 @@ function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
 
   if (rest.length !== 1) return null
   const trade = rest[0]!
+
+  if (trade.type === 'payment') {
+    if (base.wrapNative || balanceGuard) return null
+    base.recipeKind = 'payment'
+    base.buyToken = trade.buyToken
+    base.payAmount = formatUnits(BigInt(trade.buyAmount), findToken(tokens, trade.buyToken)?.decimals ?? 18)
+    base.validityMinutes = String(Number(trade.validitySeconds) / 60)
+    base.receiver =
+      trade.receiver && trade.receiver.toLowerCase() !== recipe.owner.toLowerCase() ? trade.receiver : ''
+    return base
+  }
 
   if (balanceGuard?.type === 'requireMinBalance') {
     // The form's box is in whole tokens, so a guard that is not a whole number of them has no value
@@ -558,7 +601,10 @@ export function RecipesTab({
   const refresh = useCallback(async () => {
     if (!compiled.ok) return
     const sellStep = recipe.steps.find((step) => 'sellToken' in step)
-    const sellToken = sellStep && 'sellToken' in sellStep ? sellStep.sellToken : undefined
+    // A payment recipe has no sell token; its status reads the price token instead, which is what a
+    // payment in that token would leave behind.
+    const sellToken =
+      sellStep && 'sellToken' in sellStep ? sellStep.sellToken : paymentStepOf(recipe)?.buyToken
     if (!sellToken) return
     try {
       setStatus(await readDropStatus(compiled.value, sellToken))
@@ -898,6 +944,8 @@ export function RecipesTab({
 
   const sellToken = findToken(tokens, form.sellToken)
   const buyToken = findToken(tokens, form.buyToken)
+  /** Read off the recipe, so an imported payment recipe gets the payment panel too. */
+  const isPayment = paymentStepOf(recipe) !== undefined
 
   const onQuote = async () => {
     setQuoting(true)
@@ -964,13 +1012,23 @@ export function RecipesTab({
           >
             Stop-loss on arrival
           </button>
+          <button
+            className={form.recipeKind === 'payment' ? 'active' : ''}
+            onClick={() => set('recipeKind', 'payment')}
+          >
+            Payment request
+          </button>
         </div>
         <p className="hint">
           {form.recipeKind === 'swap'
             ? 'Sells whatever lands here once, at your limit price. No watch tower needed, but you post the order to the API after activation.'
             : form.recipeKind === 'twap'
               ? 'Splits whatever lands here into parts and sells them over time. Self-driving: after one activation the watch tower posts each part.'
-              : 'Sells whatever lands here once a price feed pair crosses your strike. Self-driving: the watch tower polls the condition, so nobody has to be watching.'}
+              : form.recipeKind === 'payment'
+                ? 'Asks for a fixed amount of one token, paid in any token. The payer is quoted what to send; ' +
+                  'the keeper sells what arrives for at least your price, and any surplus is yours too. ' +
+                  'Reusable: one address takes payment after payment.'
+                : 'Sells whatever lands here once a price feed pair crosses your strike. Self-driving: the watch tower polls the condition, so nobody has to be watching.'}
         </p>
       </section>
 
@@ -997,24 +1055,37 @@ export function RecipesTab({
               </span>
             )}
           </label>
+          {form.recipeKind !== 'payment' && (
+            <TokenPicker
+              label="Sell token"
+              tokens={tokens}
+              value={form.sellToken}
+              chainId={form.chainId}
+              onChange={(address) => set('sellToken', address)}
+            />
+          )}
           <TokenPicker
-            label="Sell token"
-            tokens={tokens}
-            value={form.sellToken}
-            chainId={form.chainId}
-            onChange={(address) => set('sellToken', address)}
-          />
-          <TokenPicker
-            label="Buy token"
+            label={form.recipeKind === 'payment' ? 'Get paid in' : 'Buy token'}
             tokens={tokens}
             value={form.buyToken}
             chainId={form.chainId}
             onChange={(address) => set('buyToken', address)}
           />
-          <label>
-            Limit price (buy per sell)
-            <input value={form.limitPrice} onChange={(event) => set('limitPrice', event.target.value)} />
-          </label>
+          {form.recipeKind === 'payment' ? (
+            <label>
+              Price (the least you receive per payment)
+              <input
+                inputMode="decimal"
+                value={form.payAmount}
+                onChange={(event) => set('payAmount', event.target.value)}
+              />
+            </label>
+          ) : (
+            <label>
+              Limit price (buy per sell)
+              <input value={form.limitPrice} onChange={(event) => set('limitPrice', event.target.value)} />
+            </label>
+          )}
           <label>
             Receiver (blank = the owner)
             <input
@@ -1023,7 +1094,7 @@ export function RecipesTab({
               onChange={(event) => set('receiver', event.target.value)}
             />
           </label>
-          {form.recipeKind === 'swap' && (
+          {(form.recipeKind === 'swap' || form.recipeKind === 'payment') && (
             <label>
               Order validity (minutes)
               <input value={form.validityMinutes} onChange={(event) => set('validityMinutes', event.target.value)} />
@@ -1053,14 +1124,16 @@ export function RecipesTab({
               </label>
             </>
           )}
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={form.wrapNative}
-              onChange={(event) => set('wrapNative', event.target.checked)}
-            />
-            Wrap the native token first
-          </label>
+          {form.recipeKind !== 'payment' && (
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={form.wrapNative}
+                onChange={(event) => set('wrapNative', event.target.checked)}
+              />
+              Wrap the native token first
+            </label>
+          )}
           {form.recipeKind === 'swap' && (
             <label className="checkbox">
               <input
@@ -1131,39 +1204,41 @@ export function RecipesTab({
           * Its own box, above the guards: this is a tool for filling in the limit price, so it belongs
           * next to the parameters that set the price rather than after the optional panels.
           */}
-        <fieldset className="subsection quote">
-          <legend>Market price</legend>
-          <label>
-            Reference amount (for the quote only, never part of the recipe)
-            <input value={referenceAmount} onChange={(event) => setReferenceAmount(event.target.value)} />
-          </label>
-          <div className="actions">
-            <button onClick={() => void onQuote()} disabled={quoting}>
-              {quoting ? 'Quoting…' : 'Get market price'}
-            </button>
-            {quote && (
-              <>
-                <span className="quote-price">
-                  market <strong>{quote.price}</strong> {buyToken?.symbol ?? ''} per {sellToken?.symbol ?? ''}
-                </span>
-                {[0.5, 1, 5].map((slippage) => (
-                  <button key={slippage} onClick={() => set('limitPrice', applySlippage(quote.price, slippage))}>
-                    −{slippage}%
-                  </button>
-                ))}
-              </>
+        {form.recipeKind !== 'payment' && (
+          <fieldset className="subsection quote">
+            <legend>Market price</legend>
+            <label>
+              Reference amount (for the quote only, never part of the recipe)
+              <input value={referenceAmount} onChange={(event) => setReferenceAmount(event.target.value)} />
+            </label>
+            <div className="actions">
+              <button onClick={() => void onQuote()} disabled={quoting}>
+                {quoting ? 'Quoting…' : 'Get market price'}
+              </button>
+              {quote && (
+                <>
+                  <span className="quote-price">
+                    market <strong>{quote.price}</strong> {buyToken?.symbol ?? ''} per {sellToken?.symbol ?? ''}
+                  </span>
+                  {[0.5, 1, 5].map((slippage) => (
+                    <button key={slippage} onClick={() => set('limitPrice', applySlippage(quote.price, slippage))}>
+                      −{slippage}%
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+            {quoteError && (
+              <p className="error" role="alert">
+                {quoteError}
+              </p>
             )}
-          </div>
-          {quoteError && (
-            <p className="error" role="alert">
-              {quoteError}
+            <p className="hint">
+              Only the <em>price</em> is used — a drop cannot know its amount in advance. The amount still
+              matters: quote too little and the fee dominates, making the market look worse than it is.
             </p>
-          )}
-          <p className="hint">
-            Only the <em>price</em> is used — a drop cannot know its amount in advance. The amount still
-            matters: quote too little and the fee dominates, making the market look worse than it is.
-          </p>
-        </fieldset>
+          </fieldset>
+        )}
 
         <details
           className="subsection guards"
@@ -1175,14 +1250,16 @@ export function RecipesTab({
             {guardsSet > 0 && <span className="guard-count"> — {guardsSet} set</span>}
           </summary>
           <div className="grid">
-            <label>
-              Minimum amount before activating
-              <input
-                placeholder={`whole ${findToken(tokens, form.sellToken)?.symbol ?? 'tokens'}`}
-                value={form.minAmount}
-                onChange={(event) => set('minAmount', event.target.value)}
-              />
-            </label>
+            {form.recipeKind !== 'payment' && (
+              <label>
+                Minimum amount before activating
+                <input
+                  placeholder={`whole ${findToken(tokens, form.sellToken)?.symbol ?? 'tokens'}`}
+                  value={form.minAmount}
+                  onChange={(event) => set('minAmount', event.target.value)}
+                />
+              </label>
+            )}
             <label>
               Not before
               <input
@@ -1210,7 +1287,7 @@ export function RecipesTab({
           * Outside the collapsed panel on purpose: a warning nobody can see is not a warning, and this
           * one is about the guard the user has *not* set.
           */}
-        {form.recipeKind !== 'swap' && !form.minAmount && (
+        {(form.recipeKind === 'twap' || form.recipeKind === 'stoploss') && !form.minAmount && (
           <p className="hint warn-note">
             This recipe is one-shot. Without a minimum, anyone can activate on the first wei and the order
             gets sized from a part-delivered balance — what a bridge paying in tranches does.
@@ -1309,15 +1386,28 @@ export function RecipesTab({
 
               <section>
                 <h2>5 &middot; Status</h2>
+                {isPayment && (
+                  <PaymentPanel
+                    recipe={recipe}
+                    address={compiled.value.address}
+                    deployment={compiled.value.deployment}
+                    tokens={tokens}
+                    account={account}
+                    onMessage={setMessage}
+                    onError={setError}
+                  />
+                )}
                 {status ? (
                   <ul className="status">
-                    <li>
-                      Balance at drop:{' '}
-                      <strong>
-                        {formatUnits(status.balance, sellToken?.decimals ?? 18)} {sellToken?.symbol ?? ''}
-                      </strong>
-                      {status.nativeBalance > 0n ? ` (+ ${formatUnits(status.nativeBalance, 18)} xDAI)` : ''}
-                    </li>
+                    {!isPayment && (
+                      <li>
+                        Balance at drop:{' '}
+                        <strong>
+                          {formatUnits(status.balance, sellToken?.decimals ?? 18)} {sellToken?.symbol ?? ''}
+                        </strong>
+                        {status.nativeBalance > 0n ? ` (+ ${formatUnits(status.nativeBalance, 18)} xDAI)` : ''}
+                      </li>
+                    )}
                     <li>Drop deployed: <strong>{status.deployed ? 'yes' : 'not yet'}</strong></li>
                     {status.missing.length > 0 && (
                       <li className="warn">
@@ -1335,12 +1425,15 @@ export function RecipesTab({
 
                 <div className="actions">
                   <button onClick={() => void refresh()}>Refresh</button>
-                  <button
-                    onClick={() => void onActivate()}
-                    disabled={!account || busy || (status?.missing.length ?? 0) > 0}
-                  >
-                    {busy ? 'Activating…' : 'Activate drop'}
-                  </button>
+                  {/* A payment drop activates *with a token*, from the panel above; plain activate reverts. */}
+                  {!isPayment && (
+                    <button
+                      onClick={() => void onActivate()}
+                      disabled={!account || busy || (status?.missing.length ?? 0) > 0}
+                    >
+                      {busy ? 'Activating…' : 'Activate drop'}
+                    </button>
+                  )}
                   {keeperUrl() !== null &&
                     /*
                      * One button, both directions. It reads as state as much as an action: a "Hand to
@@ -1360,10 +1453,16 @@ export function RecipesTab({
                         Hand to keeper
                       </button>
                     ))}
-                  {/* Funding from another chain, as an alternative to sending to the address above. */}
-                  <button onClick={() => onBridge(recipe)} disabled={busy}>
-                    Fund by bridging
-                  </button>
+                  {/*
+                    * Funding from another chain, as an alternative to sending to the address above. Not for a
+                    * payment request: the bridge receiver calls plain `activate`, which a payment recipe
+                    * refuses, since it cannot say which token arrived.
+                    */}
+                  {!isPayment && (
+                    <button onClick={() => onBridge(recipe)} disabled={busy}>
+                      Fund by bridging
+                    </button>
+                  )}
                   <a
                     href={`${cowExplorer(dropChainId)}/address/${compiled.value.address}`}
                     target="_blank"
@@ -1385,15 +1484,25 @@ export function RecipesTab({
                   * explainer names an action that is not on the page.
                   */}
                 <ul className="hint hint-list">
-                  <li>
-                    <strong>Activate drop</strong> — deploy the drop and run its setup yourself, now. Safe
-                    to press again: an already-deployed drop just re-runs the setup.
-                  </li>
-                  <li>
-                    <strong>Fund by bridging</strong> — send tokens from another chain instead. The bridge
-                    delivers into this address and runs the recipe in the same transaction, so the order is
-                    live as soon as it fills.
-                  </li>
+                  {isPayment ? (
+                    <li>
+                      <strong>Activate with a token</strong> — in the panel above: sell what arrived in that
+                      token for at least your price. Payment requests are reusable, so each payment is its
+                      own activation.
+                    </li>
+                  ) : (
+                    <li>
+                      <strong>Activate drop</strong> — deploy the drop and run its setup yourself, now. Safe
+                      to press again: an already-deployed drop just re-runs the setup.
+                    </li>
+                  )}
+                  {!isPayment && (
+                    <li>
+                      <strong>Fund by bridging</strong> — send tokens from another chain instead. The bridge
+                      delivers into this address and runs the recipe in the same transaction, so the order is
+                      live as soon as it fills.
+                    </li>
+                  )}
                   {keeperUrl() !== null && (
                     <li>
                       {keeperWatching === true ? (

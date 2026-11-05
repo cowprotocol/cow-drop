@@ -1,5 +1,5 @@
 import type { DropRecipeJson, DropStepJson, LimitPriceJson } from '@cowprotocol/cow-drop-sdk'
-import type { Address } from 'viem'
+import { formatUnits, type Address } from 'viem'
 
 import { chainLabel } from './chain.js'
 
@@ -121,11 +121,29 @@ const STEP_LABELS: Record<string, string> = {
   raw: 'makes a raw call',
 }
 
-export function summariseRecipe(recipe: DropRecipeJson, symbolOf: SymbolLookup): RecipeSummary {
+/** Resolves a token address to its decimals, or undefined when the list has never heard of it. */
+export type DecimalsLookup = (address: Address) => number | undefined
+
+/**
+ * An atomic amount in whole tokens, when the decimals are known. Unknown decimals leave the atomic
+ * figure, labelled as such: guessing 18 would misstate a 6-decimal price a trillion-fold.
+ */
+function formatAmount(atomic: string, decimals: number | undefined): string {
+  return decimals === undefined ? `${atomic} (atomic units)` : formatUnits(BigInt(atomic), decimals)
+}
+
+export function summariseRecipe(
+  recipe: DropRecipeJson,
+  symbolOf: SymbolLookup,
+  decimalsOf?: DecimalsLookup,
+): RecipeSummary {
   const rows: SummaryRow[] = []
   const notes: string[] = []
 
   const action = recipe.steps.find(isAction)
+  const payment = recipe.steps.find(
+    (step): step is Extract<DropStepJson, { type: 'payment' }> => step.type === 'payment',
+  )
   const minBalance = recipe.steps.find((step) => step.type === 'requireMinBalance')
   const timeWindow = recipe.steps.find((step) => step.type === 'requireTimeWindow')
 
@@ -133,7 +151,30 @@ export function summariseRecipe(recipe: DropRecipeJson, symbolOf: SymbolLookup):
 
   let headline = 'Send tokens to this address and anyone can run the recipe committed into it.'
 
-  if (action) {
+  if (payment) {
+    const buy = token(payment.buyToken, symbolOf)
+    const amount = formatAmount(String(payment.buyAmount), decimalsOf?.(payment.buyToken))
+    const receiver = payment.receiver
+    const toOwner = !receiver || receiver.toLowerCase() === recipe.owner.toLowerCase()
+
+    headline = `Pay ${amount} ${buy.name} here, in any token.`
+    rows.push({ label: 'Asks for', value: `${amount} ${buy.name}`, hint: buy.hint })
+    rows.push({
+      label: 'Pay with',
+      value: 'Any token the market can price',
+      hint: 'send the amount quoted below; what arrives is sold for at least the price',
+    })
+    rows.push({
+      label: 'How',
+      value: 'One swap per payment',
+      hint: `order valid for ${formatDuration(asNumber(payment.validitySeconds))}; any surplus over the price goes to the receiver`,
+    })
+    rows.push({
+      label: 'Paid to',
+      value: toOwner ? 'The owner' : short(receiver),
+      hint: toOwner ? recipe.owner : receiver,
+    })
+  } else if (action) {
     const sell = token(action.sellToken, symbolOf)
     const buy = token(action.buyToken, symbolOf)
 
