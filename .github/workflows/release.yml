@@ -103,9 +103,9 @@ jobs:
           test -f "$tarball"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
-      # TODO(npm): publishing is OFF until NPM_TOKEN can publish to @cowprotocol. v0.4.1 failed here with
-      # E404 on the PUT: the token cannot create the package. Fix: a granular token with read/write on the
-      # @cowprotocol org (or npm trusted publishing once the package exists), then set the repository
+      # TODO(npm): publishing is OFF. 0.4.1 is on npm, published by hand; NPM_TOKEN still cannot write
+      # the package, so every release since has skipped this step. Grant the token the package (it exists
+      # now, so a package-scoped grant is enough) or set up trusted publishing, then set the repository
       # variable NPM_PUBLISH=true. Everything above still runs, so the tarball is built and checked on
       # every release. See docs/RELEASING.md, "npm publishing is off".
       - name: Publish to npm
