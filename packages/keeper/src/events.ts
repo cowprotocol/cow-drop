@@ -54,6 +54,18 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 /** An event before the bus stamps it with a sequence number and a timestamp. */
 export type KeeperEventInput = DistributiveOmit<KeeperEvent, 'seq' | 'at'> & { at?: number }
 
+/** Which events a subscriber wants: those for any listed drop, or for any drop a listed owner has. */
+export interface EventFilter {
+  drops?: Address[]
+  owners?: Address[]
+}
+
+/** Whether `event` passes `filter`. Exported for the stream's replay, which filters the same way. */
+export function matches(filter: EventFilter, event: Pick<KeeperEvent, 'drop' | 'owner'>): boolean {
+  const lower = (values?: Address[]) => (values ?? []).map((value) => value.toLowerCase())
+  return lower(filter.drops).includes(event.drop.toLowerCase()) || lower(filter.owners).includes(event.owner.toLowerCase())
+}
+
 /** A drop's current state, sent on connect so a late subscriber is never blank. */
 export interface DropSnapshot {
   drop: Address
@@ -64,7 +76,11 @@ export interface DropSnapshot {
 
 export interface EventBus {
   emit(event: KeeperEventInput): KeeperEvent
-  subscribe(drops: Address[] | undefined, sink: (event: KeeperEvent) => void): () => void
+  /**
+   * Receive events for the given drops, or for every drop of the given owners, or — with no filter —
+   * everything. A bare array is a list of drops.
+   */
+  subscribe(filter: Address[] | EventFilter | undefined, sink: (event: KeeperEvent) => void): () => void
   /**
    * Events after `seq`, or `undefined` when `seq` has fallen out of the ring and the caller must
    * refetch state instead of assuming it has missed nothing.
@@ -84,7 +100,7 @@ export function createEventBus(options: { now?: () => number; ringSize?: number 
   const now = options.now ?? Date.now
   const ringSize = options.ringSize ?? 1024
 
-  const subscribers = new Set<{ drops: Set<string> | undefined; sink: (event: KeeperEvent) => void }>()
+  const subscribers = new Set<{ filter: EventFilter | undefined; sink: (event: KeeperEvent) => void }>()
   let ring: KeeperEvent[] = []
   let seq = 0
 
@@ -96,7 +112,7 @@ export function createEventBus(options: { now?: () => number; ringSize?: number 
       if (ring.length > ringSize) ring = ring.slice(-ringSize)
 
       for (const subscriber of subscribers) {
-        if (subscriber.drops && !subscriber.drops.has(event.drop.toLowerCase())) continue
+        if (subscriber.filter && !matches(subscriber.filter, event)) continue
         try {
           subscriber.sink(event)
         } catch {
@@ -108,11 +124,8 @@ export function createEventBus(options: { now?: () => number; ringSize?: number 
       return event
     },
 
-    subscribe(drops, sink) {
-      const entry = {
-        drops: drops ? new Set(drops.map((drop) => drop.toLowerCase())) : undefined,
-        sink,
-      }
+    subscribe(filter, sink) {
+      const entry = { filter: Array.isArray(filter) ? { drops: filter } : filter, sink }
       subscribers.add(entry)
       return () => subscribers.delete(entry)
     },

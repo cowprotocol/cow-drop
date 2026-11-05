@@ -418,9 +418,29 @@ describe('GET /v1/about', () => {
 })
 
 describe('GET /v1/events', () => {
-  it('requires a drop filter', async () => {
+  it('requires a drop or owner filter, and real addresses in it', async () => {
     const { base } = await serve()
     expect((await fetch(`${base}/v1/events`)).status).toBe(400)
+    expect((await fetch(`${base}/v1/events?owner=nope`)).status).toBe(400)
+  })
+
+  it('streams every drop of an owner, and only theirs', async () => {
+    const { base, events } = await serve()
+    const owner = `0x${'aa'.repeat(20)}` as `0x${string}`
+    const stranger = `0x${'bb'.repeat(20)}` as `0x${string}`
+    const drop = `0x${'11'.repeat(20)}` as `0x${string}`
+
+    const response = await fetch(`${base}/v1/events?owner=${owner.toUpperCase().replace('0X', '0x')}`)
+    const reader = response.body!.getReader()
+    await readUntil(reader, 'event: hello')
+
+    events.emit({ type: 'registered', chainId: CHAIN_ID, drop, owner: stranger, label: 'not mine' })
+    events.emit({ type: 'registered', chainId: CHAIN_ID, drop, owner, label: 'mine' })
+
+    const chunk = await readUntil(reader, 'event: registered')
+    expect(chunk).toContain('"label":"mine"')
+    expect(chunk).not.toContain('not mine')
+    await reader.cancel()
   })
 
   it('opens with a hello carrying the head and a snapshot', async () => {
@@ -563,8 +583,8 @@ describe('ROUTES', () => {
 })
 
 /**
- * Runs the docs page's own inline script against a fake `location`, and reports the spec URL it asked
- * Swagger UI for.
+ * Runs the docs page's own inline script against a fake `location`, and reports the spec URL it
+ * fetched and the server it gave Swagger UI.
  *
  * The script is executed rather than pattern-matched because the failure this guards against is the
  * script arriving *syntactically intact but semantically dead*: written with a regex, TypeScript
@@ -572,22 +592,29 @@ describe('ROUTES', () => {
  * — a line comment that deletes the SwaggerUIBundle call. The HTML still contains every expected
  * substring, the page still returns 200, and it renders blank. Only running it catches that.
  */
-function specUrlAskedFor(html: string, pathname: string): string {
+async function docsPageRun(html: string, pathname: string): Promise<{ specUrl: string; server: string }> {
   const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1]
   if (!script) throw new Error('the docs page has no inline script')
 
-  let url: unknown
+  let specUrl: unknown
+  let server: unknown
   runInNewContext(script, {
-    location: { pathname },
+    location: { pathname, origin: 'https://drop.example' },
     window: {},
-    SwaggerUIBundle: (options: { url: string }) => {
-      url = options.url
+    fetch: async (url: string) => {
+      specUrl = url
+      return { json: async () => ({ openapi: '3.1.0', paths: {} }) }
+    },
+    SwaggerUIBundle: (options: { spec: { servers: { url: string }[] } }) => {
+      server = options.spec.servers[0]?.url
       return {}
     },
   })
+  await new Promise((resolve) => setImmediate(resolve))
 
-  if (typeof url !== 'string') throw new Error('the inline script never called SwaggerUIBundle')
-  return url
+  if (typeof specUrl !== 'string') throw new Error('the inline script never fetched the spec')
+  if (typeof server !== 'string') throw new Error('the inline script never called SwaggerUIBundle')
+  return { specUrl, server }
 }
 
 describe('GET /v1/docs', () => {
@@ -608,14 +635,22 @@ describe('GET /v1/docs', () => {
     const { base } = await serve()
     const html = await (await fetch(`${base}/v1/docs`)).text()
 
-    expect(specUrlAskedFor(html, '/v1/docs')).toBe('/v1/openapi.json')
-    expect(specUrlAskedFor(html, '/v1/docs/')).toBe('/v1/openapi.json')
+    expect((await docsPageRun(html, '/v1/docs')).specUrl).toBe('/v1/openapi.json')
+    expect((await docsPageRun(html, '/v1/docs/')).specUrl).toBe('/v1/openapi.json')
   })
 
   it('survives being mounted under a proxy subpath', async () => {
     const { base } = await serve()
     const html = await (await fetch(`${base}/v1/docs`)).text()
 
-    expect(specUrlAskedFor(html, '/keeper/v1/docs')).toBe('/keeper/v1/openapi.json')
+    expect((await docsPageRun(html, '/keeper/v1/docs')).specUrl).toBe('/keeper/v1/openapi.json')
+  })
+
+  it('points "Try it out" at the same prefix, so requests reach the keeper behind the proxy', async () => {
+    const { base } = await serve()
+    const html = await (await fetch(`${base}/v1/docs`)).text()
+
+    expect((await docsPageRun(html, '/keeper/xdai/v1/docs')).server).toBe('https://drop.example/keeper/xdai')
+    expect((await docsPageRun(html, '/v1/docs')).server).toBe('https://drop.example')
   })
 })
