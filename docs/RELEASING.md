@@ -6,19 +6,23 @@ Three things ship from this repo: two container images and one npm package.
 | --- | --- | --- |
 | `ghcr.io/cowprotocol/cow-drop/keeper` | Activates registered drops and pays the gas. Holds a hot key. | GitHub Container Registry |
 | `ghcr.io/cowprotocol/cow-drop/watch-tower` | Posts on-chain orders to the order book. No key. | GitHub Container Registry |
-| `@cowprotocol/cow-drop-sdk` | Compile a recipe, derive an address, build the activation tx. | [npm](https://www.npmjs.com/package/@cowprotocol/cow-drop-sdk) — **not published yet**, see below |
+| `@cowprotocol/cow-drop-sdk` | Compile a recipe, derive an address, build the activation tx. | [npm](https://www.npmjs.com/package/@cowprotocol/cow-drop-sdk) — **stuck at 0.4.1**, see below |
 
-> **npm publishing is off — come back to this.** The SDK has never reached npm: `NPM_TOKEN` cannot
-> create `@cowprotocol/cow-drop-sdk` (v0.4.1 failed with `E404` on the publish). Until that is fixed,
-> `release.yml` builds and checks the tarball but skips the publish, and the rest of a release —
-> images, GitHub release — ships as normal. To turn it back on:
+> **npm publishing is off — come back to this.** `@cowprotocol/cow-drop-sdk@0.4.1` is on npm,
+> published by hand on 5 Nov 2026 to claim the name. `NPM_TOKEN` still cannot write the package, so
+> `release.yml` builds and checks the tarball but skips the publish: **every tag since 0.4.1 has
+> shipped images and a GitHub release but left npm behind.** To turn it back on, either:
 >
-> 1. Create an npm granular access token with **read and write on the `@cowprotocol` organisation**
->    (a token limited to specific packages cannot create a new one), from an account that can publish
->    there, and store it: `gh secret set NPM_TOKEN --repo cowprotocol/cow-drop`.
-> 2. Set the repository variable: `gh variable set NPM_PUBLISH --body true --repo cowprotocol/cow-drop`.
-> 3. Re-run the last release's failed job, or cut a new release.
-> 4. Once the package exists, consider npm trusted publishing so there is no token left to expire.
+> - **Trusted publishing** (preferred — no token to expire). On npmjs.com, add a trusted publisher to
+>   the package: GitHub Actions, `cowprotocol/cow-drop`, workflow `release.yml`. Then drop the
+>   `NPM_PUBLISH` gate and `NODE_AUTH_TOKEN` from the publish step, and add `npm install -g npm@latest`
+>   after `setup-node` — OIDC needs npm 11.5.1+ and Node 22 ships 10.9. An unvalidated configuration
+>   **expires 48 hours** after it is created, so cut a release the same day.
+> - **A token.** The package exists now, so a granular token scoped to it is enough —
+>   `gh secret set NPM_TOKEN`, then `gh variable set NPM_PUBLISH --body true`.
+>
+> Either way, re-running an old release's job republishes nothing: the publish step sees the version
+> already on npm and exits. Cut a new tag to catch up.
 
 The web app is **not** one of them: it deploys from Vercel, which builds it out of this repo, so no
 image of it is published. `apps/web/Dockerfile` is still here and still builds — see [Building an
