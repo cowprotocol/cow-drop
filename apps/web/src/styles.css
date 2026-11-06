@@ -1404,3 +1404,16 @@ label.radio input {
   font-size: 0.85rem;
   color: var(--accent);
 }
+
+/* --- build info ------------------------------------------------------------ */
+
+.build-info {
+  margin-top: 3rem;
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+.build-info a {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
