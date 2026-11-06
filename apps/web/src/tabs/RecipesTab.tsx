@@ -781,10 +781,16 @@ export function RecipesTab({
    * Declared *after* the `imported` hydrate above, so that if the two ever land in one commit the
    * recipe's owner wins.
    */
+  // A placeholder owner (e.g. restored from the URL of an empty form) counts as unset.
+  const placeholderOwner = UNUSABLE_OWNERS.has(form.owner.toLowerCase())
   useEffect(() => {
     if (!account) return
-    setForm((previous) => (isAddress(previous.owner) ? previous : { ...previous, owner: account }))
-  }, [account])
+    setForm((previous) =>
+      isAddress(previous.owner) && !UNUSABLE_OWNERS.has(previous.owner.toLowerCase())
+        ? previous
+        : { ...previous, owner: account },
+    )
+  }, [account, placeholderOwner])
 
   // Default to whatever network the wallet is already on, when we support it.
   useEffect(() => {
