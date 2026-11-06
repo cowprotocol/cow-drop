@@ -53,6 +53,15 @@ function toWire(drop: RegisteredDrop) {
     registeredAt: drop.registeredAt,
     retiredReason: drop.retiredReason,
     blockedReason: drop.blockedReason,
+    blockedUntil: drop.blockedUntil,
+    // Why it has not activated: the last simulation, and when it will be retried.
+    lastSimulation: drop.lastSimulation && {
+      at: drop.lastSimulation.at,
+      ok: drop.lastSimulation.ok,
+      revert: drop.lastSimulation.revert,
+    },
+    nextAttemptAt: drop.backoff.failures > 0 ? drop.backoff.nextAttemptAt : undefined,
+    payment: drop.payment && { tokens: drop.payment.tokens, underpaid: drop.payment.underpaid },
     hints: {
       tokens: drop.hints.tokens,
       native: drop.hints.native,
