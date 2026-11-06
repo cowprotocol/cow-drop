@@ -47,6 +47,7 @@ import { RescuePanel } from '../components/RescuePanel.js'
 import { TerminalPanel } from '../components/TerminalPanel.js'
 import { StepTable } from '../components/StepTable.js'
 import { PaymentPanel, paymentStepOf } from '../components/PaymentPanel.js'
+import { Section } from '../components/Section.js'
 
 /**
  * Which recipe to build. Named for what the user sees: the SDK calls these templates, because
@@ -977,8 +978,7 @@ export function RecipesTab({
   // themselves and nothing that frames them.
   return (
     <>
-      <section>
-        <h2>1 &middot; Pick a recipe</h2>
+      <Section title={<>1 &middot; Pick a recipe</>}>
         <div className="tabs">
           <button
             className={form.recipeKind === 'swap' ? 'active' : ''}
@@ -1016,10 +1016,9 @@ export function RecipesTab({
                   'Reusable: one address takes payment after payment.'
                 : 'Sells whatever lands here once a price feed pair crosses your strike. Self-driving: the watch tower polls the condition, so nobody has to be watching.'}
         </p>
-      </section>
+      </Section>
 
-      <section>
-        <h2>2 &middot; Parameters</h2>
+      <Section title={<>2 &middot; Parameters</>}>
         <NetworkPicker
           chainId={form.chainId}
           walletChainId={walletChain}
@@ -1284,22 +1283,20 @@ export function RecipesTab({
           leaves them in the drop. It cannot default to the drop itself — that address is derived from
           these fields.
         </p>
-      </section>
+      </Section>
 
       {feedsMissing ? (
-        <section>
-          <h2>3 &middot; Add the price feeds</h2>
+        <Section title={<>3 &middot; Add the price feeds</>}>
           <p className="warn">A stop-loss needs both feeds before it has an address.</p>
           <p className="hint">
             The strike compares one against the other, so neither has a sensible default. Fill in the two
             aggregators above — they must quote the same currency — and the address appears.
           </p>
-        </section>
+        </Section>
       ) : compiled.ok ? (
         <>
           {probeError !== null ? (
-            <section>
-              <h2>3 &middot; Could not check {chainName}</h2>
+            <Section title={<>3 &middot; Could not check {chainName}</>}>
               <p className="warn">
                 The address is withheld because we could not confirm the contracts are there, not
                 because they are missing. Unverified is not the same as unsafe, but it is not a good
@@ -1309,17 +1306,15 @@ export function RecipesTab({
               <div className="actions">
                 <button onClick={retryProbe}>Try again</button>
               </div>
-            </section>
+            </Section>
           ) : chainMissing === null ? (
-            <section>
-              <h2>3 &middot; Your drop address</h2>
+            <Section title={<>3 &middot; Your drop address</>}>
               <p className="hint">
                 Checking whether {chainName} has the contracts a drop needs&hellip;
               </p>
-            </section>
+            </Section>
           ) : chainMissing.length > 0 ? (
-            <section>
-              <h2>3 &middot; Not available on {chainName} yet</h2>
+            <Section title={<>3 &middot; Not available on {chainName} yet</>}>
               <p className="warn">
                 <strong>{chainMissing.join(', ')}</strong>{' '}
                 {chainMissing.length > 1 ? 'are' : 'is'} not deployed on {chainName}, so the drop
@@ -1335,10 +1330,9 @@ export function RecipesTab({
                 The recipe is fine, and resolves to the same address on every chain — so it will not
                 move once the contracts land. Switch to a chain without this label to fund it.
               </p>
-            </section>
+            </Section>
           ) : ownerUnusable ? (
-            <section>
-              <h2>3 &middot; Set an owner first</h2>
+            <Section title={<>3 &middot; Set an owner first</>}>
               <p className="warn">
                 The owner field is empty, so the drop address is withheld until you fill it in.
               </p>
@@ -1352,26 +1346,23 @@ export function RecipesTab({
                 Paste an address, or connect a wallet. The owner is part of the derivation, so setting
                 it produces a <em>different</em> address — it cannot be added to one already funded.
               </p>
-            </section>
+            </Section>
           ) : (
             <>
-              <section>
-                <h2>3 &middot; Your drop address</h2>
+              <Section title={<>3 &middot; Your drop address</>}>
                 <DropAddress
                   address={compiled.value.address}
                   saved={saved}
                   onRemember={remember}
                   recipe={recipe}
                 />
-              </section>
+              </Section>
 
-              <section>
-                <h2>4 &middot; What the address commits to</h2>
+              <Section title={<>4 &middot; What the address commits to</>} open={false}>
                 <StepTable setupData={compiled.value.setupData} deployment={compiled.value.deployment} />
-              </section>
+              </Section>
 
-              <section>
-                <h2>5 &middot; Status</h2>
+              <Section title={<>5 &middot; Status</>}>
                 {isPayment && (
                   <PaymentPanel
                     recipe={recipe}
@@ -1519,54 +1510,43 @@ export function RecipesTab({
                 {message && <p className="ok">{message}</p>}
 
                 <TerminalPanel compiled={compiled.value} />
-              </section>
+              </Section>
 
               {/*
                 * Collapsed behind its heading, like section 7: the rescue paths are the wrong answer to
                 * almost every question, and the panel used to fold itself away *inside* this already
                 * titled section — two things to click, and two different names for one panel.
                 */}
-              <section>
-                <details className="collapsed-section rescue">
-                  <summary>
-                    <h2>6 &middot; If something goes wrong</h2>
-                  </summary>
-                  <RescuePanel
-                    compiled={compiled.value}
-                    account={account}
-                    deployed={status?.deployed ?? false}
-                    sellToken={form.sellToken}
-                    tokens={tokens}
-                  />
-                </details>
-              </section>
+              <Section title={<>6 &middot; If something goes wrong</>} open={false} className="rescue">
+                <RescuePanel
+                  compiled={compiled.value}
+                  account={account}
+                  deployed={status?.deployed ?? false}
+                  sellToken={form.sellToken}
+                  tokens={tokens}
+                />
+              </Section>
 
               {/*
                 * Collapsed by default: an escape hatch for calls the recipe types do not cover, which is
                 * to say almost never — and open it costs a screenful of ABI fields between the rescue
                 * panel and the recipe file.
                 */}
-              <section>
-                <details className="collapsed-section">
-                  <summary>
-                    <h2>7 &middot; Add a custom step</h2>
-                  </summary>
-                  <p className="hint">
-                    For calling something the recipe types do not cover. Every argument is a literal
-                    committed into the address, so it cannot depend on the amount that arrives.
-                  </p>
-                  <StepBuilder
-                    onAddStep={(step) => {
-                      setImported({ ...recipe, steps: [...recipe.steps, step] })
-                      setError(null)
-                    }}
-                    onError={setError}
-                  />
-                </details>
-              </section>
+              <Section title={<>7 &middot; Add a custom step</>} open={false}>
+                <p className="hint">
+                  For calling something the recipe types do not cover. Every argument is a literal
+                  committed into the address, so it cannot depend on the amount that arrives.
+                </p>
+                <StepBuilder
+                  onAddStep={(step) => {
+                    setImported({ ...recipe, steps: [...recipe.steps, step] })
+                    setError(null)
+                  }}
+                  onError={setError}
+                />
+              </Section>
 
-              <section>
-                <h2>8 &middot; Recipe file</h2>
+              <Section title={<>8 &middot; Recipe file</>} open={false}>
                 <RecipeJson
                   recipe={recipe}
                   address={compiled.value.address}
@@ -1577,7 +1557,7 @@ export function RecipesTab({
                   onError={setError}
                   onRemember={remember}
                 />
-              </section>
+              </Section>
             </>
           )}
         </>
