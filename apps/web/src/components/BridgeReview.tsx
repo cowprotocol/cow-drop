@@ -1,7 +1,8 @@
 import type { CompiledRecipe } from '@cowprotocol/cow-drop-sdk'
 import { formatUnits } from 'viem'
 
-import { blockExplorer, chainLabel } from '../lib/chain.js'
+import { blockExplorer } from '../lib/chain.js'
+import { ChainTag } from './ChainTag.js'
 import type { BridgeQuote, CheckOutcome } from '../lib/bridge.js'
 import { BridgeChecks } from './BridgeChecks.js'
 import { BridgeDeliveryPayload } from './BridgeDeliveryPayload.js'
@@ -44,7 +45,10 @@ export function BridgeReview({
       <dl className="facts">
         <dt>Network</dt>
         <dd>
-          {chainLabel(tx.chainId)} <span className="hint">(chain id {tx.chainId})</span>
+          {/* The chain this will be sent on — the one fact worth recognising at a glance before
+              signing, since a bridge sent from the wrong chain is a bridge sent nowhere. */}
+          <ChainTag chainId={tx.chainId} />
+          <span className="hint"> (chain id {tx.chainId})</span>
         </dd>
 
         <dt>To</dt>

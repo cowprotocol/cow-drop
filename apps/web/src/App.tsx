@@ -194,8 +194,7 @@ export function App() {
             <div>
               <h1>cow-drop</h1>
               <p className="tagline">
-                Drop your tokens into an address and the cow does the rest. The recipe is committed
-                into the address itself, so anyone can trigger it and nobody has to sign anything.
+                Drop tokens into an address, triggering your predefined intent permissionlessly.
               </p>
             </div>
           </div>
@@ -261,7 +260,8 @@ export function App() {
         {route.tab === 'bridge' && (
           <BridgeTab account={account} recipe={bridgeRecipe} onBuildRecipe={() => navigate('recipes')} />
         )}
-        {route.tab === 'drops' && <ActivityLog />}
+        {/* Its own tab now: a feed of what happened, rather than a panel under the catalogue. */}
+        {route.tab === 'activity' && <ActivityLog />}
         {route.tab === 'drops' && (
           <DropsTab
             account={account}

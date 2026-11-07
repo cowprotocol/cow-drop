@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 
+import { ChainTag } from '../components/ChainTag.js'
 import { CopyBlock } from '../components/CopyBlock.js'
+import { Tooltip } from '../components/Tooltip.js'
+import { explorerAddressUrl } from '../lib/chain.js'
 import { keeperUrl } from '../lib/keeper.js'
 
 /**
@@ -77,18 +80,20 @@ export function AboutTab() {
       <section>
         <h2>What a drop is</h2>
         <p>
-          A cow-shed address commits to exactly one thing: its owner. Every action then needs that owner
-          to sign, at the moment of acting. cow-drop inverts it — the address commits to a{' '}
-          <strong>recipe</strong>:
+          An address that commits to a <strong>recipe</strong>, baked into how the address is derived.
+          <Tooltip title="Compared to a plain cow-shed">
+            A cow-shed address commits to one thing: its owner. Every action then needs that owner to
+            sign, at the moment of acting. cow-drop inverts it.
+          </Tooltip>
         </p>
         <CopyBlock
           label="The salt every drop address is derived from"
           command="salt = keccak256(abi.encode(owner, trustedExecutor, userSalt, setupTarget, keccak256(setupData)))"
+          language="ts"
         />
         <p className="hint">
-          <code>setupData</code> is the recipe. Change one byte of it and you get a different address, so
-          nobody can substitute a different recipe at this one and no signature is needed to prove the
-          recipe is the right one. <strong>The address is the authorization.</strong>
+          <code>setupData</code> is the recipe. Change one byte and you get a different address, so
+          nobody can substitute a recipe at this one. <strong>The address is the authorization.</strong>
         </p>
       </section>
 
@@ -96,24 +101,35 @@ export function AboutTab() {
         <h2>What follows from that</h2>
         <ul className="hint-list">
           <li>
-            <strong>Permissionless.</strong> Anyone can activate a drop — a keeper, a solver
-            pre-interaction, a stranger. There is no privileged sender and nothing to steal.
+            <strong>Permissionless.</strong> Anyone can activate a drop.
+            <Tooltip title="Permissionless">
+              A keeper, a solver pre-interaction, a stranger. There is no privileged sender and nothing
+              to steal.
+            </Tooltip>
           </li>
           <li>
-            <strong>Fund it before it exists.</strong> Funds sent to the counterfactual address are spent
-            by the recipe on activation, which is what makes it work behind a bridge whose payout amount
-            and timing you do not control.
+            <strong>Fund it before it exists.</strong> The recipe spends whatever it finds.
+            <Tooltip title="Funding early">
+              Funds sent to the counterfactual address are spent on activation. That is what makes it
+              work behind a bridge whose payout amount and timing you do not control.
+            </Tooltip>
           </li>
           <li>
-            <strong>The amount is never committed.</strong> Recipe steps run as delegatecalls, so the
-            balance that actually arrived is what gets sold. A drop commits to "split whatever lands here
-            into 12 parts", not to a number nobody could have known.
+            <strong>The amount is never committed.</strong> Only the instruction is.
+            <Tooltip title="Why no amount">
+              Recipe steps run as delegatecalls, so the balance that actually arrived is what gets sold.
+              A drop commits to &ldquo;split whatever lands here into 12 parts&rdquo;, not to a number
+              nobody could have known.
+            </Tooltip>
           </li>
           <li>
-            <strong>Recoverable — if you kept the recipe.</strong> There are two owner-only rescue paths,
-            neither needing a signature. But both need the recipe bytes, as does activation, and only
-            their hash is on-chain. <strong>Losing a recipe after funding loses the money, for everyone
-            including the owner.</strong> The recipe file is the key, not a convenience.
+            <strong>Recoverable — if you kept the recipe.</strong>{' '}
+            <strong>Losing it after funding loses the money, for everyone including the owner.</strong>
+            <Tooltip title="The two rescue paths">
+              Both are owner-only and need no signature. But both need the recipe bytes, as does
+              activation, and only their hash is on-chain. The recipe file is the key, not a
+              convenience.
+            </Tooltip>
           </li>
         </ul>
         <p className="hint warn-box">
@@ -127,8 +143,10 @@ export function AboutTab() {
           <h2>This keeper</h2>
           {failed ? (
             <p className="hint">
-              The keeper at <code>{base}</code> did not answer. The page works without one — a keeper only
-              activates drops unattended and pays the gas.
+              The keeper at <code>{base}</code> did not answer. The page works without one.
+              <Tooltip title="What a keeper adds">
+                It activates drops unattended and pays the gas. Nothing else depends on it.
+              </Tooltip>
             </p>
           ) : null}
 
@@ -183,10 +201,13 @@ export function AboutTab() {
           {about ? (
             <>
               <p className="hint">
-                {about.chain ?? `chain ${about.chainId}`}, generation {about.generation}. The contracts
-                marked below feed the CREATE2 preimage of every drop address, which is why they are
-                versioned as a generation rather than updated in place — changing one would move every
-                address anyone has already funded.
+                <ChainTag chainId={about.chainId} label={about.chain ?? `chain ${about.chainId}`} />
+                {' · '}generation {about.generation}
+                <Tooltip title="Generations">
+                  The contracts marked below feed the CREATE2 preimage of every drop address. That is
+                  why they are versioned as a generation rather than updated in place — changing one
+                  would move every address anyone has already funded.
+                </Tooltip>
               </p>
               <table>
                 <thead>
@@ -197,15 +218,26 @@ export function AboutTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(about.contracts).map(([key, contract]) => (
-                    <tr key={key}>
-                      <td>{contract.name}</td>
-                      <td>
-                        <code>{contract.address}</code>
-                      </td>
-                      <td>{contract.dropAddress ? 'yes' : 'no'}</td>
-                    </tr>
-                  ))}
+                  {Object.entries(about.contracts).map(([key, contract]) => {
+                    // Linked for the question this table exists to answer: are these the contracts my
+                    // address was derived from? That is checked on the explorer, not here.
+                    const href = explorerAddressUrl(about.chainId, contract.address)
+                    return (
+                      <tr key={key}>
+                        <td>{contract.name}</td>
+                        <td>
+                          {href ? (
+                            <a href={href} target="_blank" rel="noreferrer">
+                              <code>{contract.address}</code>
+                            </a>
+                          ) : (
+                            <code>{contract.address}</code>
+                          )}
+                        </td>
+                        <td>{contract.dropAddress ? 'yes' : 'no'}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
               <p className="hint">

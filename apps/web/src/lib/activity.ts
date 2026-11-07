@@ -22,6 +22,15 @@ export interface ActivityEntry {
   at: number
   chainId: number
   drop: Address
+  /**
+   * The drop's saved name at the time the line was written, or `''` when this browser does not know
+   * it — a drop followed through the owner subscription rather than from the saved list.
+   *
+   * A field rather than a prefix on `title`, which is what it used to be. That cost twice: the list
+   * could not group or filter by drop without parsing its own sentences back apart, and the fill
+   * tracker really did recover the name with `title.replace(/: order posted$/, '')`.
+   */
+  label: string
   /** The keeper event type, or `order-filled` / `order-expired` from the fill tracker. */
   type: string
   title: string
@@ -34,11 +43,24 @@ export interface ActivityEntry {
   settled?: boolean
 }
 
+/** A drop's short address, which is how it is named when this browser has no name for it. */
+export function shortDrop(drop: string): string {
+  return `${drop.slice(0, 6)}…${drop.slice(-4)}`
+}
+
+/** What to call the drop on a line: its saved name, or its short address. Never empty. */
+export function dropName(entry: ActivityEntry): string {
+  return entry.label || shortDrop(entry.drop)
+}
+
 export function listActivity(): ActivityEntry[] {
   try {
     const raw = localStorage.getItem(KEY)
     const parsed: unknown = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? (parsed as ActivityEntry[]) : []
+    if (!Array.isArray(parsed)) return []
+    // Lines written before `label` existed carry the name inside `title` instead. Left alone rather
+    // than parsed back out: they still read correctly, and the chip simply does not appear on them.
+    return (parsed as ActivityEntry[]).map((entry) => ({ ...entry, label: entry.label ?? '' }))
   } catch {
     return []
   }

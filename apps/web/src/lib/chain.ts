@@ -164,6 +164,21 @@ export function blockExplorer(chainId: number): { name: string; url: string } {
 }
 
 /**
+ * Where to look at an address on its chain's explorer, or `null` when there is nowhere to send you.
+ *
+ * Falls back rather than throwing, for the same reason `chainLabel` does: a stored row, a bridge route
+ * or a keeper's own answer can name a chain this build no longer carries, and a row that cannot be
+ * linked is still a row worth showing.
+ */
+export function explorerAddressUrl(chainId: number, address: string): string | null {
+  try {
+    return `${chainInfo(chainId).blockExplorer.url}/address/${address}`
+  } catch {
+    return null
+  }
+}
+
+/**
  * A chain's name, or its number when this build has never heard of it.
  *
  * cow-sdk knows every chain the app offers, so the fallback is for the cases where a *stored* record
@@ -174,6 +189,31 @@ export function chainLabel(chainId: number): string {
     return chainInfo(chainId).label
   } catch {
     return `chain ${chainId}`
+  }
+}
+
+/**
+ * The chain's logo and brand colour, as cow-sdk ships them — the same assets CoW Swap renders.
+ *
+ * `logo` is a `ThemedImage`; this page is dark-only (`color-scheme: dark`), so the dark variant is
+ * the one that is right here. Both fields fall back rather than throwing, for the same reason
+ * `chainLabel` does: a stored record or a bridge route can name a chain this build has never heard of,
+ * and a render is the wrong place to find out.
+ */
+export function chainLogoUrl(chainId: number): string | null {
+  try {
+    return chainInfo(chainId).logo.dark
+  } catch {
+    return null
+  }
+}
+
+/** The chain's own colour, used to tint its logo's backdrop. */
+export function chainColor(chainId: number): string {
+  try {
+    return chainInfo(chainId).color
+  } catch {
+    return 'var(--muted)'
   }
 }
 

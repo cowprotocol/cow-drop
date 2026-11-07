@@ -4,6 +4,8 @@ import type { Address } from 'viem'
 import { useState } from 'react'
 
 import { DropRow } from '../components/DropRow.js'
+import { Section } from '../components/Section.js'
+import { Tooltip } from '../components/Tooltip.js'
 import { useDropList } from '../components/DropList.js'
 import { isUserRejection, signTypedDataWith } from '../lib/chain.js'
 import type { MergedDrop } from '../lib/dropList.js'
@@ -101,12 +103,19 @@ export function DropsTab({
 
   return (
     <>
-      <section>
-        <h2>Your drops</h2>
+      {/*
+        Open, unlike the panels below it. This is what the tab is for — the rest are answers to
+        questions you arrived with, and they stay folded so this one is not pushed off the screen by
+        them. The counts in their headings are what makes that safe: a closed panel still says
+        whether there is anything inside it.
+      */}
+      <Section title={<>Your drops <Count n={primary.length} /></>}>
         <p className="hint">
-          Recipes are kept in this browser only, and a recipe is the only way to activate or recover its
-          drop — so keep the downloaded <code>.drop.json</code> somewhere durable. Clearing site data
-          loses these.
+          Kept in this browser only. Download the <code>.drop.json</code> for anything you care about.
+          <Tooltip title="Why it matters">
+            A recipe is the only way to activate or recover its drop. Clearing site data loses these,
+            and nobody can reconstruct them for you.
+          </Tooltip>
         </p>
 
         <div className="saved-actions">
@@ -136,16 +145,24 @@ export function DropsTab({
             Showing the {remote.drops.length} newest of {remote.total} the keeper holds for this account.
           </p>
         ) : null}
-      </section>
+      </Section>
 
       {groups.keeperOnly.length > 0 ? (
-        <section>
-          <h2>The keeper for {keeperChain} also has</h2>
+        <Section
+          title={
+            <>
+              The keeper for {keeperChain} also has <Count n={groups.keeperOnly.length} />
+            </>
+          }
+          open={false}
+        >
           <p className="hint">
-            This keeper holds a recipe naming your account as owner, and this browser does not have it.
-            Until the recipe is here you cannot load, activate or rescue these — all three need the
-            recipe bytes. Prove the account is yours and the keeper will hand them back, or import the{' '}
-            <code>.drop.json</code>, or open this page in the browser you made it in.
+            This keeper holds recipes naming your account, and this browser does not have them. Prove
+            the account is yours to get them back, import the <code>.drop.json</code>, or open this page
+            in the browser you made them in.
+            <Tooltip title="Why you cannot act on them yet">
+              Loading, activating and rescuing all need the recipe bytes, and only the keeper has them.
+            </Tooltip>
           </p>
 
           <div className="saved-actions">
@@ -156,46 +173,55 @@ export function DropsTab({
 
           {recovered !== null ? (
             <p className="hint">
-              Recovered {recovered} {recovered === 1 ? 'recipe' : 'recipes'} into this browser — they are
-              under <strong>Your drops</strong> above. <strong>Read one before funding it.</strong> A
-              signature proves you control this account, not that you wrote the recipe that names it: it
-              may pay its surplus to someone else.
+              Recovered {recovered} {recovered === 1 ? 'recipe' : 'recipes'} into this browser, under{' '}
+              <strong>Your drops</strong> above. <strong>Read one before funding it.</strong>
+              <Tooltip title="Read it first">
+                A signature proves you control this account, not that you wrote the recipe naming it. It
+                may pay its surplus to someone else.
+              </Tooltip>
             </p>
           ) : null}
           {recoverError ? <p className="hint warn-box">{recoverError}</p> : null}
           <p className="hint warn-box">
             <strong>A row here is not proof that you made it.</strong> Anyone may register a recipe
-            naming any owner, so this means <em>someone registered this and said you own it</em>. Never
-            send funds to an address from this list — fund only an address your own browser derived from
-            a recipe you chose.
+            naming any owner. Never fund an address from this list — fund only one your own browser
+            derived from a recipe you chose.
           </p>
           {rows(groups.keeperOnly)}
-        </section>
+        </Section>
       ) : null}
 
       {others.length > 0 ? (
-        <section>
-          <details>
-            <summary>Other accounts in this browser ({others.length})</summary>
-            <p className="hint">
-              Recipes saved here whose owner is not the connected account. Shown rather than hidden: with
-              several accounts you would otherwise watch a drop you funded vanish the moment you switched
-              wallets, which is the exact failure this page exists to prevent. The recipe is here, so
-              these still load.
-            </p>
-            {rows(others)}
-          </details>
-        </section>
+        <Section title={<>Other accounts in this browser <Count n={others.length} /></>} open={false}>
+          <p className="hint">
+            Saved here, but owned by another account. They still load.
+            <Tooltip title="Why these are shown">
+              Hidden, a drop you funded would vanish the moment you switched wallets — the exact
+              failure this page exists to prevent.
+            </Tooltip>
+          </p>
+          {rows(others)}
+        </Section>
       ) : null}
 
       {hasKeeper && keeperChain ? (
         <p className="hint">
-          This keeper watches <strong>{keeperChain}</strong> only. Drops on other chains appear here from
-          this browser's own records, and their keeper status is unknown.
+          This keeper watches <strong>{keeperChain}</strong> only. Drops on other chains come from this
+          browser's own records, with keeper status unknown.
         </p>
       ) : null}
     </>
   )
+}
+
+/**
+ * How many rows a panel holds, shown in its heading.
+ *
+ * Load-bearing now that the panels start closed: a heading with nothing after it gives no reason to
+ * open it, and no reason not to either.
+ */
+function Count({ n }: { n: number }) {
+  return <span className="section-count">({n})</span>
 }
 
 /** Three distinct nothings, because they call for three different next steps. */

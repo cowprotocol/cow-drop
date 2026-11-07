@@ -48,6 +48,8 @@ import { TerminalPanel } from '../components/TerminalPanel.js'
 import { StepTable } from '../components/StepTable.js'
 import { PaymentPanel, paymentStepOf } from '../components/PaymentPanel.js'
 import { Section } from '../components/Section.js'
+import { Select, type SelectOption } from '../components/Select.js'
+import { Tooltip } from '../components/Tooltip.js'
 
 /**
  * Which recipe to build. Named for what the user sees: the SDK calls these templates, because
@@ -55,6 +57,40 @@ import { Section } from '../components/Section.js'
  * not worth making a user learn.
  */
 type RecipeKind = 'swap' | 'twap' | 'stoploss' | 'payment'
+
+/**
+ * The four recipes, as the dropdown shows them.
+ *
+ * `description` is the one line under the name — what it does, not how. `detail` is the rest, which
+ * the tooltip beside the picker holds: whether it drives itself, and what you still have to do.
+ */
+const RECIPE_KINDS: (SelectOption<RecipeKind> & { detail: string })[] = [
+  {
+    value: 'swap',
+    label: 'Swap on arrival',
+    description: 'Sells what lands here, once, at your price',
+    detail: 'You post the order to CoW after activating. No watch tower needed.',
+  },
+  {
+    value: 'twap',
+    label: 'TWAP on arrival',
+    description: 'Sells what lands here in parts, over time',
+    detail: 'Self-driving: after one activation the watch tower posts each part.',
+  },
+  {
+    value: 'stoploss',
+    label: 'Stop-loss on arrival',
+    description: 'Sells when a price feed crosses your strike',
+    detail: 'Self-driving: the watch tower polls the condition, so nobody has to watch.',
+  },
+  {
+    value: 'payment',
+    label: 'Payment request',
+    description: 'Asks a fixed amount, payable in any token',
+    detail:
+      'The payer is quoted what to send; the keeper sells it for at least your price, and any surplus is yours. Reusable, so one address takes payment after payment.',
+  },
+]
 
 const PLACEHOLDER_OWNER: Address = '0x0000000000000000000000000000000000000001'
 
@@ -145,6 +181,39 @@ function optionalTimestamp(value: string): bigint | undefined {
   if (!value) return undefined
   const ms = Date.parse(value)
   return Number.isNaN(ms) ? undefined : BigInt(Math.floor(ms / 1000))
+}
+
+/**
+ * Where the drop has got to, as one line.
+ *
+ * The question this panel exists to answer is "can it run yet", and the balance and the deployed flag
+ * are only the evidence for it. Ordered by what blocks what: a chain with no contracts beats a drop
+ * with no funds, which beats a drop that has not been activated.
+ */
+function DropState({ status, isPayment }: { status: DropStatus; isPayment: boolean }) {
+  const state = (() => {
+    if (status.missing.length > 0) {
+      return { tone: 'warn', label: 'Cannot activate here', detail: 'The chain is missing contracts a drop needs.' } as const
+    }
+    if (status.deployed) {
+      return isPayment
+        ? { tone: 'ok', label: 'Taking payments', detail: 'Deployed. Each payment is activated on its own.' } as const
+        : { tone: 'ok', label: 'Activated', detail: 'Deployed and its recipe has run.' } as const
+    }
+    if (status.balance > 0n || status.nativeBalance > 0n) {
+      return { tone: 'ok', label: 'Funded, ready to activate', detail: 'Money has arrived. Anyone can run the recipe now.' } as const
+    }
+    return isPayment
+      ? { tone: 'info', label: 'Waiting for a payment', detail: 'Nothing has arrived at this address yet.' } as const
+      : { tone: 'info', label: 'Waiting for funds', detail: 'Nothing has arrived at this address yet.' } as const
+  })()
+
+  return (
+    <div className="drop-state">
+      <span className={`state-pill ${state.tone}`}>{state.label}</span>
+      <p className="hint">{state.detail}</p>
+    </div>
+  )
 }
 
 /** Build the recipe JSON from the form. Pure, so the address updates as the user types. */
@@ -985,46 +1054,23 @@ export function RecipesTab({
   return (
     <>
       <Section title={<>1 &middot; Pick a recipe</>}>
-        <div className="tabs">
-          <button
-            className={form.recipeKind === 'swap' ? 'active' : ''}
-            onClick={() => set('recipeKind', 'swap')}
-          >
-            Swap on arrival
-          </button>
-          <button
-            className={form.recipeKind === 'twap' ? 'active' : ''}
-            onClick={() => set('recipeKind', 'twap')}
-          >
-            TWAP on arrival
-          </button>
-          <button
-            className={form.recipeKind === 'stoploss' ? 'active' : ''}
-            onClick={() => set('recipeKind', 'stoploss')}
-          >
-            Stop-loss on arrival
-          </button>
-          <button
-            className={form.recipeKind === 'payment' ? 'active' : ''}
-            onClick={() => set('recipeKind', 'payment')}
-          >
-            Payment request
-          </button>
-        </div>
-        <p className="hint">
-          {form.recipeKind === 'swap'
-            ? 'Sells whatever lands here once, at your limit price. No watch tower needed, but you post the order to the API after activation.'
-            : form.recipeKind === 'twap'
-              ? 'Splits whatever lands here into parts and sells them over time. Self-driving: after one activation the watch tower posts each part.'
-              : form.recipeKind === 'payment'
-                ? 'Asks for a fixed amount of one token, paid in any token. The payer is quoted what to send; ' +
-                  'the keeper sells what arrives for at least your price, and any surplus is yours too. ' +
-                  'Reusable: one address takes payment after payment.'
-                : 'Sells whatever lands here once a price feed pair crosses your strike. Self-driving: the watch tower polls the condition, so nobody has to be watching.'}
-        </p>
+        <Select
+          className="recipe-picker"
+          label={
+            <>
+              Recipe
+              <Tooltip title={RECIPE_KINDS.find((kind) => kind.value === form.recipeKind)!.label}>
+                {RECIPE_KINDS.find((kind) => kind.value === form.recipeKind)!.detail}
+              </Tooltip>
+            </>
+          }
+          value={form.recipeKind}
+          options={RECIPE_KINDS}
+          onChange={(kind) => set('recipeKind', kind)}
+        />
       </Section>
 
-      <Section title={<>2 &middot; Parameters</>}>
+      <Section title={<>2 &middot; Set parameters</>}>
         <NetworkPicker
           chainId={form.chainId}
           walletChainId={walletChain}
@@ -1032,7 +1078,13 @@ export function RecipesTab({
         />
         <div className="grid">
           <label>
-            Owner (can always recover the funds)
+            <span className="label-text">
+              Owner
+              <Tooltip title="Owner">
+                The only account that can recover a funded drop, through either rescue path. It is part
+                of the derivation, so changing it changes the address.
+              </Tooltip>
+            </span>
             <input
               placeholder="Paste your address, or connect a wallet"
               value={form.owner}
@@ -1064,7 +1116,10 @@ export function RecipesTab({
           />
           {form.recipeKind === 'payment' ? (
             <label>
-              Price (the least you receive per payment)
+              <span className="label-text">
+                Price per payment
+                <Tooltip title="Price">The least you accept. Any surplus is yours too.</Tooltip>
+              </span>
               <input
                 inputMode="decimal"
                 value={form.payAmount}
@@ -1078,7 +1133,10 @@ export function RecipesTab({
             </label>
           )}
           <label>
-            Receiver (blank = the owner)
+            <span className="label-text">
+              Receiver
+              <Tooltip title="Receiver">Blank means the owner.</Tooltip>
+            </span>
             <input
               placeholder="0x…"
               value={form.receiver}
@@ -1175,18 +1233,20 @@ export function RecipesTab({
               )}
             </div>
             <p className="hint">
-              Both feeds must quote the <em>same currency</em> — nothing on-chain checks it.{' '}
-              {form.recipeKind === 'swap' ? (
-                <>
-                  Your limit price becomes a <strong>floor</strong> the feed may only tighten, so whoever
-                  activates cannot pick your price.
-                </>
-              ) : (
-                <>
-                  The strike fires when one sell token is worth <em>at most</em> that many buy tokens, at
-                  18 decimals; the limit price says how bad a fill you refuse.
-                </>
-              )}
+              Both feeds must quote the same currency — nothing on-chain checks it.
+              <Tooltip title="Using the feeds">
+                {form.recipeKind === 'swap' ? (
+                  <>
+                    Your limit price becomes a floor the feed may only tighten, so whoever activates
+                    cannot pick your price.
+                  </>
+                ) : (
+                  <>
+                    The strike fires when one sell token is worth at most that many buy tokens, at 18
+                    decimals. The limit price says how bad a fill you refuse.
+                  </>
+                )}
+              </Tooltip>
             </p>
           </fieldset>
         )}
@@ -1199,7 +1259,10 @@ export function RecipesTab({
           <fieldset className="subsection quote">
             <legend>Market price</legend>
             <label>
-              Reference amount (for the quote only, never part of the recipe)
+              <span className="label-text">
+                Reference amount
+                <Tooltip title="Reference amount">For the quote only; it never enters the recipe.</Tooltip>
+              </span>
               <input value={referenceAmount} onChange={(event) => setReferenceAmount(event.target.value)} />
             </label>
             <div className="actions">
@@ -1225,8 +1288,12 @@ export function RecipesTab({
               </p>
             )}
             <p className="hint">
-              Only the <em>price</em> is used — a drop cannot know its amount in advance. The amount still
-              matters: quote too little and the fee dominates, making the market look worse than it is.
+              Only the price is used, never the amount.
+              <Tooltip title="Reference amount">
+                A drop cannot know in advance how much will arrive, so the amount never enters the
+                recipe. It still matters here: quote too little and the fee dominates, making the market
+                look worse than it is.
+              </Tooltip>
             </p>
           </fieldset>
         )}
@@ -1269,9 +1336,12 @@ export function RecipesTab({
             </label>
           </div>
           <p className="hint">
-            Anyone can activate, so &ldquo;not yet&rdquo; must be committed into the address, not promised.
-            Guards <em>refuse</em> rather than trigger — nothing watches for one to turn true — and they
-            are part of the address, so adding one moves it.
+            Guards refuse an activation. They never trigger one.
+            <Tooltip title="Guards">
+              Anyone can activate, so &ldquo;not yet&rdquo; has to be committed into the address rather
+              than promised. Nothing watches for a guard to turn true, and a guard is part of the
+              derivation — so adding one moves the address.
+            </Tooltip>
           </p>
         </details>
         {/*
@@ -1280,14 +1350,16 @@ export function RecipesTab({
           */}
         {(form.recipeKind === 'twap' || form.recipeKind === 'stoploss') && !form.minAmount && (
           <p className="hint warn-note">
-            This recipe is one-shot. Without a minimum, anyone can activate on the first wei and the order
-            gets sized from a part-delivered balance — what a bridge paying in tranches does.
+            One-shot recipe with no minimum: anyone can activate on the first wei, and the order is then
+            sized from a part-delivered balance — which is what a bridge paying in tranches sends.
           </p>
         )}
         <p className="hint">
-          Bought tokens go to the <strong>receiver</strong>, defaulting to the owner; the zero address
-          leaves them in the drop. It cannot default to the drop itself — that address is derived from
-          these fields.
+          Bought tokens go to the receiver, which defaults to the owner.
+          <Tooltip title="Receiver">
+            The zero address leaves them in the drop. It cannot default to the drop itself, because that
+            address is derived from these fields.
+          </Tooltip>
         </p>
       </Section>
 
@@ -1295,8 +1367,8 @@ export function RecipesTab({
         <Section title={<>3 &middot; Add the price feeds</>}>
           <p className="warn">A stop-loss needs both feeds before it has an address.</p>
           <p className="hint">
-            The strike compares one against the other, so neither has a sensible default. Fill in the two
-            aggregators above — they must quote the same currency — and the address appears.
+            Fill in the two aggregators above, quoting the same currency, and the address appears. The
+            strike compares one against the other, so neither has a default.
           </p>
         </Section>
       ) : compiled.ok ? (
@@ -1314,7 +1386,7 @@ export function RecipesTab({
               </div>
             </Section>
           ) : chainMissing === null ? (
-            <Section title={<>3 &middot; Your drop address</>}>
+            <Section title={<>3 &middot; Get your drop address</>}>
               <p className="hint">
                 Checking whether {chainName} has the contracts a drop needs&hellip;
               </p>
@@ -1327,14 +1399,14 @@ export function RecipesTab({
                 address is withheld here rather than shown.
               </p>
               <p className="hint">
-                An address is only worth having if something can act on it: activation needs{' '}
-                <code>DropExecutor</code> and the step contracts, and rescue needs{' '}
-                <code>COWShedExecutorFactory</code>. With those missing there is no path out, not even
-                for you.
-              </p>
-              <p className="hint">
-                The recipe is fine, and resolves to the same address on every chain — so it will not
+                The recipe is fine, and resolves to this same address on every chain — so it will not
                 move once the contracts land. Switch to a chain without this label to fund it.
+                <Tooltip title="Why the address is withheld">
+                  An address is only worth having if something can act on it. Activation needs{' '}
+                  <code>DropExecutor</code> and the step contracts; rescue needs{' '}
+                  <code>COWShedExecutorFactory</code>. With those missing there is no path out, not even
+                  for you.
+                </Tooltip>
               </p>
             </Section>
           ) : ownerUnusable ? (
@@ -1343,32 +1415,36 @@ export function RecipesTab({
                 The owner field is empty, so the drop address is withheld until you fill it in.
               </p>
               <p className="hint">
-                Only the owner can recover a funded drop — both rescue paths check{' '}
-                <code>msg.sender == owner</code>. Left empty it falls back to the ecrecover precompile,{' '}
-                <code>{PLACEHOLDER_OWNER}</code>, which nobody holds the key to. Such a drop still funds
-                and activates; the money is just unreachable.
-              </p>
-              <p className="hint">
-                Paste an address, or connect a wallet. The owner is part of the derivation, so setting
-                it produces a <em>different</em> address — it cannot be added to one already funded.
+                Paste an address, or connect a wallet. The owner is part of the derivation, so setting it
+                produces a different address — it cannot be added to a drop already funded.
+                <Tooltip title="Why an owner is required">
+                  Only the owner can recover a funded drop: both rescue paths check{' '}
+                  <code>msg.sender == owner</code>. Left empty it falls back to the ecrecover precompile,{' '}
+                  <code>{PLACEHOLDER_OWNER}</code>, which nobody holds the key to. Such a drop still funds
+                  and activates — the money is simply unreachable.
+                </Tooltip>
               </p>
             </Section>
           ) : (
             <>
-              <Section title={<>3 &middot; Your drop address</>}>
+              <Section title={<>3 &middot; Get your drop address</>}>
                 <DropAddress
                   address={compiled.value.address}
                   saved={saved}
                   onRemember={remember}
                   recipe={recipe}
                 />
+                {/*
+                  * The pointer that pays for moving the step table to the end. Before funding is
+                  * exactly when to read what you are funding, and the panel is now eight headings
+                  * down — so the moment says where it is rather than relying on the number.
+                  */}
+                <p className="hint">
+                  Before you send anything, step 8 shows what this address commits to.
+                </p>
               </Section>
 
-              <Section title={<>4 &middot; What the address commits to</>} open={false}>
-                <StepTable setupData={compiled.value.setupData} deployment={compiled.value.deployment} />
-              </Section>
-
-              <Section title={<>5 &middot; Status</>}>
+              <Section title={<>4 &middot; Monitor status</>}>
                 {isPayment && (
                   <PaymentPanel
                     recipe={recipe}
@@ -1381,42 +1457,116 @@ export function RecipesTab({
                   />
                 )}
                 {status ? (
-                  <ul className="status">
-                    {!isPayment && (
-                      <li>
-                        Balance at drop:{' '}
-                        <strong>
-                          {formatUnits(status.balance, sellToken?.decimals ?? 18)} {sellToken?.symbol ?? ''}
-                        </strong>
-                        {status.nativeBalance > 0n ? ` (+ ${formatUnits(status.nativeBalance, 18)} xDAI)` : ''}
-                      </li>
-                    )}
-                    <li>Drop deployed: <strong>{status.deployed ? 'yes' : 'not yet'}</strong></li>
+                  <>
+                    {/*
+                      * The verdict first, then the numbers behind it.
+                      *
+                      * This panel used to be three `label: value` lines, which made the reader derive
+                      * the one thing they came for — can this run yet — from a balance and a boolean.
+                      * The pill states it; the facts below are the evidence, not the answer.
+                      */}
+                    <DropState status={status} isPayment={isPayment} />
+
+                    <dl className="facts">
+                      {!isPayment && (
+                        <>
+                          <dt>Balance</dt>
+                          <dd>
+                            {formatUnits(status.balance, sellToken?.decimals ?? 18)}{' '}
+                            {sellToken?.symbol ?? ''}
+                            {status.nativeBalance > 0n && (
+                              <span className="hint">
+                                {' '}
+                                + {formatUnits(status.nativeBalance, 18)} native
+                              </span>
+                            )}
+                          </dd>
+                        </>
+                      )}
+
+                      <dt>Deployed</dt>
+                      <dd>{status.deployed ? 'yes' : 'not yet'}</dd>
+
+                      {keeperUrl() !== null && (
+                        <>
+                          <dt>Keeper</dt>
+                          <dd>
+                            {keeperWatching === true
+                              ? 'watching — it will activate once funded'
+                              : keeperWatching === false
+                                ? 'not handed over'
+                                : 'unknown'}
+                          </dd>
+                        </>
+                      )}
+                    </dl>
+
                     {status.missing.length > 0 && (
-                      <li className="warn">
+                      <p className="hint warn-box">
                         {status.missing.join(' and ')} {status.missing.length > 1 ? 'are' : 'is'} not
                         deployed on {getDropChain(form.chainId)?.name ?? form.chainId} yet, so activation
-                        will revert. The cow-shed contracts a drop is derived from are already live, and
-                        the addresses are deterministic — so this drop address is correct now and will not
-                        change once the missing pieces are deployed.
-                      </li>
+                        will revert.
+                        <Tooltip title="The address is still correct">
+                          The cow-shed contracts a drop is derived from are already live and the
+                          addresses are deterministic, so this drop address will not change once the
+                          missing pieces are deployed.
+                        </Tooltip>
+                      </p>
                     )}
-                  </ul>
+                  </>
                 ) : (
                   <p className="hint">Reading chain state…</p>
                 )}
 
+                {/*
+                  * Actions, then the places to go and look.
+                  *
+                  * Two rows rather than one, because they are two kinds of thing: a button changes
+                  * something, a link leaves the page. Mixed together, "View on Gnosisscan" sat in the
+                  * same row as "Activate drop" at the same weight, which is the wrong weight for both.
+                  *
+                  * What each button does hangs off the button, not off a list underneath it. The list
+                  * repeated every button's name to say one sentence about it, so the panel carried its
+                  * controls twice — once to press and once to read.
+                  */}
                 <div className="actions">
-                  <button onClick={() => void refresh()}>Refresh</button>
+                  <Tooltip
+                    title="Refresh"
+                    trigger={<button onClick={() => void refresh()}>Refresh</button>}
+                  >
+                    Re-reads the balance and whether the drop is deployed, from the chain.
+                  </Tooltip>
+
                   {/* A payment drop activates *with a token*, from the panel above; plain activate reverts. */}
                   {!isPayment && (
-                    <button
-                      onClick={() => void onActivate()}
-                      disabled={!account || busy || (status?.missing.length ?? 0) > 0}
+                    <Tooltip
+                      title="Activate drop"
+                      trigger={
+                        <button
+                          onClick={() => void onActivate()}
+                          disabled={!account || busy || (status?.missing.length ?? 0) > 0}
+                        >
+                          {busy ? 'Activating…' : 'Activate drop'}
+                        </button>
+                      }
                     >
-                      {busy ? 'Activating…' : 'Activate drop'}
-                    </button>
+                      <span>
+                        Deploys the drop and runs its recipe, now. Safe to press again: an
+                        already-deployed drop simply re-runs its setup.
+                      </span>
+                      {/*
+                        * Gated on the keeper existing, or this points at a button that is not on the
+                        * page — the same rule the old explainer list had to follow.
+                        */}
+                      {keeperUrl() !== null && (
+                        <span>
+                          Or hand it to the keeper instead, and it activates on its own once the money
+                          arrives.
+                        </span>
+                      )}
+                    </Tooltip>
                   )}
+
                   {keeperUrl() !== null &&
                     /*
                      * One button, both directions. It reads as state as much as an action: a "Hand to
@@ -1428,88 +1578,110 @@ export function RecipesTab({
                      * half of this button puts the keeper back on it.
                      */
                     (keeperWatching === true ? (
-                      <button onClick={() => void onUnregisterKeeper()} disabled={busy}>
-                        Stop keeper watching
-                      </button>
+                      <Tooltip
+                        title="Stop keeper watching"
+                        trigger={
+                          <button onClick={() => void onUnregisterKeeper()} disabled={busy}>
+                            Stop keeper watching
+                          </button>
+                        }
+                      >
+                        Only the watch ends. The drop keeps whatever it holds, anyone can still
+                        activate it, and handing it back later resumes the watch.
+                      </Tooltip>
                     ) : (
-                      <button onClick={() => void onRegisterKeeper()} disabled={busy}>
-                        Hand to keeper
-                      </button>
+                      <Tooltip
+                        title="Hand to keeper"
+                        trigger={
+                          <button onClick={() => void onRegisterKeeper()} disabled={busy}>
+                            Hand to keeper
+                          </button>
+                        }
+                      >
+                        <span>
+                          The keeper waits until the drop has a balance, then activates it unattended.
+                        </span>
+                        <span>
+                          Or do it yourself, when you choose:{' '}
+                          {isPayment
+                            ? 'activate with a token, in the panel above.'
+                            : 'press Activate drop.'}
+                        </span>
+                      </Tooltip>
                     ))}
+
+                  {/*
+                    * The share card, repeated here from step 3.
+                    *
+                    * Not a duplicate so much as the same action at the moment it is actually wanted:
+                    * step 3 is where the address appears, this is where you sit watching for money to
+                    * arrive — and "send someone the address" is the thing you do between those two.
+                    * New tab, so the drop you are watching stays on screen.
+                    */}
+                  <Tooltip
+                    title="Share"
+                    trigger={
+                      <a
+                        className="button"
+                        href={routeHash({ tab: 'share', recipe })}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={remember}
+                      >
+                        Share ↗
+                      </a>
+                    }
+                  >
+                    Opens a card with the address, a QR code and what the recipe does — made to be sent
+                    to whoever is paying, or shown across a room.
+                  </Tooltip>
+
                   {/*
                     * Funding from another chain, as an alternative to sending to the address above. Not for a
                     * payment request: the bridge receiver calls plain `activate`, which a payment recipe
                     * refuses, since it cannot say which token arrived.
                     */}
                   {!isPayment && (
-                    <button onClick={() => onBridge(recipe)} disabled={busy}>
-                      Fund by bridging
-                    </button>
+                    <Tooltip
+                      title="Fund by bridging"
+                      trigger={
+                        <button onClick={() => onBridge(recipe)} disabled={busy}>
+                          Fund by bridging
+                        </button>
+                      }
+                    >
+                      Send tokens from another chain. The bridge delivers into this address and runs
+                      the recipe in the same transaction, so the order is live as soon as it lands.
+                    </Tooltip>
                   )}
+                </div>
+
+                <div className="action-links">
+                  {/* This panel is a snapshot; the feed of what has happened lives on its own tab. */}
+                  <a href={routeHash({ tab: 'activity' })}>Activity</a>
                   <a
                     href={`${cowExplorer(dropChainId)}/address/${compiled.value.address}`}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    View in Explorer
+                    Orders in CoW Explorer ↗
                   </a>
                   <a
                     href={`${blockExplorer(dropChainId).url}/address/${compiled.value.address}`}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    View on {blockExplorer(dropChainId).name}
+                    {blockExplorer(dropChainId).name} ↗
                   </a>
                 </div>
 
-                {/*
-                  * The keeper sentence is gated on the same condition as the button it describes, or the
-                  * explainer names an action that is not on the page.
-                  */}
-                <ul className="hint hint-list">
-                  {isPayment ? (
-                    <li>
-                      <strong>Activate with a token</strong> — in the panel above: sell what arrived in that
-                      token for at least your price. Payment requests are reusable, so each payment is its
-                      own activation.
-                    </li>
-                  ) : (
-                    <li>
-                      <strong>Activate drop</strong> — deploy the drop and run its setup yourself, now. Safe
-                      to press again: an already-deployed drop just re-runs the setup.
-                    </li>
-                  )}
-                  {!isPayment && (
-                    <li>
-                      <strong>Fund by bridging</strong> — send tokens from another chain instead. The bridge
-                      delivers into this address and runs the recipe in the same transaction, so the order is
-                      live as soon as it fills.
-                    </li>
-                  )}
-                  {keeperUrl() !== null && (
-                    <li>
-                      {keeperWatching === true ? (
-                        <>
-                          <strong>Stop keeper watching</strong> — this keeper is watching the drop and will
-                          activate it once it has a balance. Stopping only ends that: the drop keeps
-                          whatever it holds, anyone can still activate it, and handing it back later
-                          resumes the watch.
-                        </>
-                      ) : (
-                        <>
-                          <strong>Hand to keeper</strong> — have the keeper do that for you instead. It waits
-                          until the drop has a balance, then activates it unattended.
-                        </>
-                      )}
-                    </li>
-                  )}
-                </ul>
-
                 {!account && (
                   <p className="hint">
-                    <strong>Activate needs a connected wallet</strong> — only to pay the gas. Activation
-                    is permissionless, so the transaction authorises nothing and any account could send
-                    it.
+                    <strong>Activating needs a connected wallet</strong>, only to pay the gas.
+                    <Tooltip title="Activation">
+                      It is permissionless: the transaction authorises nothing, and any account could
+                      send it.
+                    </Tooltip>
                   </p>
                 )}
 
@@ -1518,30 +1690,18 @@ export function RecipesTab({
                 <TerminalPanel compiled={compiled.value} />
               </Section>
 
-              {/*
-                * Collapsed behind its heading, like section 7: the rescue paths are the wrong answer to
-                * almost every question, and the panel used to fold itself away *inside* this already
-                * titled section — two things to click, and two different names for one panel.
-                */}
-              <Section title={<>6 &middot; If something goes wrong</>} open={false} className="rescue">
-                <RescuePanel
-                  compiled={compiled.value}
-                  account={account}
-                  deployed={status?.deployed ?? false}
-                  sellToken={form.sellToken}
-                  tokens={tokens}
-                />
-              </Section>
 
               {/*
-                * Collapsed by default: an escape hatch for calls the recipe types do not cover, which is
-                * to say almost never — and open it costs a screenful of ABI fields between the rescue
-                * panel and the recipe file.
+                * Collapsed by default: an escape hatch for calls the recipe types do not cover, which
+                * is to say almost never, and open it costs a screenful of ABI fields.
                 */}
-              <Section title={<>7 &middot; Add a custom step</>} open={false}>
+              <Section title={<>5 &middot; Add a custom step</>} open={false} optional>
                 <p className="hint">
-                  For calling something the recipe types do not cover. Every argument is a literal
-                  committed into the address, so it cannot depend on the amount that arrives.
+                  For calls the recipes above do not cover.
+                  <Tooltip title="Custom step">
+                    Every argument is a literal committed into the address, so it cannot depend on the
+                    amount that arrives.
+                  </Tooltip>
                 </p>
                 <StepBuilder
                   onAddStep={(step) => {
@@ -1552,7 +1712,23 @@ export function RecipesTab({
                 />
               </Section>
 
-              <Section title={<>8 &middot; Recipe file</>} open={false}>
+              {/*
+                * Collapsed behind its heading, like the panels around it: the rescue paths are the
+                * wrong answer to almost every question, and the panel used to fold itself away
+                * *inside* this already titled section — two things to click, and two names for one
+                * panel.
+                */}
+              <Section title={<>6 &middot; Recover your funds</>} open={false} optional className="rescue">
+                <RescuePanel
+                  compiled={compiled.value}
+                  account={account}
+                  deployed={status?.deployed ?? false}
+                  sellToken={form.sellToken}
+                  tokens={tokens}
+                />
+              </Section>
+
+              <Section title={<>7 &middot; Manage the recipe</>} open={false} optional>
                 <RecipeJson
                   recipe={recipe}
                   address={compiled.value.address}
@@ -1563,6 +1739,19 @@ export function RecipesTab({
                   onError={setError}
                   onRemember={remember}
                 />
+              </Section>
+
+              {/*
+                * Last, so the numbered run reads as the path: 1-4 are what everyone does, and
+                * everything after is there when you want it.
+                *
+                * It sat at 4 because that is where it belongs in a careful reading — between getting
+                * the address and funding it is exactly when you should check what you are funding —
+                * but putting an optional panel in the middle of the mandatory run made all eight look
+                * compulsory. The pointer from step 3 is what keeps the reading available.
+                */}
+              <Section title={<>8 &middot; Understand what the activation does</>} open={false} optional>
+                <StepTable setupData={compiled.value.setupData} deployment={compiled.value.deployment} />
               </Section>
             </>
           )}

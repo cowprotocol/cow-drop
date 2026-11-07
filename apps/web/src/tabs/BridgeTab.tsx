@@ -7,6 +7,7 @@ import { BridgeProviderPicker } from '../components/BridgeProviderPicker.js'
 import { BridgeReview } from '../components/BridgeReview.js'
 import { BridgeRouteList } from '../components/BridgeRouteList.js'
 import { TokenPicker } from '../components/TokenPicker.js'
+import { Tooltip } from '../components/Tooltip.js'
 import {
   BRIDGE_SOURCE_CHAINS,
   DEFAULT_BRIDGE_PROVIDER,
@@ -88,7 +89,7 @@ export function BridgeTab({
   if (!plan.ok) {
     return (
       <section>
-        <h2>Bridge &amp; Swap</h2>
+        <h2>Bridge to Drop</h2>
         <p className="error">{plan.error}</p>
         <button onClick={onBuildRecipe}>Back to Recipes</button>
       </section>
@@ -103,7 +104,7 @@ export function BridgeTab({
         <BridgeHistory revision={0} />
 
         <section>
-          <h2>Bridge &amp; Swap</h2>
+          <h2>Bridge to Drop</h2>
           <p>Connect a wallet to list routes and send the bridge transaction.</p>
         </section>
       </>
@@ -134,11 +135,13 @@ function EmptyState({ onBuildRecipe }: { onBuildRecipe: () => void }) {
       <BridgeHistory revision={0} />
 
       <section>
-        <h2>Bridge &amp; Swap</h2>
+        <h2>Bridge to Drop</h2>
         <p className="hint">
-          Bring tokens from another chain straight into a drop. The bridge delivers to the drop address
-          itself and the keeper activates it on arrival, so nothing needs to be open and nothing of
-          yours pays gas on the destination chain.
+          Bring tokens from another chain straight into a drop.
+          <Tooltip title="Funding by bridge">
+            The bridge delivers to the drop address itself and the keeper activates it on arrival — so
+            nothing has to stay open, and nothing of yours pays gas on the destination chain.
+          </Tooltip>
         </p>
         <p>
           There is no recipe to fund yet. Build one on the Recipes tab, then press{' '}
@@ -619,7 +622,7 @@ function Bridge({
       <BridgeHistory revision={historyRevision} />
 
       <section className="bridge">
-        <h2>Bridge &amp; Swap</h2>
+        <h2>Bridge to Drop</h2>
         <p className="hint">
           {mode === 'direct'
             ? `The bridge pays the drop address on ${chainLabel(destinationChain)} directly. The keeper activates it once the money lands, and your order goes live then.`
@@ -643,7 +646,7 @@ function Bridge({
           <dt>Must receive</dt>
           <dd>
             <code>{deliveredToken}</code>
-            <span className="hint"> — the token the recipe sells. The bridge has to deliver this one.</span>
+            <span className="hint"> — the token the recipe sells, so the bridge must deliver this one.</span>
           </dd>
           <dt>Generation</dt>
           <dd>{compiled.deployment.generation}</dd>
@@ -690,7 +693,7 @@ function Bridge({
         </label>
         <p className="hint">
           {balance === null ? (
-            'Balance unavailable — this chain’s public RPC did not answer. You can still enter an amount.'
+            'Balance unavailable — the public RPC did not answer. You can still enter an amount.'
           ) : (
             <>
               Balance {formatUnits(balance, decimals)} {symbol}
@@ -726,8 +729,7 @@ function Bridge({
         */}
         {wrongNetwork && (
           <p className="hint">
-            Your wallet is on {chainLabel(walletChain as number)}, so the bridge transaction cannot be
-            sent yet.{' '}
+            Wallet is on {chainLabel(walletChain as number)}, so this cannot be sent yet.{' '}
             <button className="link" onClick={() => void switchChain(sourceChainId)}>
               Switch to {chainLabel(sourceChainId)}
             </button>
@@ -771,9 +773,9 @@ function Bridge({
           <div className="hint warn-box">
             <p>
               No bridge has been watched running a destination payload on-chain, so there is nothing
-              here we can offer honestly. A delivery that is not executed sits in a contract shared by
-              everyone, which forwards its whole balance to whichever drop its caller names — so anyone
-              may sweep it, and they do.
+              here to offer honestly. An unexecuted delivery sits in a contract shared by everyone,
+              which forwards its whole balance to whichever drop its caller names — so anyone may sweep
+              it, and they do.
             </p>
             <ul className="hint hint-list">
               {capability.known.map(({ name, execution }) => (
@@ -791,8 +793,11 @@ function Bridge({
           <fieldset className="subsection delivery-failure">
             <legend>If the recipe will not run</legend>
             <p className="hint">
-              A recipe can legitimately decline — a minimum-balance guard refusing a bridge&apos;s first
-              tranche is the guard working. The tokens have arrived either way, so this is where they go.
+              Where the tokens go if the recipe declines.
+              <Tooltip title="If the recipe declines">
+                Declining can be correct — a minimum-balance guard refusing a bridge&apos;s first
+                tranche is the guard working. The tokens have arrived either way.
+              </Tooltip>
             </p>
             {ON_FAILURE.map((option) => (
               <label key={option} className="radio">
@@ -937,9 +942,11 @@ function KeeperNote({ state, chainId, mode }: { state: KeeperState; chainId: num
       </p>
     ) : (
       <p className="hint">
-        No keeper is configured for {chainLabel(chainId)}. The bridge still activates the drop on
-        arrival, but nothing will retry if the recipe declines, and an order with custom appData may be
-        rejected by the order book because nobody holds the pre-image.
+        No keeper is configured for {chainLabel(chainId)}. The bridge still activates on arrival.
+        <Tooltip title="Without a keeper">
+          Nothing retries if the recipe declines, and an order with custom appData may be rejected by
+          the order book, because nobody holds the pre-image.
+        </Tooltip>
       </p>
     )
   }

@@ -13,7 +13,7 @@ import { recipeFromHash, recipeToHash } from './storage.js'
  * without a browser; `useRoute.ts` owns the reading and writing.
  */
 
-export type Tab = 'recipes' | 'bridge' | 'drops' | 'about' | 'sdk' | 'share'
+export type Tab = 'recipes' | 'activity' | 'bridge' | 'drops' | 'about' | 'sdk' | 'share'
 
 /**
  * Screen order in the tab bar.
@@ -24,9 +24,17 @@ export type Tab = 'recipes' | 'bridge' | 'drops' | 'about' | 'sdk' | 'share'
  */
 export const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'recipes', label: 'Recipes' },
-  // Second because it is where you go after building one, and the builder no longer carries a list.
+  /*
+   * Second, and its own tab rather than a panel on Drops.
+   *
+   * It answers a different question from the list beside it. Drops is a catalogue — what exists, and
+   * what can I do with it. Activity is a feed — what has happened since I last looked, which is the
+   * thing you come back for and the thing nothing else on the page tells you. Buried under Drops it
+   * was below four other panels and nobody opening the app would find it.
+   */
+  { id: 'activity', label: 'Activity' },
   { id: 'drops', label: 'Drops' },
-  { id: 'bridge', label: 'Bridge & Swap' },
+  { id: 'bridge', label: 'Bridge to Drop' },
   { id: 'about', label: 'About' },
   { id: 'sdk', label: 'SDK' },
 ]
@@ -46,12 +54,13 @@ export interface Route {
  * is the obvious place. `share` carries one for the same reason and more bluntly: the recipe is the
  * entire content of that page, so a share link without it is a blank card.
  *
- * Drops, About and SDK carry none because they need none.
+ * Activity, Drops, About and SDK carry none because they need none.
  */
 const RECIPE_TABS: ReadonlySet<Tab> = new Set<Tab>(['recipes', 'bridge', 'share'])
 
 const TABS_BY_ID: Record<string, Tab> = {
   recipes: 'recipes',
+  activity: 'activity',
   bridge: 'bridge',
   drops: 'drops',
   about: 'about',

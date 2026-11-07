@@ -1,4 +1,4 @@
-import type { ActivityEntry } from '../lib/activity.js'
+import { dropName, type ActivityEntry } from '../lib/activity.js'
 
 /** How long a toast stays up, unless it is an error, which stays until dismissed. */
 export const TOAST_MS = 8_000
@@ -11,6 +11,8 @@ export function Toasts({ toasts, onDismiss }: { toasts: ActivityEntry[]; onDismi
       {toasts.map((toast) => (
         <div key={toast.id} className={`toast toast-${toast.tone}`} role={toast.tone === 'error' ? 'alert' : 'status'}>
           <div className="toast-body">
+            {/* The drop first: with several in flight, "Order posted" alone says nothing. */}
+            <span className="toast-drop">{dropName(toast)}</span>
             <strong>{toast.title}</strong>
             {toast.detail && <span className="hint">{toast.detail}</span>}
             {toast.links.length > 0 && (

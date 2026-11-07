@@ -8,6 +8,7 @@ import { isAddress, type Address } from 'viem'
 
 import { getPublicClient, sendTransaction } from '../lib/chain.js'
 import type { TokenInfo } from '../lib/tokenList.js'
+import { Tooltip } from './Tooltip.js'
 
 const NATIVE: Address = '0x0000000000000000000000000000000000000000'
 
@@ -106,8 +107,11 @@ export function RescuePanel({
   return (
     <>
       <p className="hint">
-        A drop is funded before it exists, so a recipe can turn out to be unrunnable — funds arrive too
-        late, or a condition stops holding. Both paths are owner-only and need no signature.
+        Both paths are owner-only and need no signature.
+        <Tooltip title="When you need this">
+          A drop is funded before it exists, so a recipe can turn out to be unrunnable — funds arrive
+          too late, or a condition stops holding.
+        </Tooltip>
       </p>
 
       <ul className="status">
@@ -128,8 +132,11 @@ export function RescuePanel({
 
       <p className="hint warn-note">
         A sweep moves balances but does not retire orders already placed, so a drop swept mid-schedule
-        will still trade whatever arrives next. Retiring one needs the order hash from the activation
-        receipt — the SDK can (<code>buildRevokeCalls</code>), this page cannot yet.
+        still trades whatever arrives next.
+        <Tooltip title="Retiring an order">
+          That needs the order hash from the activation receipt. The SDK can do it (
+          <code>buildRevokeCalls</code>); this page cannot yet.
+        </Tooltip>
       </p>
 
       <div className="grid">
@@ -168,8 +175,10 @@ export function RescuePanel({
 
       <p className="hint">
         <strong>Deploy shed only</strong> skips the recipe and leaves an ordinary cow-shed at the same
-        address for you to drive. Empty balances are skipped, so listing a token that is not there is
-        harmless.
+        address for you to drive.
+        <Tooltip title="Listing tokens">
+          Empty balances are skipped, so naming a token that is not there is harmless.
+        </Tooltip>
       </p>
 
       {message && <p className="ok">{message}</p>}
