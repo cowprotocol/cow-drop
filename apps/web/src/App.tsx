@@ -192,8 +192,7 @@ export function App() {
             <div>
               <h1>cow-drop</h1>
               <p className="tagline">
-                Drop tokens into an address and the cow does the rest. The recipe is baked into the
-                address, so anyone can trigger it and nobody signs anything.
+                Drop tokens into an address, triggering your predefined intent permissionlessly.
               </p>
             </div>
           </div>
