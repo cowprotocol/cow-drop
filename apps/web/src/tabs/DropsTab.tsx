@@ -4,6 +4,7 @@ import type { Address } from 'viem'
 import { useState } from 'react'
 
 import { DropRow } from '../components/DropRow.js'
+import { Section } from '../components/Section.js'
 import { Tooltip } from '../components/Tooltip.js'
 import { useDropList } from '../components/DropList.js'
 import { isUserRejection, signTypedDataWith } from '../lib/chain.js'
@@ -102,8 +103,13 @@ export function DropsTab({
 
   return (
     <>
-      <section>
-        <h2>Your drops</h2>
+      {/*
+        Collapsed by default, like the builder's panels. This tab is most often opened to check on
+        something specific — and with four stacked panels open, the activity history was below the
+        fold on every visit. The counts in the headings are what make that safe: a collapsed panel
+        still says whether there is anything inside it.
+      */}
+      <Section title={<>Your drops <Count n={primary.length} /></>} open={false}>
         <p className="hint">
           Kept in this browser only. Download the <code>.drop.json</code> for anything you care about.
           <Tooltip title="Why it matters">
@@ -139,11 +145,17 @@ export function DropsTab({
             Showing the {remote.drops.length} newest of {remote.total} the keeper holds for this account.
           </p>
         ) : null}
-      </section>
+      </Section>
 
       {groups.keeperOnly.length > 0 ? (
-        <section>
-          <h2>The keeper for {keeperChain} also has</h2>
+        <Section
+          title={
+            <>
+              The keeper for {keeperChain} also has <Count n={groups.keeperOnly.length} />
+            </>
+          }
+          open={false}
+        >
           <p className="hint">
             This keeper holds recipes naming your account, and this browser does not have them. Prove
             the account is yours to get them back, import the <code>.drop.json</code>, or open this page
@@ -176,23 +188,20 @@ export function DropsTab({
             derived from a recipe you chose.
           </p>
           {rows(groups.keeperOnly)}
-        </section>
+        </Section>
       ) : null}
 
       {others.length > 0 ? (
-        <section>
-          <details>
-            <summary>Other accounts in this browser ({others.length})</summary>
-            <p className="hint">
-              Saved here, but owned by another account. They still load.
-              <Tooltip title="Why these are shown">
-                Hidden, a drop you funded would vanish the moment you switched wallets — the exact
-                failure this page exists to prevent.
-              </Tooltip>
-            </p>
-            {rows(others)}
-          </details>
-        </section>
+        <Section title={<>Other accounts in this browser <Count n={others.length} /></>} open={false}>
+          <p className="hint">
+            Saved here, but owned by another account. They still load.
+            <Tooltip title="Why these are shown">
+              Hidden, a drop you funded would vanish the moment you switched wallets — the exact
+              failure this page exists to prevent.
+            </Tooltip>
+          </p>
+          {rows(others)}
+        </Section>
       ) : null}
 
       {hasKeeper && keeperChain ? (
@@ -203,6 +212,16 @@ export function DropsTab({
       ) : null}
     </>
   )
+}
+
+/**
+ * How many rows a panel holds, shown in its heading.
+ *
+ * Load-bearing now that the panels start closed: a heading with nothing after it gives no reason to
+ * open it, and no reason not to either.
+ */
+function Count({ n }: { n: number }) {
+  return <span className="section-count">({n})</span>
 }
 
 /** Three distinct nothings, because they call for three different next steps. */

@@ -1078,6 +1078,19 @@ button.danger:hover:not(:disabled) {
   margin: 0;
 }
 
+/*
+ * How many rows the panel holds, in its heading.
+ *
+ * Load-bearing on the Drops tab, where the panels start closed: the heading is all you have to go on,
+ * so it has to say whether opening it is worth the click. Accented rather than muted, because it is
+ * the part of the heading actually carrying information.
+ */
+.section-count {
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .collapsed-section[open] > summary {
   margin-bottom: 0.9rem;
 }
@@ -1562,15 +1575,8 @@ label.radio input {
 /* The Drops tab's activity history. */
 .activity-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
+  justify-content: flex-end;
   margin-bottom: 0.9rem;
-}
-
-.activity-head h2 {
-  margin: 0;
 }
 
 .activity-filter {
@@ -1756,10 +1762,6 @@ a.chain-tag:hover {
     display: block;
     max-width: 100%;
     overflow-x: auto;
-  }
-
-  .activity-head {
-    align-items: stretch;
   }
 
   .activity-filter {

@@ -10,6 +10,7 @@ import {
 import { chainLabel } from '../lib/chain.js'
 import { ChainLogo } from './ChainLogo.js'
 import { ChainTag } from './ChainTag.js'
+import { Section } from './Section.js'
 import { Select, type SelectOption } from './Select.js'
 
 /** The filter value meaning "every drop", which is not an address and so cannot collide with one. */
@@ -104,11 +105,14 @@ export function ActivityLog() {
   const days = useMemo(() => byDay(shown), [shown])
 
   return (
-    <section>
-      <div className="activity-head">
-        <h2>Activity</h2>
-        {/* Only worth showing once there is more than one drop to tell apart. */}
-        {options.length > 2 && (
+    /*
+     * The one panel on this tab that opens expanded. Everything else here is looked up on purpose;
+     * this is the thing you did not know to ask about, so it has to be on screen without a click.
+     */
+    <Section title={<>Activity <span className="section-count">({entries.length})</span></>}>
+      {/* Below the heading rather than beside it: a control inside a `<summary>` toggles the panel. */}
+      {options.length > 2 && (
+        <div className="activity-head">
           <Select
             className="activity-filter"
             value={only}
@@ -117,8 +121,8 @@ export function ActivityLog() {
             searchable={options.length > 6}
             filterPlaceholder="Drop name or address"
           />
-        )}
-      </div>
+        </div>
+      )}
 
       {entries.length === 0 ? (
         <p className="hint">
@@ -164,6 +168,6 @@ export function ActivityLog() {
           </div>
         </>
       )}
-    </section>
+    </Section>
   )
 }
