@@ -827,6 +827,30 @@ details.terminal > summary {
 }
 
 /*
+ * A row of links out, under the row of buttons.
+ *
+ * Separated from `.actions` because they are a different kind of thing: a button changes something,
+ * a link leaves the page. Lighter and smaller, so the buttons above keep the weight.
+ */
+.action-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1rem;
+  margin-top: 0.7rem;
+  font-size: 0.85rem;
+}
+
+.action-links a {
+  color: var(--accent);
+}
+
+/* Wrapping a caller's element: tight around it, so the bubble is measured against the thing itself. */
+.tooltip-wrap {
+  display: inline-flex;
+}
+
+/*
  * The detail behind a short label.
  *
  * Opens on click as well as hover, because hover does not exist on a phone and that is where half of

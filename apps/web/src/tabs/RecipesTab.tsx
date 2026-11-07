@@ -1518,17 +1518,43 @@ export function RecipesTab({
                   <p className="hint">Reading chain state…</p>
                 )}
 
+                {/*
+                  * Actions, then the places to go and look.
+                  *
+                  * Two rows rather than one, because they are two kinds of thing: a button changes
+                  * something, a link leaves the page. Mixed together, "View on Gnosisscan" sat in the
+                  * same row as "Activate drop" at the same weight, which is the wrong weight for both.
+                  *
+                  * What each button does hangs off the button, not off a list underneath it. The list
+                  * repeated every button's name to say one sentence about it, so the panel carried its
+                  * controls twice — once to press and once to read.
+                  */}
                 <div className="actions">
-                  <button onClick={() => void refresh()}>Refresh</button>
+                  <Tooltip
+                    title="Refresh"
+                    trigger={<button onClick={() => void refresh()}>Refresh</button>}
+                  >
+                    Re-reads the balance and whether the drop is deployed, from the chain.
+                  </Tooltip>
+
                   {/* A payment drop activates *with a token*, from the panel above; plain activate reverts. */}
                   {!isPayment && (
-                    <button
-                      onClick={() => void onActivate()}
-                      disabled={!account || busy || (status?.missing.length ?? 0) > 0}
+                    <Tooltip
+                      title="Activate drop"
+                      trigger={
+                        <button
+                          onClick={() => void onActivate()}
+                          disabled={!account || busy || (status?.missing.length ?? 0) > 0}
+                        >
+                          {busy ? 'Activating…' : 'Activate drop'}
+                        </button>
+                      }
                     >
-                      {busy ? 'Activating…' : 'Activate drop'}
-                    </button>
+                      Deploys the drop and runs its recipe, now. Safe to press again: an
+                      already-deployed drop simply re-runs its setup.
+                    </Tooltip>
                   )}
+
                   {keeperUrl() !== null &&
                     /*
                      * One button, both directions. It reads as state as much as an action: a "Hand to
@@ -1540,24 +1566,77 @@ export function RecipesTab({
                      * half of this button puts the keeper back on it.
                      */
                     (keeperWatching === true ? (
-                      <button onClick={() => void onUnregisterKeeper()} disabled={busy}>
-                        Stop keeper watching
-                      </button>
+                      <Tooltip
+                        title="Stop keeper watching"
+                        trigger={
+                          <button onClick={() => void onUnregisterKeeper()} disabled={busy}>
+                            Stop keeper watching
+                          </button>
+                        }
+                      >
+                        Only the watch ends. The drop keeps whatever it holds, anyone can still
+                        activate it, and handing it back later resumes the watch.
+                      </Tooltip>
                     ) : (
-                      <button onClick={() => void onRegisterKeeper()} disabled={busy}>
-                        Hand to keeper
-                      </button>
+                      <Tooltip
+                        title="Hand to keeper"
+                        trigger={
+                          <button onClick={() => void onRegisterKeeper()} disabled={busy}>
+                            Hand to keeper
+                          </button>
+                        }
+                      >
+                        The keeper waits until the drop has a balance, then activates it unattended.
+                      </Tooltip>
                     ))}
+
+                  {/*
+                    * The share card, repeated here from step 3.
+                    *
+                    * Not a duplicate so much as the same action at the moment it is actually wanted:
+                    * step 3 is where the address appears, this is where you sit watching for money to
+                    * arrive — and "send someone the address" is the thing you do between those two.
+                    * New tab, so the drop you are watching stays on screen.
+                    */}
+                  <Tooltip
+                    title="Share"
+                    trigger={
+                      <a
+                        className="button"
+                        href={routeHash({ tab: 'share', recipe })}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={remember}
+                      >
+                        Share ↗
+                      </a>
+                    }
+                  >
+                    Opens a card with the address, a QR code and what the recipe does — made to be sent
+                    to whoever is paying, or shown across a room.
+                  </Tooltip>
+
                   {/*
                     * Funding from another chain, as an alternative to sending to the address above. Not for a
                     * payment request: the bridge receiver calls plain `activate`, which a payment recipe
                     * refuses, since it cannot say which token arrived.
                     */}
                   {!isPayment && (
-                    <button onClick={() => onBridge(recipe)} disabled={busy}>
-                      Fund by bridging
-                    </button>
+                    <Tooltip
+                      title="Fund by bridging"
+                      trigger={
+                        <button onClick={() => onBridge(recipe)} disabled={busy}>
+                          Fund by bridging
+                        </button>
+                      }
+                    >
+                      Send tokens from another chain. The bridge delivers into this address and runs
+                      the recipe in the same transaction, so the order is live as soon as it lands.
+                    </Tooltip>
                   )}
+                </div>
+
+                <div className="action-links">
                   {/* This panel is a snapshot; the feed of what has happened lives on its own tab. */}
                   <a href={routeHash({ tab: 'activity' })}>Activity</a>
                   <a
@@ -1565,68 +1644,16 @@ export function RecipesTab({
                     target="_blank"
                     rel="noreferrer"
                   >
-                    View in Explorer
+                    Orders in CoW Explorer ↗
                   </a>
                   <a
                     href={`${blockExplorer(dropChainId).url}/address/${compiled.value.address}`}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    View on {blockExplorer(dropChainId).name}
+                    {blockExplorer(dropChainId).name} ↗
                   </a>
                 </div>
-
-                {/*
-                  * The keeper sentence is gated on the same condition as the button it describes, or the
-                  * explainer names an action that is not on the page.
-                  */}
-                <ul className="hint hint-list">
-                  {isPayment ? (
-                    <li>
-                      <strong>Activate with a token</strong> — sell what arrived, in the panel above.
-                      <Tooltip title="Activate with a token">
-                        Sells the balance held in that token for at least your price. Payment requests
-                        are reusable, so every payment is its own activation.
-                      </Tooltip>
-                    </li>
-                  ) : (
-                    <li>
-                      <strong>Activate drop</strong> — deploy it and run the recipe, now.
-                      <Tooltip title="Activate drop">
-                        Safe to press again: an already-deployed drop simply re-runs its setup.
-                      </Tooltip>
-                    </li>
-                  )}
-                  {!isPayment && (
-                    <li>
-                      <strong>Fund by bridging</strong> — send tokens from another chain.
-                      <Tooltip title="Fund by bridging">
-                        The bridge delivers into this address and runs the recipe in the same
-                        transaction, so the order is live as soon as it lands.
-                      </Tooltip>
-                    </li>
-                  )}
-                  {keeperUrl() !== null && (
-                    <li>
-                      {keeperWatching === true ? (
-                        <>
-                          <strong>Stop keeper watching</strong> — end the unattended activation.
-                          <Tooltip title="Stop keeper watching">
-                            Only the watch ends. The drop keeps whatever it holds, anyone can still
-                            activate it, and handing it back later resumes the watch.
-                          </Tooltip>
-                        </>
-                      ) : (
-                        <>
-                          <strong>Hand to keeper</strong> — let it activate for you.
-                          <Tooltip title="Hand to keeper">
-                            The keeper waits until the drop has a balance, then activates it unattended.
-                          </Tooltip>
-                        </>
-                      )}
-                    </li>
-                  )}
-                </ul>
 
                 {!account && (
                   <p className="hint">

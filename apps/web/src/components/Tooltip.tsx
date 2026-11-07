@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  cloneElement,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
 
 /** Clearance between the bubble and the viewport edge, and between the bubble and its trigger. */
 const GUTTER = 10
@@ -13,8 +23,22 @@ const GUTTER = 10
  *
  * Click, not hover. Hover tooltips do not exist on a phone, and a good share of this is read on one.
  * Hover still opens it on a pointer device as a convenience, but nothing is hover-only.
+ *
+ * Two shapes. By default it renders its own `?` beside a label. Given a `trigger`, it explains that
+ * element instead — which is what a row of action buttons needs: four `?` glyphs between four buttons
+ * is worse than the sentences they replaced, and the button already says what it is called. There the
+ * bubble is reached by hovering or focusing the button, and announced through `aria-describedby`.
  */
-export function Tooltip({ title, children }: { title?: string; children: ReactNode }) {
+export function Tooltip({
+  title,
+  trigger,
+  children,
+}: {
+  title?: string
+  /** The element this explains. Omit for the standalone `?` beside a label. */
+  trigger?: ReactElement
+  children: ReactNode
+}) {
   const [open, setOpen] = useState(false)
   /**
    * Viewport coordinates for the bubble, which is `position: fixed`.
@@ -26,13 +50,14 @@ export function Tooltip({ title, children }: { title?: string; children: ReactNo
    */
   const [box, setBox] = useState<{ left: number; top: number } | null>(null)
 
-  const containerRef = useRef<HTMLSpanElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const bubbleRef = useRef<HTMLSpanElement>(null)
+  const containerRef = useRef<HTMLSpanElement | null>(null)
+  /** What the bubble is positioned against: the `?` button, or the span wrapping a supplied trigger. */
+  const anchorRef = useRef<HTMLElement | null>(null)
+  const bubbleRef = useRef<HTMLSpanElement | null>(null)
   const id = useId()
 
   const place = useCallback(() => {
-    const trigger = triggerRef.current?.getBoundingClientRect()
+    const trigger = anchorRef.current?.getBoundingClientRect()
     const bubble = bubbleRef.current?.getBoundingClientRect()
     if (!trigger || !bubble) return
 
@@ -79,6 +104,46 @@ export function Tooltip({ title, children }: { title?: string; children: ReactNo
     }
   }, [open])
 
+  const bubble = open && (
+    <span
+      className="tooltip-bubble"
+      id={id}
+      role="tooltip"
+      ref={bubbleRef}
+      // Hidden rather than unmounted for the first paint: it has to have a size to be placed.
+      style={box ? { left: box.left, top: box.top } : { visibility: 'hidden' }}
+    >
+      {title && <strong>{title}</strong>}
+      {children}
+    </span>
+  )
+
+  /*
+   * Wrapping an element the caller supplied. The span is what gets measured, which is right: it sits
+   * tight around the trigger, and the trigger may be disabled — a disabled button fires no pointer
+   * events of its own, so the hover has to be caught above it.
+   */
+  if (trigger) {
+    return (
+      <span
+        className="tooltip tooltip-wrap"
+        ref={(node) => {
+          containerRef.current = node
+          anchorRef.current = node
+        }}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+      >
+        {cloneElement(trigger, {
+          'aria-describedby': open ? id : undefined,
+          onFocus: () => setOpen(true),
+          onBlur: () => setOpen(false),
+        } as Partial<unknown>)}
+        {bubble}
+      </span>
+    )
+  }
+
   return (
     <span
       className="tooltip"
@@ -87,7 +152,9 @@ export function Tooltip({ title, children }: { title?: string; children: ReactNo
       onMouseLeave={() => setOpen(false)}
     >
       <button
-        ref={triggerRef}
+        ref={(node) => {
+          anchorRef.current = node
+        }}
         type="button"
         className="tooltip-trigger"
         aria-expanded={open}
@@ -106,19 +173,7 @@ export function Tooltip({ title, children }: { title?: string; children: ReactNo
         ?
       </button>
 
-      {open && (
-        <span
-          className="tooltip-bubble"
-          id={id}
-          role="tooltip"
-          ref={bubbleRef}
-          // Hidden rather than unmounted for the first paint: it has to have a size to be placed.
-          style={box ? { left: box.left, top: box.top } : { visibility: 'hidden' }}
-        >
-          {title && <strong>{title}</strong>}
-          {children}
-        </span>
-      )}
+      {bubble}
     </span>
   )
 }
