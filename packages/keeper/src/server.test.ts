@@ -231,6 +231,22 @@ describe('GET /v1/drops/:address', () => {
     expect(drop.activations).toEqual([])
     expect(drop.hints.tokens).toHaveLength(1)
   })
+
+  it('says why it has not activated: the last simulation and the retry time', async () => {
+    const { base, store } = await serve()
+    const address = compileRecipe(recipeJson()).address
+    await post(base, '/v1/drops', { recipe: recipeJson() })
+    const stored = (await store.get(CHAIN_ID, address.toLowerCase() as `0x${string}`))!
+    await store.put({
+      ...stored,
+      lastSimulation: { at: 1, ok: false, revert: 'NothingToSell()', balancesDigest: 'x' },
+      backoff: { failures: 2, nextAttemptAt: 5 },
+    })
+
+    const drop = (await json(await fetch(`${base}/v1/drops/${address}`))).drop
+    expect(drop.lastSimulation).toEqual({ at: 1, ok: false, revert: 'NothingToSell()' })
+    expect(drop.nextAttemptAt).toBe(5)
+  })
 })
 
 describe('GET /v1/drops?owner=', () => {
