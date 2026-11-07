@@ -34,7 +34,7 @@ export const TABS: readonly { id: Tab; label: string }[] = [
    */
   { id: 'activity', label: 'Activity' },
   { id: 'drops', label: 'Drops' },
-  { id: 'bridge', label: 'Bridge & Swap' },
+  { id: 'bridge', label: 'Bridge to Drop' },
   { id: 'about', label: 'About' },
   { id: 'sdk', label: 'SDK' },
 ]

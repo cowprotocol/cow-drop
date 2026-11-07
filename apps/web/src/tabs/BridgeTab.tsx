@@ -89,7 +89,7 @@ export function BridgeTab({
   if (!plan.ok) {
     return (
       <section>
-        <h2>Bridge &amp; Swap</h2>
+        <h2>Bridge to Drop</h2>
         <p className="error">{plan.error}</p>
         <button onClick={onBuildRecipe}>Back to Recipes</button>
       </section>
@@ -104,7 +104,7 @@ export function BridgeTab({
         <BridgeHistory revision={0} />
 
         <section>
-          <h2>Bridge &amp; Swap</h2>
+          <h2>Bridge to Drop</h2>
           <p>Connect a wallet to list routes and send the bridge transaction.</p>
         </section>
       </>
@@ -135,7 +135,7 @@ function EmptyState({ onBuildRecipe }: { onBuildRecipe: () => void }) {
       <BridgeHistory revision={0} />
 
       <section>
-        <h2>Bridge &amp; Swap</h2>
+        <h2>Bridge to Drop</h2>
         <p className="hint">
           Bring tokens from another chain straight into a drop.
           <Tooltip title="Funding by bridge">
@@ -622,7 +622,7 @@ function Bridge({
       <BridgeHistory revision={historyRevision} />
 
       <section className="bridge">
-        <h2>Bridge &amp; Swap</h2>
+        <h2>Bridge to Drop</h2>
         <p className="hint">
           {mode === 'direct'
             ? `The bridge pays the drop address on ${chainLabel(destinationChain)} directly. The keeper activates it once the money lands, and your order goes live then.`

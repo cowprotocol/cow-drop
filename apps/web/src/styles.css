@@ -1278,7 +1278,7 @@ details.subsection > summary .guard-count {
 }
 
 /*
- * The Bridge & Swap tab.
+ * The Bridge to Drop tab.
  *
  * Only three things it needs that the rest of the page does not have: a definition list that reads as
  * a summary rather than as decoded arguments (`.args` is deliberately small and monospace-ish), and

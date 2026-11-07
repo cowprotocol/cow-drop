@@ -1643,27 +1643,12 @@ export function RecipesTab({
                 <TerminalPanel compiled={compiled.value} />
               </Section>
 
-              {/*
-                * Collapsed behind its heading, like the panels below it: the rescue paths are the wrong answer to
-                * almost every question, and the panel used to fold itself away *inside* this already
-                * titled section — two things to click, and two different names for one panel.
-                */}
-              <Section title={<>5 &middot; Recover your funds</>} open={false} optional className="rescue">
-                <RescuePanel
-                  compiled={compiled.value}
-                  account={account}
-                  deployed={status?.deployed ?? false}
-                  sellToken={form.sellToken}
-                  tokens={tokens}
-                />
-              </Section>
 
               {/*
-                * Collapsed by default: an escape hatch for calls the recipe types do not cover, which is
-                * to say almost never — and open it costs a screenful of ABI fields between the rescue
-                * panel and the recipe file.
+                * Collapsed by default: an escape hatch for calls the recipe types do not cover, which
+                * is to say almost never, and open it costs a screenful of ABI fields.
                 */}
-              <Section title={<>6 &middot; Add a custom step</>} open={false} optional>
+              <Section title={<>5 &middot; Add a custom step</>} open={false} optional>
                 <p className="hint">
                   For calls the recipes above do not cover.
                   <Tooltip title="Custom step">
@@ -1677,6 +1662,22 @@ export function RecipesTab({
                     setError(null)
                   }}
                   onError={setError}
+                />
+              </Section>
+
+              {/*
+                * Collapsed behind its heading, like the panels around it: the rescue paths are the
+                * wrong answer to almost every question, and the panel used to fold itself away
+                * *inside* this already titled section — two things to click, and two names for one
+                * panel.
+                */}
+              <Section title={<>6 &middot; Recover your funds</>} open={false} optional className="rescue">
+                <RescuePanel
+                  compiled={compiled.value}
+                  account={account}
+                  deployed={status?.deployed ?? false}
+                  sellToken={form.sellToken}
+                  tokens={tokens}
                 />
               </Section>
 
