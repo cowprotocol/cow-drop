@@ -1573,9 +1573,12 @@ label.radio input {
 }
 
 /* The Drops tab's activity history. */
+/* The filters, right-aligned above the list. Two of them now: chain, then drop. */
 .activity-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 0.5rem;
   margin-bottom: 0.9rem;
 }
 
@@ -1764,6 +1767,7 @@ a.chain-tag:hover {
     overflow-x: auto;
   }
 
+  /* Stacked and full width: two dropdowns do not fit side by side on a phone. */
   .activity-filter {
     width: 100%;
   }

@@ -13,8 +13,18 @@ import { ChainTag } from './ChainTag.js'
 import { Section } from './Section.js'
 import { Select, type SelectOption } from './Select.js'
 
-/** The filter value meaning "every drop", which is not an address and so cannot collide with one. */
+/**
+ * The filter value meaning "no restriction".
+ *
+ * Safe for both filters: it is not an address, and `Select` compares chain options by number, so it
+ * cannot collide with a chain id either.
+ */
 const ALL = 'all'
+
+/** A drop's identity in this list: the same address on two chains is two drops. */
+function dropKey(entry: ActivityEntry): string {
+  return `${entry.chainId}:${entry.drop.toLowerCase()}`
+}
 
 /** Local calendar day, as a sortable key. Not the ISO date, which would group by UTC and split an evening. */
 function dayKey(at: number): string {
@@ -73,20 +83,45 @@ function byDay(entries: ActivityEntry[]): { key: string; at: number; entries: Ac
 export function ActivityLog() {
   const [entries, setEntries] = useState(listActivity)
   const [only, setOnly] = useState<string>(ALL)
+  const [chain, setChain] = useState<number | typeof ALL>(ALL)
 
   useEffect(() => onActivityChanged(() => setEntries(listActivity())), [])
 
-  /** One option per drop that appears in the history, newest first. */
+  /** One option per chain in the history, each counting its own events. */
+  const chainOptions = useMemo<SelectOption<number | typeof ALL>[]>(() => {
+    const counts = new Map<number, number>()
+    for (const entry of entries) counts.set(entry.chainId, (counts.get(entry.chainId) ?? 0) + 1)
+    return [
+      { value: ALL, label: 'All chains', description: `${entries.length} events` },
+      ...[...counts].map(([chainId, count]) => ({
+        value: chainId,
+        label: chainLabel(chainId),
+        description: `${count} ${count === 1 ? 'event' : 'events'}`,
+        icon: <ChainLogo chainId={chainId} size={18} />,
+      })),
+    ]
+  }, [entries])
+
+  /*
+   * The two filters compose, and the drop list narrows to the chosen chain rather than offering drops
+   * that would produce an empty list. Picking a chain is the coarser cut, so it is the one that gets
+   * to restrict the other.
+   */
+  const onChain = useMemo(
+    () => (chain === ALL ? entries : entries.filter((entry) => entry.chainId === chain)),
+    [entries, chain],
+  )
+
+  /** One option per drop on the chosen chain, newest first. */
   const options = useMemo<SelectOption<string>[]>(() => {
     const seen = new Map<string, { label: string; chainId: number; address: string }>()
-    for (const entry of entries) {
-      const key = `${entry.chainId}:${entry.drop.toLowerCase()}`
-      if (!seen.has(key)) {
-        seen.set(key, { label: dropName(entry), chainId: entry.chainId, address: entry.drop })
+    for (const entry of onChain) {
+      if (!seen.has(dropKey(entry))) {
+        seen.set(dropKey(entry), { label: dropName(entry), chainId: entry.chainId, address: entry.drop })
       }
     }
     return [
-      { value: ALL, label: 'All drops', description: `${entries.length} events` },
+      { value: ALL, label: 'All drops', description: `${onChain.length} events` },
       ...[...seen].map(([key, drop]) => ({
         value: key,
         label: drop.label,
@@ -95,11 +130,27 @@ export function ActivityLog() {
         icon: <ChainLogo chainId={drop.chainId} size={18} />,
       })),
     ]
-  }, [entries])
+  }, [onChain])
+
+  /*
+   * How many drops the *whole* history holds, which is what decides whether the drop filter is shown
+   * at all — not how many survive the chain filter. Keyed off the full set so the control does not
+   * appear and vanish as chains are picked: a filter with one option is a smaller surprise than a
+   * filter that moves the thing under your cursor.
+   */
+  const dropCount = useMemo(() => new Set(entries.map(dropKey)).size, [entries])
+
+  /*
+   * A drop selected on one chain is not on the list once another is chosen, and leaving it set would
+   * filter everything away with no visible cause. Cleared during render rather than in an effect, so
+   * no frame is ever painted showing that empty list.
+   */
+  const selectable = only === ALL || options.some((option) => option.value === only)
+  if (!selectable) setOnly(ALL)
 
   const shown = useMemo(
-    () => (only === ALL ? entries : entries.filter((e) => `${e.chainId}:${e.drop.toLowerCase()}` === only)),
-    [entries, only],
+    () => (only === ALL ? onChain : onChain.filter((entry) => dropKey(entry) === only)),
+    [onChain, only],
   )
 
   const days = useMemo(() => byDay(shown), [shown])
@@ -111,16 +162,27 @@ export function ActivityLog() {
      */
     <Section title={<>Activity <span className="section-count">({entries.length})</span></>}>
       {/* Below the heading rather than beside it: a control inside a `<summary>` toggles the panel. */}
-      {options.length > 2 && (
+      {(chainOptions.length > 2 || dropCount > 1) && (
         <div className="activity-head">
-          <Select
-            className="activity-filter"
-            value={only}
-            options={options}
-            onChange={setOnly}
-            searchable={options.length > 6}
-            filterPlaceholder="Drop name or address"
-          />
+          {/* Each filter appears only once it has something to choose between. */}
+          {chainOptions.length > 2 && (
+            <Select
+              className="activity-filter"
+              value={chain}
+              options={chainOptions}
+              onChange={setChain}
+            />
+          )}
+          {dropCount > 1 && (
+            <Select
+              className="activity-filter"
+              value={only}
+              options={options}
+              onChange={setOnly}
+              searchable={options.length > 6}
+              filterPlaceholder="Drop name or address"
+            />
+          )}
         </div>
       )}
 
@@ -161,7 +223,7 @@ export function ActivityLog() {
             </div>
           ))}
 
-          {shown.length === 0 && <p className="hint">Nothing for this drop yet.</p>}
+          {shown.length === 0 && <p className="hint">Nothing matches this filter.</p>}
 
           <div className="actions">
             <button onClick={clearActivity}>Clear history</button>
