@@ -1434,13 +1434,17 @@ export function RecipesTab({
                   onRemember={remember}
                   recipe={recipe}
                 />
+                {/*
+                  * The pointer that pays for moving the step table to the end. Before funding is
+                  * exactly when to read what you are funding, and the panel is now eight headings
+                  * down — so the moment says where it is rather than relying on the number.
+                  */}
+                <p className="hint">
+                  Before you send anything, step 8 shows what this address commits to.
+                </p>
               </Section>
 
-              <Section title={<>4 &middot; Understand what the activation does</>} open={false} optional>
-                <StepTable setupData={compiled.value.setupData} deployment={compiled.value.deployment} />
-              </Section>
-
-              <Section title={<>5 &middot; Monitor status</>}>
+              <Section title={<>4 &middot; Monitor status</>}>
                 {isPayment && (
                   <PaymentPanel
                     recipe={recipe}
@@ -1640,11 +1644,11 @@ export function RecipesTab({
               </Section>
 
               {/*
-                * Collapsed behind its heading, like section 7: the rescue paths are the wrong answer to
+                * Collapsed behind its heading, like the panels below it: the rescue paths are the wrong answer to
                 * almost every question, and the panel used to fold itself away *inside* this already
                 * titled section — two things to click, and two different names for one panel.
                 */}
-              <Section title={<>6 &middot; Recover your funds</>} open={false} optional className="rescue">
+              <Section title={<>5 &middot; Recover your funds</>} open={false} optional className="rescue">
                 <RescuePanel
                   compiled={compiled.value}
                   account={account}
@@ -1659,7 +1663,7 @@ export function RecipesTab({
                 * to say almost never — and open it costs a screenful of ABI fields between the rescue
                 * panel and the recipe file.
                 */}
-              <Section title={<>7 &middot; Add a custom step</>} open={false} optional>
+              <Section title={<>6 &middot; Add a custom step</>} open={false} optional>
                 <p className="hint">
                   For calls the recipes above do not cover.
                   <Tooltip title="Custom step">
@@ -1676,7 +1680,7 @@ export function RecipesTab({
                 />
               </Section>
 
-              <Section title={<>8 &middot; Manage the recipe</>} open={false} optional>
+              <Section title={<>7 &middot; Manage the recipe</>} open={false} optional>
                 <RecipeJson
                   recipe={recipe}
                   address={compiled.value.address}
@@ -1687,6 +1691,19 @@ export function RecipesTab({
                   onError={setError}
                   onRemember={remember}
                 />
+              </Section>
+
+              {/*
+                * Last, so the numbered run reads as the path: 1-4 are what everyone does, and
+                * everything after is there when you want it.
+                *
+                * It sat at 4 because that is where it belongs in a careful reading — between getting
+                * the address and funding it is exactly when you should check what you are funding —
+                * but putting an optional panel in the middle of the mandatory run made all eight look
+                * compulsory. The pointer from step 3 is what keeps the reading available.
+                */}
+              <Section title={<>8 &middot; Understand what the activation does</>} open={false} optional>
+                <StepTable setupData={compiled.value.setupData} deployment={compiled.value.deployment} />
               </Section>
             </>
           )}

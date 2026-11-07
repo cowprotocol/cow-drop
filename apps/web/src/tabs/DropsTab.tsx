@@ -104,12 +104,12 @@ export function DropsTab({
   return (
     <>
       {/*
-        Collapsed by default, like the builder's panels. This tab is most often opened to check on
-        something specific — and with four stacked panels open, the activity history was below the
-        fold on every visit. The counts in the headings are what make that safe: a collapsed panel
-        still says whether there is anything inside it.
+        Open, unlike the panels below it. This is what the tab is for — the rest are answers to
+        questions you arrived with, and they stay folded so this one is not pushed off the screen by
+        them. The counts in their headings are what makes that safe: a closed panel still says
+        whether there is anything inside it.
       */}
-      <Section title={<>Your drops <Count n={primary.length} /></>} open={false}>
+      <Section title={<>Your drops <Count n={primary.length} /></>}>
         <p className="hint">
           Kept in this browser only. Download the <code>.drop.json</code> for anything you care about.
           <Tooltip title="Why it matters">

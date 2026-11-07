@@ -1095,16 +1095,18 @@ button.danger:hover:not(:disabled) {
  * "Optional" on a step heading.
  *
  * A numbered list of eight implies all eight are the path, and half of these are things most people
- * never open. Muted and outlined rather than coloured: it is a caveat on the heading, not a status.
+ * never open — so the badge has to be read at a glance from the heading row, not found. Filled and
+ * accented rather than a muted outline, which disappeared into the uppercase heading beside it.
  */
 .section-optional {
   margin-left: 0.5rem;
-  padding: 0.05rem 0.4rem;
-  border: 1px solid var(--border);
+  padding: 0.1rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
   border-radius: 999px;
-  color: var(--muted);
-  font-size: 0.62rem;
-  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 700;
   letter-spacing: 0.06em;
   vertical-align: 0.1em;
 }

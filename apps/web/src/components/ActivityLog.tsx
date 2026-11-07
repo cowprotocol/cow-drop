@@ -20,6 +20,11 @@ import { Select, type SelectOption } from './Select.js'
  */
 const ALL = 'all'
 
+/** `1 event`, not `1 events`. */
+function events(count: number): string {
+  return `${count} ${count === 1 ? 'event' : 'events'}`
+}
+
 /** A drop's identity in this list: the same address on two chains is two drops. */
 function dropKey(entry: ActivityEntry): string {
   return `${entry.chainId}:${entry.drop.toLowerCase()}`
@@ -91,11 +96,11 @@ export function ActivityLog() {
     const counts = new Map<number, number>()
     for (const entry of entries) counts.set(entry.chainId, (counts.get(entry.chainId) ?? 0) + 1)
     return [
-      { value: ALL, label: 'All chains', description: `${entries.length} events` },
+      { value: ALL, label: 'All chains', description: events(entries.length) },
       ...[...counts].map(([chainId, count]) => ({
         value: chainId,
         label: chainLabel(chainId),
-        description: `${count} ${count === 1 ? 'event' : 'events'}`,
+        description: events(count),
         icon: <ChainLogo chainId={chainId} size={18} />,
       })),
     ]
@@ -120,7 +125,7 @@ export function ActivityLog() {
       }
     }
     return [
-      { value: ALL, label: 'All drops', description: `${onChain.length} events` },
+      { value: ALL, label: 'All drops', description: events(onChain.length) },
       ...[...seen].map(([key, drop]) => ({
         value: key,
         label: drop.label,
@@ -130,14 +135,6 @@ export function ActivityLog() {
       })),
     ]
   }, [onChain])
-
-  /*
-   * How many drops the *whole* history holds, which is what decides whether the drop filter is shown
-   * at all — not how many survive the chain filter. Keyed off the full set so the control does not
-   * appear and vanish as chains are picked: a filter with one option is a smaller surprise than a
-   * filter that moves the thing under your cursor.
-   */
-  const dropCount = useMemo(() => new Set(entries.map(dropKey)).size, [entries])
 
   /*
    * A drop selected on one chain is not on the list once another is chosen, and leaving it set would
@@ -165,28 +162,25 @@ export function ActivityLog() {
           Activity <span className="section-count">({entries.length})</span>
         </h2>
       </div>
-      {/* Below the heading rather than beside it: a control inside a `<summary>` toggles the panel. */}
-      {(chainOptions.length > 2 || dropCount > 1) && (
+      {/*
+        Both filters, whenever there is anything at all to filter.
+        
+        They used to appear only once there were two chains or two drops to choose between, which read
+        as tidy and was not: with one drop on one chain you got no controls, so nobody ever learnt the
+        filters existed before the day they needed them. A dropdown reading "All chains · 1 event" is a
+        smaller cost than a feature nobody can find.
+      */}
+      {entries.length > 0 && (
         <div className="activity-head">
-          {/* Each filter appears only once it has something to choose between. */}
-          {chainOptions.length > 2 && (
-            <Select
-              className="activity-filter"
-              value={chain}
-              options={chainOptions}
-              onChange={setChain}
-            />
-          )}
-          {dropCount > 1 && (
-            <Select
-              className="activity-filter"
-              value={only}
-              options={options}
-              onChange={setOnly}
-              searchable={options.length > 6}
-              filterPlaceholder="Drop name or address"
-            />
-          )}
+          <Select className="activity-filter" value={chain} options={chainOptions} onChange={setChain} />
+          <Select
+            className="activity-filter"
+            value={only}
+            options={options}
+            onChange={setOnly}
+            searchable={options.length > 6}
+            filterPlaceholder="Drop name or address"
+          />
         </div>
       )}
 
