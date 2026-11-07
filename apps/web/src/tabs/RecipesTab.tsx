@@ -183,6 +183,39 @@ function optionalTimestamp(value: string): bigint | undefined {
   return Number.isNaN(ms) ? undefined : BigInt(Math.floor(ms / 1000))
 }
 
+/**
+ * Where the drop has got to, as one line.
+ *
+ * The question this panel exists to answer is "can it run yet", and the balance and the deployed flag
+ * are only the evidence for it. Ordered by what blocks what: a chain with no contracts beats a drop
+ * with no funds, which beats a drop that has not been activated.
+ */
+function DropState({ status, isPayment }: { status: DropStatus; isPayment: boolean }) {
+  const state = (() => {
+    if (status.missing.length > 0) {
+      return { tone: 'warn', label: 'Cannot activate here', detail: 'The chain is missing contracts a drop needs.' } as const
+    }
+    if (status.deployed) {
+      return isPayment
+        ? { tone: 'ok', label: 'Taking payments', detail: 'Deployed. Each payment is activated on its own.' } as const
+        : { tone: 'ok', label: 'Activated', detail: 'Deployed and its recipe has run.' } as const
+    }
+    if (status.balance > 0n || status.nativeBalance > 0n) {
+      return { tone: 'ok', label: 'Funded, ready to activate', detail: 'Money has arrived. Anyone can run the recipe now.' } as const
+    }
+    return isPayment
+      ? { tone: 'info', label: 'Waiting for a payment', detail: 'Nothing has arrived at this address yet.' } as const
+      : { tone: 'info', label: 'Waiting for funds', detail: 'Nothing has arrived at this address yet.' } as const
+  })()
+
+  return (
+    <div className="drop-state">
+      <span className={`state-pill ${state.tone}`}>{state.label}</span>
+      <p className="hint">{state.detail}</p>
+    </div>
+  )
+}
+
 /** Build the recipe JSON from the form. Pure, so the address updates as the user types. */
 function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
   const owner = (isAddress(form.owner) ? form.owner : PLACEHOLDER_OWNER) as Address
@@ -1037,7 +1070,7 @@ export function RecipesTab({
         />
       </Section>
 
-      <Section title={<>2 &middot; Parameters</>}>
+      <Section title={<>2 &middot; Set parameters</>}>
         <NetworkPicker
           chainId={form.chainId}
           walletChainId={walletChain}
@@ -1353,7 +1386,7 @@ export function RecipesTab({
               </div>
             </Section>
           ) : chainMissing === null ? (
-            <Section title={<>3 &middot; Your drop address</>}>
+            <Section title={<>3 &middot; Get your drop address</>}>
               <p className="hint">
                 Checking whether {chainName} has the contracts a drop needs&hellip;
               </p>
@@ -1394,7 +1427,7 @@ export function RecipesTab({
             </Section>
           ) : (
             <>
-              <Section title={<>3 &middot; Your drop address</>}>
+              <Section title={<>3 &middot; Get your drop address</>}>
                 <DropAddress
                   address={compiled.value.address}
                   saved={saved}
@@ -1403,11 +1436,11 @@ export function RecipesTab({
                 />
               </Section>
 
-              <Section title={<>4 &middot; What the address commits to</>} open={false}>
+              <Section title={<>4 &middot; Understand what the activation does</>} open={false} optional>
                 <StepTable setupData={compiled.value.setupData} deployment={compiled.value.deployment} />
               </Section>
 
-              <Section title={<>5 &middot; Status</>}>
+              <Section title={<>5 &middot; Monitor status</>}>
                 {isPayment && (
                   <PaymentPanel
                     recipe={recipe}
@@ -1420,27 +1453,63 @@ export function RecipesTab({
                   />
                 )}
                 {status ? (
-                  <ul className="status">
-                    {!isPayment && (
-                      <li>
-                        Balance at drop:{' '}
-                        <strong>
-                          {formatUnits(status.balance, sellToken?.decimals ?? 18)} {sellToken?.symbol ?? ''}
-                        </strong>
-                        {status.nativeBalance > 0n ? ` (+ ${formatUnits(status.nativeBalance, 18)} xDAI)` : ''}
-                      </li>
-                    )}
-                    <li>Drop deployed: <strong>{status.deployed ? 'yes' : 'not yet'}</strong></li>
+                  <>
+                    {/*
+                      * The verdict first, then the numbers behind it.
+                      *
+                      * This panel used to be three `label: value` lines, which made the reader derive
+                      * the one thing they came for — can this run yet — from a balance and a boolean.
+                      * The pill states it; the facts below are the evidence, not the answer.
+                      */}
+                    <DropState status={status} isPayment={isPayment} />
+
+                    <dl className="facts">
+                      {!isPayment && (
+                        <>
+                          <dt>Balance</dt>
+                          <dd>
+                            {formatUnits(status.balance, sellToken?.decimals ?? 18)}{' '}
+                            {sellToken?.symbol ?? ''}
+                            {status.nativeBalance > 0n && (
+                              <span className="hint">
+                                {' '}
+                                + {formatUnits(status.nativeBalance, 18)} native
+                              </span>
+                            )}
+                          </dd>
+                        </>
+                      )}
+
+                      <dt>Deployed</dt>
+                      <dd>{status.deployed ? 'yes' : 'not yet'}</dd>
+
+                      {keeperUrl() !== null && (
+                        <>
+                          <dt>Keeper</dt>
+                          <dd>
+                            {keeperWatching === true
+                              ? 'watching — it will activate once funded'
+                              : keeperWatching === false
+                                ? 'not handed over'
+                                : 'unknown'}
+                          </dd>
+                        </>
+                      )}
+                    </dl>
+
                     {status.missing.length > 0 && (
-                      <li className="warn">
+                      <p className="hint warn-box">
                         {status.missing.join(' and ')} {status.missing.length > 1 ? 'are' : 'is'} not
                         deployed on {getDropChain(form.chainId)?.name ?? form.chainId} yet, so activation
-                        will revert. The cow-shed contracts a drop is derived from are already live, and
-                        the addresses are deterministic — so this drop address is correct now and will not
-                        change once the missing pieces are deployed.
-                      </li>
+                        will revert.
+                        <Tooltip title="The address is still correct">
+                          The cow-shed contracts a drop is derived from are already live and the
+                          addresses are deterministic, so this drop address will not change once the
+                          missing pieces are deployed.
+                        </Tooltip>
+                      </p>
                     )}
-                  </ul>
+                  </>
                 ) : (
                   <p className="hint">Reading chain state…</p>
                 )}
@@ -1485,6 +1554,8 @@ export function RecipesTab({
                       Fund by bridging
                     </button>
                   )}
+                  {/* This panel is a snapshot; the feed of what has happened lives on its own tab. */}
+                  <a href={routeHash({ tab: 'activity' })}>Activity</a>
                   <a
                     href={`${cowExplorer(dropChainId)}/address/${compiled.value.address}`}
                     target="_blank"
@@ -1573,7 +1644,7 @@ export function RecipesTab({
                 * almost every question, and the panel used to fold itself away *inside* this already
                 * titled section — two things to click, and two different names for one panel.
                 */}
-              <Section title={<>6 &middot; If something goes wrong</>} open={false} className="rescue">
+              <Section title={<>6 &middot; Recover your funds</>} open={false} optional className="rescue">
                 <RescuePanel
                   compiled={compiled.value}
                   account={account}
@@ -1588,7 +1659,7 @@ export function RecipesTab({
                 * to say almost never — and open it costs a screenful of ABI fields between the rescue
                 * panel and the recipe file.
                 */}
-              <Section title={<>7 &middot; Add a custom step</>} open={false}>
+              <Section title={<>7 &middot; Add a custom step</>} open={false} optional>
                 <p className="hint">
                   For calls the recipes above do not cover.
                   <Tooltip title="Custom step">
@@ -1605,7 +1676,7 @@ export function RecipesTab({
                 />
               </Section>
 
-              <Section title={<>8 &middot; Recipe file</>} open={false}>
+              <Section title={<>8 &middot; Manage the recipe</>} open={false} optional>
                 <RecipeJson
                   recipe={recipe}
                   address={compiled.value.address}

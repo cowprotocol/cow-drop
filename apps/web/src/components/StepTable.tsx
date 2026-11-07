@@ -1,6 +1,8 @@
 import { describeRecipe, type DescribedArg, type DescribedStep, type DropDeployment } from '@cowprotocol/cow-drop-sdk'
 import type { Hex } from 'viem'
 
+import { explorerAddressUrl } from '../lib/chain.js'
+
 /**
  * Shows what the committed bytes actually say, and the bytes themselves.
  *
@@ -25,7 +27,7 @@ export function StepTable({ setupData, deployment }: { setupData: Hex; deploymen
         </thead>
         <tbody>
           {described.steps.map((step) => (
-            <StepRow key={step.index} step={step} />
+            <StepRow key={step.index} step={step} chainId={deployment.chainId} />
           ))}
         </tbody>
       </table>
@@ -43,24 +45,43 @@ export function StepTable({ setupData, deployment }: { setupData: Hex; deploymen
   )
 }
 
-function StepRow({ step }: { step: DescribedStep }) {
+function StepRow({ step, chainId }: { step: DescribedStep; chainId: number }) {
+  /*
+   * The contract the step calls, linked to its explorer page.
+   *
+   * It was already named here, which is most of the job — but "which contract is this" is a question
+   * answered by going and looking at it, and an unrecognised call is exactly the case where you most
+   * want to. The target address is the link either way; only the text differs.
+   */
+  const target = explorerAddressUrl(chainId, step.target)
+  const contract = step.known ? (
+    <div className="hint">
+      {target ? (
+        <a href={target} target="_blank" rel="noreferrer" title={step.target}>
+          {step.known.contract} ↗
+        </a>
+      ) : (
+        step.known.contract
+      )}
+    </div>
+  ) : (
+    <div className="hint">
+      {target ? (
+        <a href={target} target="_blank" rel="noreferrer">
+          <code className="calldata">{step.target}</code>
+        </a>
+      ) : (
+        <code className="calldata">{step.target}</code>
+      )}
+    </div>
+  )
+
   return (
     <tr>
       <td>{step.index}</td>
       <td>
-        {step.known ? (
-          <>
-            <code>{step.known.functionName}</code>
-            <div className="hint">{step.known.contract}</div>
-          </>
-        ) : (
-          <>
-            <span className="unknown-step">unrecognised call</span>
-            <div className="hint">
-              <code className="calldata">{step.target}</code>
-            </div>
-          </>
-        )}
+        {step.known ? <code>{step.known.functionName}</code> : <span className="unknown-step">unrecognised call</span>}
+        {contract}
       </td>
       <td>
         {step.known ? (

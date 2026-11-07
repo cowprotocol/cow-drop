@@ -1091,6 +1091,65 @@ button.danger:hover:not(:disabled) {
   letter-spacing: 0;
 }
 
+/*
+ * "Optional" on a step heading.
+ *
+ * A numbered list of eight implies all eight are the path, and half of these are things most people
+ * never open. Muted and outlined rather than coloured: it is a caveat on the heading, not a status.
+ */
+.section-optional {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  vertical-align: 0.1em;
+}
+
+/*
+ * The drop's state, as a verdict rather than a reading.
+ *
+ * "Can it run yet" used to be something you worked out from a balance and a boolean. The pill answers
+ * it; the facts below are the evidence.
+ */
+.drop-state {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.7rem;
+  margin-bottom: 0.9rem;
+}
+
+.drop-state .hint {
+  margin: 0;
+}
+
+.state-pill {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.state-pill.ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+
+.state-pill.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+.state-pill.info {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
 .collapsed-section[open] > summary {
   margin-bottom: 0.9rem;
 }
@@ -1574,6 +1633,10 @@ label.radio input {
 
 /* The Drops tab's activity history. */
 /* The filters, right-aligned above the list. Two of them now: chain, then drop. */
+.activity-title h2 {
+  margin-bottom: 0.9rem;
+}
+
 .activity-head {
   display: flex;
   flex-wrap: wrap;

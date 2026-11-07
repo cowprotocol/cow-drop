@@ -10,7 +10,6 @@ import {
 import { chainLabel } from '../lib/chain.js'
 import { ChainLogo } from './ChainLogo.js'
 import { ChainTag } from './ChainTag.js'
-import { Section } from './Section.js'
 import { Select, type SelectOption } from './Select.js'
 
 /**
@@ -157,10 +156,15 @@ export function ActivityLog() {
 
   return (
     /*
-     * The one panel on this tab that opens expanded. Everything else here is looked up on purpose;
-     * this is the thing you did not know to ask about, so it has to be on screen without a click.
+     * Not foldable: on its own tab this is the whole page, and a page that opens collapsed is a page
+     * with nothing on it.
      */
-    <Section title={<>Activity <span className="section-count">({entries.length})</span></>}>
+    <section>
+      <div className="activity-title">
+        <h2>
+          Activity <span className="section-count">({entries.length})</span>
+        </h2>
+      </div>
       {/* Below the heading rather than beside it: a control inside a `<summary>` toggles the panel. */}
       {(chainOptions.length > 2 || dropCount > 1) && (
         <div className="activity-head">
@@ -230,6 +234,6 @@ export function ActivityLog() {
           </div>
         </>
       )}
-    </Section>
+    </section>
   )
 }
