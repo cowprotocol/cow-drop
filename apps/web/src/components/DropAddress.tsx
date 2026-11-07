@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import type { Address } from 'viem'
 
 import { routeHash } from '../lib/route.js'
+import { ChainTag } from './ChainTag.js'
+import { Tooltip } from './Tooltip.js'
 
 /**
  * The address panel: big, copyable, and scannable, since the whole point is to send funds here.
@@ -64,6 +66,9 @@ export function DropAddress({
     <div className="drop-address">
       {qr && <img src={qr} alt={`QR code for ${address}`} width={220} height={220} />}
       <div>
+        {/* Which chain this address is for, and the way out to it — the same tag the lists use. The
+            explorer answers the one question this panel cannot: has anything arrived yet. */}
+        <ChainTag chainId={recipe.chainId} address={address} className="address-chain" />
         <code className="address">{address}</code>
         <div className="actions">
           <button onClick={() => void copy()}>{copied ? 'Copied' : 'Copy address'}</button>
@@ -81,16 +86,19 @@ export function DropAddress({
         </div>
 
         <p className="hint keep-recipe">
-          <strong>Keep the recipe.</strong> This address is a hash of it, so it is the only way to
-          activate <em>or</em> recover the drop. Lose it after funding and nobody can retrieve the
-          money — not even you. It is kept in this browser and the page URL; download the file for
-          anything you care about.
+          <strong>Keep the recipe.</strong> Lose it after funding and nobody can retrieve the money —
+          not even you. Download the file for anything you care about.
+          <Tooltip title="Why">
+            The address is a hash of the recipe, so the recipe is the only way to activate or recover
+            the drop. It lives in this browser and in the page URL, and nowhere else.
+          </Tooltip>
         </p>
 
         <p className="hint">
-          Nothing exists here yet. Send the sell token — by bridge, exchange withdrawal or plain
-          transfer — then activate. Funds sent before deployment are safe; the recipe spends them on
-          activation.
+          Nothing exists here yet. Send the sell token, then activate.
+          <Tooltip title="Sending before deployment">
+            Funds sent to an undeployed drop are safe: the recipe spends whatever it finds when it runs.
+          </Tooltip>
         </p>
       </div>
     </div>

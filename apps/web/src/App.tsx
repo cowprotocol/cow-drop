@@ -192,8 +192,8 @@ export function App() {
             <div>
               <h1>cow-drop</h1>
               <p className="tagline">
-                Drop your tokens into an address and the cow does the rest. The recipe is committed
-                into the address itself, so anyone can trigger it and nobody has to sign anything.
+                Drop tokens into an address and the cow does the rest. The recipe is baked into the
+                address, so anyone can trigger it and nobody signs anything.
               </p>
             </div>
           </div>

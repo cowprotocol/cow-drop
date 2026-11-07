@@ -4,6 +4,7 @@ import type { Address } from 'viem'
 import { useState } from 'react'
 
 import { DropRow } from '../components/DropRow.js'
+import { Tooltip } from '../components/Tooltip.js'
 import { useDropList } from '../components/DropList.js'
 import { isUserRejection, signTypedDataWith } from '../lib/chain.js'
 import type { MergedDrop } from '../lib/dropList.js'
@@ -104,9 +105,11 @@ export function DropsTab({
       <section>
         <h2>Your drops</h2>
         <p className="hint">
-          Recipes are kept in this browser only, and a recipe is the only way to activate or recover its
-          drop — so keep the downloaded <code>.drop.json</code> somewhere durable. Clearing site data
-          loses these.
+          Kept in this browser only. Download the <code>.drop.json</code> for anything you care about.
+          <Tooltip title="Why it matters">
+            A recipe is the only way to activate or recover its drop. Clearing site data loses these,
+            and nobody can reconstruct them for you.
+          </Tooltip>
         </p>
 
         <div className="saved-actions">
@@ -142,10 +145,12 @@ export function DropsTab({
         <section>
           <h2>The keeper for {keeperChain} also has</h2>
           <p className="hint">
-            This keeper holds a recipe naming your account as owner, and this browser does not have it.
-            Until the recipe is here you cannot load, activate or rescue these — all three need the
-            recipe bytes. Prove the account is yours and the keeper will hand them back, or import the{' '}
-            <code>.drop.json</code>, or open this page in the browser you made it in.
+            This keeper holds recipes naming your account, and this browser does not have them. Prove
+            the account is yours to get them back, import the <code>.drop.json</code>, or open this page
+            in the browser you made them in.
+            <Tooltip title="Why you cannot act on them yet">
+              Loading, activating and rescuing all need the recipe bytes, and only the keeper has them.
+            </Tooltip>
           </p>
 
           <div className="saved-actions">
@@ -156,18 +161,19 @@ export function DropsTab({
 
           {recovered !== null ? (
             <p className="hint">
-              Recovered {recovered} {recovered === 1 ? 'recipe' : 'recipes'} into this browser — they are
-              under <strong>Your drops</strong> above. <strong>Read one before funding it.</strong> A
-              signature proves you control this account, not that you wrote the recipe that names it: it
-              may pay its surplus to someone else.
+              Recovered {recovered} {recovered === 1 ? 'recipe' : 'recipes'} into this browser, under{' '}
+              <strong>Your drops</strong> above. <strong>Read one before funding it.</strong>
+              <Tooltip title="Read it first">
+                A signature proves you control this account, not that you wrote the recipe naming it. It
+                may pay its surplus to someone else.
+              </Tooltip>
             </p>
           ) : null}
           {recoverError ? <p className="hint warn-box">{recoverError}</p> : null}
           <p className="hint warn-box">
             <strong>A row here is not proof that you made it.</strong> Anyone may register a recipe
-            naming any owner, so this means <em>someone registered this and said you own it</em>. Never
-            send funds to an address from this list — fund only an address your own browser derived from
-            a recipe you chose.
+            naming any owner. Never fund an address from this list — fund only one your own browser
+            derived from a recipe you chose.
           </p>
           {rows(groups.keeperOnly)}
         </section>
@@ -178,10 +184,11 @@ export function DropsTab({
           <details>
             <summary>Other accounts in this browser ({others.length})</summary>
             <p className="hint">
-              Recipes saved here whose owner is not the connected account. Shown rather than hidden: with
-              several accounts you would otherwise watch a drop you funded vanish the moment you switched
-              wallets, which is the exact failure this page exists to prevent. The recipe is here, so
-              these still load.
+              Saved here, but owned by another account. They still load.
+              <Tooltip title="Why these are shown">
+                Hidden, a drop you funded would vanish the moment you switched wallets — the exact
+                failure this page exists to prevent.
+              </Tooltip>
             </p>
             {rows(others)}
           </details>
@@ -190,8 +197,8 @@ export function DropsTab({
 
       {hasKeeper && keeperChain ? (
         <p className="hint">
-          This keeper watches <strong>{keeperChain}</strong> only. Drops on other chains appear here from
-          this browser's own records, and their keeper status is unknown.
+          This keeper watches <strong>{keeperChain}</strong> only. Drops on other chains come from this
+          browser's own records, with keeper status unknown.
         </p>
       ) : null}
     </>

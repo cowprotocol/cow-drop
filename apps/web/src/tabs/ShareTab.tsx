@@ -6,7 +6,9 @@ import { blockExplorer, chainLabel, cowExplorer } from '../lib/chain.js'
 import { routeHash } from '../lib/route.js'
 import { summariseRecipe } from '../lib/shareSummary.js'
 import { fetchTokenList, findToken, type TokenInfo } from '../lib/tokenList.js'
+import { ChainTag } from '../components/ChainTag.js'
 import { PaymentPanel, paymentStepOf } from '../components/PaymentPanel.js'
+import { Tooltip } from '../components/Tooltip.js'
 
 /**
  * The share card: one drop, one big QR, and a plain-language table of what it does.
@@ -142,9 +144,8 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
         <h2>This link does not compile</h2>
         <p className="error">{compiled.error}</p>
         <p className="hint">
-          The recipe in the URL could not be turned into an address, so there is nothing safe to show
-          here. It may have been truncated in transit, or built against a generation this page does
-          not know.
+          The recipe in this link does not resolve to an address, so there is nothing safe to show. It
+          may have been truncated in transit, or built against a generation this page does not know.
         </p>
         <a className="button" href={routeHash({ tab: 'recipes' })}>
           Build a drop
@@ -168,6 +169,9 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
           {/* Sized by CSS, not by the attributes, but both are given so the box is reserved before
               the data URL resolves and the table below does not jump. */}
           {qr && <img src={qr} alt={`QR code for ${address ?? ''}`} width={720} height={720} />}
+          {/* The chain, stated before the address rather than only in the sentence under it. This card
+              is read by someone about to send money, and sending on the wrong chain is the mistake. */}
+          <ChainTag chainId={recipe.chainId} address={address ?? undefined} className="address-chain" />
           <code className="address share-address">{address}</code>
           <div className="actions share-actions">
             <button onClick={() => void copyAddress()}>{copied === 'address' ? 'Copied' : 'Copy address'}</button>
@@ -178,9 +182,10 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
             <p className="hint">Pay on {chainLabel(recipe.chainId)} only.</p>
           ) : (
             <p className="hint">
-              Scan it, or send {chainLabel(recipe.chainId)} funds to the address by bridge, exchange
-              withdrawal or plain transfer. Nothing is deployed here yet — the recipe spends whatever
-              arrives when it runs.
+              Scan it, or send {chainLabel(recipe.chainId)} funds to the address any way you like.
+              <Tooltip title="Sending early is safe">
+                Nothing is deployed here yet. The recipe spends whatever has arrived when it runs.
+              </Tooltip>
             </p>
           )}
         </div>
@@ -215,8 +220,8 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
           <p className="hint">
             {!isPayment && (
               <>
-                Anyone can trigger this, and nobody can change it: the address is a hash of the recipe, so
-                a different recipe is a different address.{' '}
+                Anyone can trigger this, and nobody can change it — the address is a hash of the
+                recipe.{' '}
               </>
             )}
             <a href={`${cowExplorer(recipe.chainId)}/address/${address ?? ''}`} target="_blank" rel="noreferrer">

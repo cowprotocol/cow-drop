@@ -1,4 +1,5 @@
 import { CopyBlock } from '../components/CopyBlock.js'
+import { Tooltip } from '../components/Tooltip.js'
 
 /**
  * The SDK, for someone who would rather do this in code than in the form.
@@ -33,9 +34,7 @@ await walletClient.sendTransaction(tx)`
 
 const DESCRIBE = `import { compileRecipe, describeRecipe } from '@cowprotocol/cow-drop-sdk'
 
-// The inverse of compiling: committed bytes back to named steps, decoded arguments and warnings.
-// This is what the "What the address commits to" panel renders, and reading it *is* the safeguard —
-// activation is permissionless and unsigned, so nothing else checks what you are funding.
+// Committed bytes back to named steps, decoded arguments and warnings.
 const { setupData, deployment } = compileRecipe(recipe)
 const described = describeRecipe(setupData, deployment)
 
@@ -46,7 +45,6 @@ console.log(described.warnings)          // delegatecall to a non-step contract,
 
 const RESCUE = `import { buildRescueForState } from '@cowprotocol/cow-drop-sdk'
 
-// Owner-only, and it needs the same recipe bytes activation does — only their hash is on-chain.
 // Which path applies depends on whether the shed exists yet, so let the SDK decide.
 const tx = buildRescueForState({
   deployment,
@@ -58,11 +56,11 @@ const tx = buildRescueForState({
 
 const ADDRESS = `import { deriveDropAddress, encodeRecipe, saltOf } from '@cowprotocol/cow-drop-sdk'
 
-// The address is a hash commitment, so it can be computed with nothing on-chain and no network call.
+// No RPC, no deployment: the address is a hash of the recipe.
 const setupData = encodeRecipe(recipe)
 const address = deriveDropAddress({ deployment, owner, setupData })
 
-// Change one byte of setupData and this is a different address. That is the whole security model.
+// Change one byte of setupData and this is a different address.
 const salt = saltOf({ deployment, owner, setupData })`
 
 export function SdkTab() {
@@ -71,59 +69,73 @@ export function SdkTab() {
       <section>
         <h2>@cowprotocol/cow-drop-sdk</h2>
         <p className="hint">
-          Compile a recipe, get an address, build the activation transaction. TypeScript, and{' '}
-          <code>viem</code> is its only runtime dependency. Everything this page does, it does through
-          this SDK — the form is a caller, not a privileged one.
+          Compile a recipe, get an address, build the activation transaction. TypeScript, with{' '}
+          <code>viem</code> as its only runtime dependency.
+          <Tooltip title="The SDK and this page">
+            Everything this page does, it does through this SDK. The form is a caller, not a privileged
+            one — so anything here is reproducible in code.
+          </Tooltip>
         </p>
         <CopyBlock
           label="The 30-second version"
           hint="A recipe in, an address out, and a transaction anyone can send."
           command={QUICKSTART}
+          language="ts"
         />
       </section>
 
       <section>
         <h2>Addresses and encoding</h2>
         <p className="hint">
-          Pure computation: no RPC, no deployment, nothing to wait for. Useful for showing someone an
-          address before anything exists at it.
+          Pure computation — useful for showing someone an address before anything exists at it.
         </p>
-        <CopyBlock label="Derive an address by hand" command={ADDRESS} />
+        <CopyBlock label="Derive an address by hand" command={ADDRESS} language="ts" />
       </section>
 
       <section>
         <h2>Reading a recipe back</h2>
         <p className="hint">
-          The direction that matters most before funding: what do these committed bytes actually do? A
-          step the SDK cannot name is reported as an unrecognised call rather than rendered as if it were
-          understood.
+          What do these committed bytes actually do? The question to answer before funding.
+          <Tooltip title="Unrecognised steps">
+            A step the SDK cannot name is reported as an unrecognised call, never rendered as though it
+            were understood. Activation is permissionless and unsigned, so reading the recipe is the
+            safeguard — nothing else checks what you are funding.
+          </Tooltip>
         </p>
-        <CopyBlock label="Decode committed setupData" command={DESCRIBE} />
+        <CopyBlock label="Decode committed setupData" command={DESCRIBE} language="ts" />
       </section>
 
       <section>
         <h2>Rescue</h2>
         <p className="hint">
-          For a drop whose recipe can never succeed. Two owner-only paths, neither needing a signature —
-          but both needing the recipe bytes, which is why the recipe file is the key rather than a
-          convenience.
+          For a drop whose recipe can never succeed. Two owner-only paths, neither needing a signature.
+          <Tooltip title="Rescue needs the recipe">
+            Both paths need the same recipe bytes activation does — only their hash is on-chain. That is
+            why the recipe file is the key rather than a convenience.
+          </Tooltip>
         </p>
-        <CopyBlock label="Recover the funds" command={RESCUE} />
+        <CopyBlock label="Recover the funds" command={RESCUE} language="ts" />
       </section>
 
       <section>
         <h2>The rest</h2>
         <p className="hint">
-          Templates (<code>swapOnArrival</code>, <code>twapOnArrival</code>, <code>stopLossOnArrival</code>
-          ), the twelve <code>steps.*</code> builders for anything the templates do not cover, order
-          hashing (<code>orderUidFor</code>, <code>hashCowOrder</code>), <code>parseOrderPlacement</code>{' '}
-          and <code>toOrderBookPayload</code> for the pre-sign path, and the generated per-chain
-          deployment constants. The full reference is <code>packages/sdk/API.md</code>.
+          The full reference is <code>packages/sdk/API.md</code>.
+          <Tooltip title="What else is in there">
+            Templates (<code>swapOnArrival</code>, <code>twapOnArrival</code>,{' '}
+            <code>stopLossOnArrival</code>), the twelve <code>steps.*</code> builders for anything the
+            templates do not cover, order hashing (<code>orderUidFor</code>, <code>hashCowOrder</code>),{' '}
+            <code>parseOrderPlacement</code> and <code>toOrderBookPayload</code> for the pre-sign path,
+            and the generated per-chain deployment constants.
+          </Tooltip>
         </p>
         <p className="hint">
-          One thing worth knowing before you start: a recipe pins its <strong>generation</strong>, and it
-          defaults to 1 rather than the latest. A redeploy is a new generation with new addresses for the
-          same recipe, never an update in place — so changing it changes the address.
+          Worth knowing before you start: a recipe pins its <strong>generation</strong>, and it defaults
+          to 1 rather than the latest.
+          <Tooltip title="Generations">
+            A redeploy is a new generation with new addresses for the same recipe, never an update in
+            place — so changing it changes the address.
+          </Tooltip>
         </p>
       </section>
     </>

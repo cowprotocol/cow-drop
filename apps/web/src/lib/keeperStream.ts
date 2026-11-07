@@ -42,7 +42,12 @@ interface KeeperEvent {
 
 const short = (value: string) => `${value.slice(0, 6)}…${value.slice(-4)}`
 
-/** One keeper event as a history line, or null for events this page does not show. */
+/**
+ * One keeper event as a history line, or null for events this page does not show.
+ *
+ * The title says what happened and nothing else — which drop it happened to is `label` and `drop`,
+ * so the list can show it as a chip and filter on it rather than parsing it back out of a sentence.
+ */
 export function describeEvent(event: KeeperEvent, label: string): ActivityEntry | null {
   const explorer = blockExplorer(event.chainId)
   const cow = cowExplorer(event.chainId)
@@ -53,36 +58,37 @@ export function describeEvent(event: KeeperEvent, label: string): ActivityEntry 
     at: event.at,
     chainId: event.chainId,
     drop: event.drop,
+    label,
     type: event.type,
     links: [] as ActivityEntry['links'],
   }
 
   switch (event.type) {
     case 'funded':
-      return { ...base, title: `${label} was funded`, tone: 'info' }
+      return { ...base, title: 'Funded', tone: 'info' }
     case 'payment-detected':
-      return { ...base, title: `${label} received a payment`, detail: event.token && `in ${short(event.token)}`, tone: 'info' }
+      return { ...base, title: 'Payment received', detail: event.token && `in ${short(event.token)}`, tone: 'info' }
     case 'payment-underpaid':
       return {
         ...base,
-        title: `${label}: payment does not cover the price`,
+        title: 'Payment is short',
         detail: event.required ? `holds ${event.balance}, needs ${event.required}` : 'the token cannot be priced',
         tone: 'warn',
       }
     case 'activation-sent':
-      return { ...base, title: `${label}: activation sent`, tone: 'info', links: txLink }
+      return { ...base, title: 'Activation sent', tone: 'info', links: txLink }
     case 'activation-confirmed':
-      return { ...base, title: `${label} activated`, tone: 'ok', links: txLink }
+      return { ...base, title: 'Activated', tone: 'ok', links: txLink }
     case 'activation-failed':
-      return { ...base, title: `${label}: activation failed`, detail: event.detail, tone: 'error', links: txLink }
+      return { ...base, title: 'Activation failed', detail: event.detail, tone: 'error', links: txLink }
     case 'order-posted':
-      return { ...base, title: `${label}: order posted`, tone: 'ok', links: orderLink, orderUid: event.orderUid, settled: false }
+      return { ...base, title: 'Order posted', tone: 'ok', links: orderLink, orderUid: event.orderUid, settled: false }
     case 'order-rejected':
-      return { ...base, title: `${label}: order rejected`, detail: event.detail, tone: 'error', links: orderLink }
+      return { ...base, title: 'Order rejected', detail: event.detail, tone: 'error', links: orderLink }
     case 'blocked':
-      return { ...base, title: `${label}: the keeper won't pay to activate it`, detail: event.detail, tone: 'warn' }
+      return { ...base, title: "Keeper won't pay to activate it", detail: event.detail, tone: 'warn' }
     case 'retired':
-      return { ...base, title: `${label}: no longer watched`, detail: event.reason, tone: 'info' }
+      return { ...base, title: 'No longer watched', detail: event.reason, tone: 'info' }
     default:
       return null
   }
@@ -146,7 +152,9 @@ export function useKeeperActivity(params: {
         for (const type of EVENT_TYPES) {
           source.addEventListener(type, (message) => {
             const event = JSON.parse((message as MessageEvent<string>).data) as KeeperEvent
-            const label = labels.get(`${chainId}:${event.drop.toLowerCase()}`) ?? `Drop ${short(event.drop)}`
+            // Empty, not a stand-in: a drop this browser has no name for is named by its address at render
+            // time, in one place, rather than having a fake name frozen into the record.
+            const label = labels.get(`${chainId}:${event.drop.toLowerCase()}`) ?? ''
             const described = describeEvent(event, label)
             if (described && addActivity(described)) onNew.current(described)
           })
@@ -186,14 +194,14 @@ export function useFillTracker(onNew: (entry: ActivityEntry) => void): void {
           const outcome = await orderOutcome(posted.chainId, posted.orderUid!)
           if (!outcome) continue
           updateActivity(posted.id, { settled: true })
-          const label = posted.title.replace(/: order posted$/, '')
           const filled: ActivityEntry = {
             id: `${posted.id}:${outcome.status}`,
             at: Date.now(),
             chainId: posted.chainId,
             drop: posted.drop,
+            label: posted.label,
             type: outcome.status === 'filled' ? 'order-filled' : 'order-expired',
-            title: outcome.status === 'filled' ? `${label}: order filled` : `${label}: order ${outcome.status}`,
+            title: outcome.status === 'filled' ? 'Order filled' : `Order ${outcome.status}`,
             tone: outcome.status === 'filled' ? 'ok' : 'warn',
             links: [
               ...posted.links,

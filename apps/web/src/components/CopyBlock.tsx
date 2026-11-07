@@ -1,7 +1,20 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 
-/** A copyable command block. Wrapped rather than scrolled, so nothing is hidden off-screen. */
-export function CopyBlock({ label, hint, command }: { label: string; hint?: string; command: string }) {
+import type { Language } from '../lib/highlight.js'
+import { Code } from './Code.js'
+
+/** A copyable code block. Wrapped rather than scrolled, so nothing is hidden off-screen. */
+export function CopyBlock({
+  label,
+  hint,
+  command,
+  language = 'shell',
+}: {
+  label: string
+  hint?: ReactNode
+  command: string
+  language?: Language
+}) {
   const [copied, setCopied] = useState(false)
 
   const copy = async () => {
@@ -17,7 +30,7 @@ export function CopyBlock({ label, hint, command }: { label: string; hint?: stri
         <button onClick={() => void copy()}>{copied ? 'Copied' : 'Copy'}</button>
       </div>
       {hint && <p className="hint">{hint}</p>}
-      <pre>{command}</pre>
+      <Code source={command} language={language} />
     </div>
   )
 }

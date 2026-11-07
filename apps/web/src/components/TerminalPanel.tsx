@@ -2,6 +2,7 @@ import { buildActivateTx, type CompiledRecipe } from '@cowprotocol/cow-drop-sdk'
 
 import { cowApiUrl, rpcUrl } from '../lib/chain.js'
 import { CopyBlock } from './CopyBlock.js'
+import { Tooltip } from './Tooltip.js'
 
 /**
  * Activation without the browser wallet — for a keeper, a server, or just checking before funding.
@@ -47,36 +48,47 @@ export function TerminalPanel({ compiled }: { compiled: CompiledRecipe }) {
       <summary>Activate from the terminal</summary>
 
       <p className="hint">
-        Anyone can activate a drop, so none of this needs the owner — only gas. Useful for a keeper, or
-        for checking a recipe before sending anything.
+        Anyone can activate a drop, so none of this needs the owner — only gas.
       </p>
 
       <CopyBlock
         label="1 · Would it work?"
-        hint="Simulates the whole activation against current state — no key, no wallet, no funds needed.
-        A successful result is the drop address. A revert is the reason it cannot run yet: NothingToSell
-        before anything has arrived, or BalanceTooLow with the two amounts if a minimum guard is not met.
-        An empty 0x result means the contracts are not deployed on this chain yet."
+        hint={
+          <>
+            Runs the whole activation against current state. No key, no wallet, no funds.
+            <Tooltip title="Reading the result">
+              A successful result is the drop address. A revert is the reason it cannot run yet:{' '}
+              <code>NothingToSell</code> before anything has arrived, or <code>BalanceTooLow</code> with
+              the two amounts when a minimum guard is not met. An empty <code>0x</code> means the
+              contracts are not deployed on this chain yet.
+            </Tooltip>
+          </>
+        }
         command={simulate}
       />
 
       <CopyBlock
         label="2 · Actually activate"
-        hint="A transaction needs a signature, which curl has nothing to offer — hence cast. Any funded
-        key works; it is paying gas, not authorising anything."
+        hint={
+          <>
+            Any funded key works — it is paying gas, not authorising anything.
+            <Tooltip title="Why cast, not curl">
+              A transaction needs a signature, and curl has nothing to sign with.
+            </Tooltip>
+          </>
+        }
         command={activate}
       />
 
       <CopyBlock
         label="3 · What did it place?"
-        hint="Orders the drop owns, once activated. For the TWAP recipe this is how you watch parts appear
-        without touching the page."
+        hint="Orders the drop owns, once activated — how you watch TWAP parts appear without the page."
         command={orders}
       />
 
       <p className="hint">
         The raw call is <code>to</code> <code>{tx.to}</code>, <code>value</code> 0, and the calldata
-        above — everything a relayer or multisig needs.
+        above — all a relayer or multisig needs.
       </p>
     </details>
   )

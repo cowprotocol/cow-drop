@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 
 import { bridgeExplorerUrl } from '../lib/bridge.js'
-import { blockExplorer, chainLabel, cowExplorer } from '../lib/chain.js'
+import { blockExplorer, cowExplorer } from '../lib/chain.js'
 import { forgetBridge, listBridges, type SavedBridge } from '../lib/storage.js'
+import { ChainTag } from './ChainTag.js'
 
 /**
  * The bridges this browser has sent, newest first.
@@ -45,8 +46,14 @@ export function BridgeHistory({ revision }: { revision: number }) {
                 {bridge.sent.amount} {bridge.sent.symbol}
               </strong>
               <span className="muted">
-                {chainLabel(bridge.sourceChainId)} → {chainLabel(bridge.destinationChainId)} · {bridge.route} ·{' '}
-                {bridge.mode === 'atomic' ? 'atomic' : 'direct'} · {new Date(bridge.sentAt).toLocaleString()}
+                {/* Source is where it left from, so it links to nothing; the destination is where the
+                    drop is, and that is the address worth being one click from. */}
+                <ChainTag chainId={bridge.sourceChainId} />
+                {' → '}
+                <ChainTag chainId={bridge.destinationChainId} address={bridge.drop} />
+                {' · '}
+                {bridge.route} · {bridge.mode === 'atomic' ? 'atomic' : 'direct'} ·{' '}
+                {new Date(bridge.sentAt).toLocaleString()}
               </span>
             </div>
             <div className="bridge-history-row muted">

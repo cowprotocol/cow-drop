@@ -1,7 +1,7 @@
-import { getDropChain } from '@cowprotocol/cow-drop-sdk'
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 
 import { isResumable, keeperLabel, keeperTooltip, type MergedDrop } from '../lib/dropList.js'
+import { ChainTag } from './ChainTag.js'
 
 /**
  * One drop in a list.
@@ -41,7 +41,9 @@ export function DropRow({
         <strong>{drop.label}</strong>
         <code>{drop.address}</code>
         <span className="saved-meta">
-          {getDropChain(drop.chainId)?.name ?? `chain ${drop.chainId}`} ·{' '}
+          {/* The chain, and the way out to this drop on its explorer — the same tag every list uses. */}
+          <ChainTag chainId={drop.chainId} address={drop.address} />
+          {' · '}
           <time dateTime={new Date(drop.at).toISOString()}>{atLabel(drop.at)}</time>
           {drop.address.toLowerCase() === currentAddress?.toLowerCase() ? ' · showing now' : ''}
         </span>
