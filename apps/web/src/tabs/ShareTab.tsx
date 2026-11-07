@@ -168,7 +168,7 @@ function ShareCard({ recipe }: { recipe: DropRecipeJson }) {
         <div className="share-qr">
           {/* Sized by CSS, not by the attributes, but both are given so the box is reserved before
               the data URL resolves and the table below does not jump. */}
-          {qr && <img src={qr} alt={`QR code for ${address ?? ''}`} width={720} height={720} />}
+          {qr && <img className="qr" src={qr} alt={`QR code for ${address ?? ''}`} width={720} height={720} />}
           {/* The chain, stated before the address rather than only in the sentence under it. This card
               is read by someone about to send money, and sending on the wrong chain is the mistake. */}
           <ChainTag chainId={recipe.chainId} address={address ?? undefined} className="address-chain" />

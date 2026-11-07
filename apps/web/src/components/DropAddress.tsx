@@ -64,7 +64,7 @@ export function DropAddress({
 
   return (
     <div className="drop-address">
-      {qr && <img src={qr} alt={`QR code for ${address}`} width={220} height={220} />}
+      {qr && <img className="qr" src={qr} alt={`QR code for ${address}`} width={220} height={220} />}
       <div>
         {/* Which chain this address is for, and the way out to it — the same tag the lists use. The
             explorer answers the one question this panel cannot: has anything arrived yet. */}

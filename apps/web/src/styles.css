@@ -306,7 +306,8 @@ code {
   flex: 1 1 320px;
 }
 
-.drop-address img {
+/* The QR plate, matched on its class — see the note on `.share-qr img.qr`. */
+.drop-address img.qr {
   border-radius: 8px;
   background: #fff;
   padding: 6px;
@@ -1515,8 +1516,11 @@ label.radio input {
  *
  * The white plate and its padding are the quiet zone. A QR rendered straight onto this page's dark
  * background is not a styling choice — most scanners simply will not read it.
+ *
+ * Matched on the QR's own class, not on `img`. These boxes carry a chain mark as well now, and a
+ * bare descendant selector blew that logo up to a 380px square on its own white plate.
  */
-.share-qr img {
+.share-qr img.qr {
   display: block;
   width: 100%;
   max-width: min(68vmin, 380px);

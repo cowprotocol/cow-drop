@@ -1550,8 +1550,20 @@ export function RecipesTab({
                         </button>
                       }
                     >
-                      Deploys the drop and runs its recipe, now. Safe to press again: an
-                      already-deployed drop simply re-runs its setup.
+                      <span>
+                        Deploys the drop and runs its recipe, now. Safe to press again: an
+                        already-deployed drop simply re-runs its setup.
+                      </span>
+                      {/*
+                        * Gated on the keeper existing, or this points at a button that is not on the
+                        * page — the same rule the old explainer list had to follow.
+                        */}
+                      {keeperUrl() !== null && (
+                        <span>
+                          Or hand it to the keeper instead, and it activates on its own once the money
+                          arrives.
+                        </span>
+                      )}
                     </Tooltip>
                   )}
 
@@ -1586,7 +1598,15 @@ export function RecipesTab({
                           </button>
                         }
                       >
-                        The keeper waits until the drop has a balance, then activates it unattended.
+                        <span>
+                          The keeper waits until the drop has a balance, then activates it unattended.
+                        </span>
+                        <span>
+                          Or do it yourself, when you choose:{' '}
+                          {isPayment
+                            ? 'activate with a token, in the panel above.'
+                            : 'press Activate drop.'}
+                        </span>
                       </Tooltip>
                     ))}
 
