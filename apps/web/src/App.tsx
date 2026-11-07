@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { ActivityLog } from './components/ActivityLog.js'
 import { BetaNotice } from './components/BetaNotice.js'
+import { BuildInfo } from './components/BuildInfo.js'
 import { TOAST_MS, Toasts } from './components/Toasts.js'
 import type { ActivityEntry } from './lib/activity.js'
 import { useFillTracker, useKeeperActivity } from './lib/keeperStream.js'
@@ -159,6 +160,7 @@ export function App() {
             <span>cow-drop</span>
           </a>
           <ShareTab recipe={route.recipe} />
+          <BuildInfo />
         </main>
         <Toasts toasts={toasts} onDismiss={dismissToast} />
       </>
@@ -274,6 +276,7 @@ export function App() {
         )}
         {route.tab === 'about' && <AboutTab />}
         {route.tab === 'sdk' && <SdkTab />}
+        <BuildInfo />
       </main>
       <Toasts toasts={toasts} onDismiss={dismissToast} />
     </>
