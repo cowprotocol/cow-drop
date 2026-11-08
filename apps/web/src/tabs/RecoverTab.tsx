@@ -40,7 +40,7 @@ function short(address: string): string {
 /**
  * Recovery, as its own tab.
  *
- * It used to be step 6 of the builder, which meant it could only ever act on the drop the form
+ * It used to be a step inside the builder, which meant it could only ever act on the drop the form
  * happened to derive. That is the wrong shape: a drop built against an older version of a step
  * contract has an address the current form cannot reproduce, so its owner could see the funds and
  * not reach them. Here the drop is an input — picked from what this browser saved, or pasted — and

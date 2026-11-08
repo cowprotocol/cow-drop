@@ -1691,11 +1691,11 @@ export function RecipesTab({
                 />
                 {/*
                   * The pointer that pays for moving the step table to the end. Before funding is
-                  * exactly when to read what you are funding, and the panel is now eight headings
+                  * exactly when to read what you are funding, and the panel is several headings
                   * down — so the moment says where it is rather than relying on the number.
                   */}
                 <p className="hint">
-                  Before you send anything, step 8 shows what this address commits to.
+                  Before you send anything, step 7 shows what this address commits to.
                 </p>
               </Section>
 
@@ -1957,27 +1957,7 @@ export function RecipesTab({
                 />
               </Section>
 
-              {/*
-                * A pointer rather than the panel itself.
-                *
-                * As a step it could only ever recover the drop this form derives, which is the one
-                * case where recovery is least likely to be needed — and left a drop built by an
-                * older recipe, whose address the form cannot reproduce, with no way to reach its
-                * funds. The Recover tab takes an address instead.
-                */}
-              <Section title={<>6 &middot; Recover your funds</>} open={false} optional className="rescue">
-                <p className="hint">
-                  Recovery lives in its own tab now, so it can act on any drop you own rather than
-                  only the one on screen.
-                </p>
-                <div className="actions">
-                  <a className="button" href={routeHash({ tab: 'recover' })}>
-                    Open Recover
-                  </a>
-                </div>
-              </Section>
-
-              <Section title={<>7 &middot; Manage the recipe</>} open={false} optional>
+              <Section title={<>6 &middot; Manage the recipe</>} open={false} optional>
                 <RecipeJson
                   recipe={recipe}
                   address={compiled.value.address}
@@ -1999,7 +1979,7 @@ export function RecipesTab({
                 * but putting an optional panel in the middle of the mandatory run made all eight look
                 * compulsory. The pointer from step 3 is what keeps the reading available.
                 */}
-              <Section title={<>8 &middot; Understand what the activation does</>} open={false} optional>
+              <Section title={<>7 &middot; Understand what the activation does</>} open={false} optional>
                 <StepTable setupData={compiled.value.setupData} deployment={compiled.value.deployment} />
               </Section>
             </>
