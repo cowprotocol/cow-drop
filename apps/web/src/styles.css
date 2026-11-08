@@ -891,42 +891,39 @@ details.terminal > summary {
 }
 
 /*
- * The typed discount beside the preset ones.
+ * The typed discount, beside the preset ones.
  *
- * Boxed so the input, its unit and the button read as one control rather than a form field dropped
- * into a row of buttons. The input carries no border of its own — the group's is the only one.
+ * Shaped like the buttons it sits with — same padding, border and radius — because it does the same
+ * job: −0.5%, −1%, −5%, −[  ]%. There is no Apply button because the presets have none either; the
+ * limit updates as the number is typed, and it is on screen two fields above.
  */
 .quote-custom {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding-left: 0.6rem;
+  gap: 0.15rem;
+  padding: 0.5rem 0.7rem;
   border: 1px solid var(--border);
-  /* Matches the inputs and buttons it sits beside. */
   border-radius: 8px;
-  background: var(--bg);
-}
-
-.quote-custom input {
-  width: 3.5rem;
-  padding: 0.25rem 0;
-  text-align: right;
-  border: none;
-  background: none;
-  font-variant-numeric: tabular-nums;
-}
-
-.quote-custom input:focus {
-  outline: none;
+  background: var(--panel-2);
+  color: var(--muted);
 }
 
 .quote-custom:focus-within {
   border-color: var(--accent);
 }
 
-.quote-custom-unit {
-  color: var(--muted);
-  font-size: 0.85rem;
+.quote-custom input {
+  width: 2.4rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.quote-custom input:focus {
+  outline: none;
 }
 
 /* Token logos: the cascade means some will fail, so a lettered circle stands in. */

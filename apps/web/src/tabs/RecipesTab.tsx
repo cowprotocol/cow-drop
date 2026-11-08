@@ -220,6 +220,21 @@ const INITIAL: FormState = {
   pricer: '',
 }
 
+/**
+ * The typed discount as a magnitude `applySlippage` can use, or null while it is not usable.
+ *
+ * The control carries its own `−`, so what is typed is the size of the discount. A sign typed anyway
+ * is absorbed rather than refused: every control in this row moves the limit *below* market, so
+ * reading "−10" as anything other than ten percent down would be the one surprising thing it could
+ * do. Bounded under 100, since a full discount is a price of nothing — which `limitPriceToFraction`
+ * refuses anyway — and above zero, since zero is the market price and not a discount at all.
+ */
+function discountMagnitude(typed: string): number | null {
+  if (typed.trim() === '') return null
+  const value = Math.abs(Number(typed))
+  return Number.isFinite(value) && value > 0 && value < 100 ? value : null
+}
+
 /** A blank guard field means "no guard", not "zero". */
 function optionalBigInt(value: string): bigint | undefined {
   const trimmed = value.trim()
@@ -1201,23 +1216,6 @@ export function RecipesTab({
   const isConvert = convertStepOf(recipe) !== undefined
   const reusable: ReusableKind = isPayment ? 'payment' : isConvert ? 'convert' : null
 
-  /**
-   * The typed discount as a signed percentage, matching the preset buttons beside it.
-   *
-   * They read −0.5%, −1%, −5%, so this one is typed the same way: a negative number. A bare positive
-   * is taken as the same discount rather than refused — every control in this row moves the limit
-   * *below* market, so reading "10" as 10% above would be the one surprising thing it could do.
-   *
-   * `applySlippage` wants the magnitude, so the sign is dropped on the way out. Bounded under 100,
-   * since a full discount is a price of nothing, which `limitPriceToFraction` refuses anyway.
-   */
-  const customDiscountNumber = Math.abs(Number(customDiscount))
-  const customDiscountValid =
-    customDiscount.trim() !== '' &&
-    Number.isFinite(Number(customDiscount)) &&
-    customDiscountNumber > 0 &&
-    customDiscountNumber < 100
-
   const onQuote = async () => {
     setQuoting(true)
     setQuoteError(null)
@@ -1542,27 +1540,19 @@ export function RecipesTab({
                     * market, and picking that number is the user's call rather than ours.
                     */}
                   <span className="quote-custom">
+                    −
                     <input
                       inputMode="decimal"
                       aria-label="Discount below market, as a percentage"
-                      placeholder="−10"
+                      placeholder="10"
                       value={customDiscount}
-                      onChange={(event) => setCustomDiscount(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' && customDiscountValid) {
-                          event.preventDefault()
-                          set('limitPrice', applySlippage(quote.price, customDiscountNumber))
-                        }
+                      onChange={(event) => {
+                        setCustomDiscount(event.target.value)
+                        const magnitude = discountMagnitude(event.target.value)
+                        if (magnitude !== null) set('limitPrice', applySlippage(quote.price, magnitude))
                       }}
                     />
-                    <span className="quote-custom-unit">%</span>
-                    <button
-                      onClick={() => set('limitPrice', applySlippage(quote.price, customDiscountNumber))}
-                      disabled={!customDiscountValid}
-                      title="Set the limit this far below the market price"
-                    >
-                      Apply
-                    </button>
+                    %
                   </span>
                 </>
               )}
