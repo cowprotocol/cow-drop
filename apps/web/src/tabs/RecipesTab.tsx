@@ -111,9 +111,30 @@ const UNUSABLE_OWNERS: ReadonlySet<string> = new Set([
   '0x0000000000000000000000000000000000000000',
 ])
 
+/**
+ * How many bytes a label may encode to.
+ *
+ * The contract stores it in one 32-byte word, and `encodeLabel` throws above that. UTF-8, not
+ * characters: an emoji is four bytes and an accented letter is two, so counting characters would
+ * let a short-looking name through and blow up at compile time.
+ */
+const LABEL_MAX_BYTES = 32
+
+function labelBytes(label: string): number {
+  return new TextEncoder().encode(label).length
+}
+
 interface FormState {
   chainId: number
   recipeKind: RecipeKind
+  /**
+   * What to call this drop. Blank means the template's own name for it.
+   *
+   * It is part of the recipe, and therefore part of the address: two drops differing only in their
+   * label are two different addresses. That is why this is set here, with everything else that moves
+   * the address, and why a drop cannot be renamed after it is funded.
+   */
+  label: string
   owner: string
   sellToken: Address
   buyToken: Address
@@ -142,6 +163,7 @@ interface FormState {
 const INITIAL: FormState = {
   chainId: DEFAULT_CHAIN_ID,
   recipeKind: 'swap',
+  label: '',
   owner: '',
   sellToken: GNOSIS_TOKENS[0]!.address,
   buyToken: GNOSIS_TOKENS[2]!.address,
@@ -245,11 +267,23 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
         }
       : undefined
 
+  /*
+   * Blank means "whatever the template calls it", which is how the label behaved before this field
+   * existed — so an untouched form still compiles to the address it always did. Over-long is treated
+   * the same: `encodeLabel` throws above 32 bytes, and the form withholds the address rather than
+   * letting that reach `compileRecipe` as a page-level crash.
+   */
+  const label =
+    form.label.trim() !== '' && labelBytes(form.label.trim()) <= LABEL_MAX_BYTES
+      ? form.label.trim()
+      : undefined
+
   if (form.recipeKind === 'payment') {
     // No sell token, no limit price, no balance guard: the payer picks the token, and the price — a
     // fixed amount of the buy token — is the only thing the address commits to.
     return paymentRequest({
       chainId: form.chainId,
+      label,
       owner,
       buyToken: form.buyToken,
       buyAmount: parsePayAmount(form.payAmount, buyDecimals),
@@ -263,6 +297,7 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
   if (form.recipeKind === 'stoploss') {
     return stopLossOnArrival({
       chainId: form.chainId,
+      label,
       owner,
       sellToken: form.sellToken,
       buyToken: form.buyToken,
@@ -281,6 +316,7 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
   if (form.recipeKind === 'twap') {
     return twapOnArrival({
       chainId: form.chainId,
+      label,
       owner,
       sellToken: form.sellToken,
       buyToken: form.buyToken,
@@ -295,6 +331,7 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
 
   return swapOnArrival({
     chainId: form.chainId,
+    label,
     owner,
     sellToken: form.sellToken,
     buyToken: form.buyToken,
@@ -337,8 +374,9 @@ function humanPrice(price: LimitPriceJson): string | null {
  *
  * Only the shape the templates emit is recognised — the time guard, an optional wrap, the balance
  * guard, then exactly one trade step. A file with anything else in it, or with a field the form has
- * no box for (a custom label, a salt, a TWAP span), falls out here or fails the caller's address
- * check, and the recipe goes on overriding the form as before.
+ * no box for (a salt, a TWAP span), falls out here or fails the caller's address check, and the
+ * recipe goes on overriding the form as before. The label does have a box now, so a custom-named
+ * recipe hydrates instead of being refused.
  *
  * Correctness is not this function's job: it proposes, and `matchingForm` compiles the proposal and
  * refuses it unless it derives the very same address. That is what makes hydrating safe — every way
@@ -347,7 +385,7 @@ function humanPrice(price: LimitPriceJson): string | null {
  */
 function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
   const rest = [...recipe.steps]
-  const base: FormState = { ...INITIAL, chainId: recipe.chainId, owner: recipe.owner }
+  const base: FormState = { ...INITIAL, chainId: recipe.chainId, label: recipe.label, owner: recipe.owner }
 
   if (rest[0]?.type === 'requireTimeWindow') {
     const guard = rest.shift() as Extract<DropStepJson, { type: 'requireTimeWindow' }>
@@ -635,6 +673,14 @@ export function RecipesTab({
    * input caused it. Reported against `form.owner` rather than the recipe, because an imported recipe
    * does not come from this field and blaming it would be wrong.
    */
+  /**
+   * Whether the typed label is too long to encode.
+   *
+   * Checked here rather than left to `encodeLabel`, which throws — and a throw inside `toRecipe`
+   * takes the whole address section down with a stack trace instead of saying which field is wrong.
+   */
+  const labelTooLong = labelBytes(form.label.trim()) > LABEL_MAX_BYTES
+
   const ownerError = imported
     ? null
     : form.owner.trim() === ''
@@ -919,7 +965,12 @@ export function RecipesTab({
    * stop-loss with no feeds.
    */
   const addressIsShown =
-    compiled.ok && !feedsMissing && !ownerUnusable && probeError === null && chainMissing?.length === 0
+    compiled.ok &&
+    !feedsMissing &&
+    !ownerUnusable &&
+    !labelTooLong &&
+    probeError === null &&
+    chainMissing?.length === 0
 
   useEffect(
     () =>
@@ -1109,6 +1160,29 @@ export function RecipesTab({
           onChange={(chainId) => void onNetworkChange(chainId)}
         />
         <div className="grid">
+          <label>
+            <span className="label-text">
+              Name
+              <Tooltip title="Name">
+                Optional — without one the drop is called after its recipe. It is part of the
+                address, like every other field here, so two drops differing only in their name are
+                two different drops. A funded drop cannot be renamed.
+              </Tooltip>
+            </span>
+            <input
+              placeholder={RECIPE_KINDS.find((kind) => kind.value === form.recipeKind)!.label.toLowerCase()}
+              value={form.label}
+              onChange={(event) => set('label', event.target.value)}
+              aria-invalid={labelTooLong}
+              aria-describedby={labelTooLong ? 'label-error' : undefined}
+            />
+            {labelTooLong && (
+              <span className="field-error" id="label-error">
+                Too long: {labelBytes(form.label.trim())} bytes, and the drop stores {LABEL_MAX_BYTES}.
+              </span>
+            )}
+          </label>
+
           <label>
             <span className="label-text">
               Owner
@@ -1439,6 +1513,18 @@ export function RecipesTab({
                   <code>COWShedExecutorFactory</code>. With those missing there is no path out, not even
                   for you.
                 </Tooltip>
+              </p>
+            </Section>
+          ) : labelTooLong ? (
+            <Section title={<>3 &middot; Shorten the name</>}>
+              <p className="warn">
+                The name is {labelBytes(form.label.trim())} bytes and a drop stores{' '}
+                {LABEL_MAX_BYTES}, so the address is withheld until it fits.
+              </p>
+              <p className="hint">
+                Counted in UTF-8, not characters: an emoji is four bytes and an accented letter two.
+                The name is part of the address, so this is not a display limit that could be relaxed
+                later — the contract has one word to keep it in.
               </p>
             </Section>
           ) : ownerUnusable ? (

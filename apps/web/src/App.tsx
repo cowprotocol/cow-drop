@@ -345,7 +345,7 @@ export function App() {
           <BridgeTab account={account} recipe={bridgeRecipe} onBuildRecipe={() => navigate('recipes')} />
         )}
         {/* Its own tab now: a feed of what happened, rather than a panel under the catalogue. */}
-        {route.tab === 'activity' && <ActivityLog />}
+        {route.tab === 'activity' && <ActivityLog account={account} />}
         {route.tab === 'drops' && (
           <DropsTab
             account={account}
