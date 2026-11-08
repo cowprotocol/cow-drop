@@ -29,6 +29,9 @@ Idempotent — it skips anything already deployed at its deterministic address. 
 [docs/DEPLOYMENTS.md](../docs/DEPLOYMENTS.md) first. Afterwards, regenerate the SDK's constants with
 `pnpm --filter @cowprotocol/cow-drop-sdk generate`.
 
+`script/verify.sh` verifies every address in the deployments file, including contracts an earlier run
+deployed and `--verify --resume` therefore skips. `DRY_RUN=1` shows what it would submit.
+
 ## Docs
 
 | | |
