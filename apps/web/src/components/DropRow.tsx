@@ -1,6 +1,8 @@
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
+import { useState } from 'react'
 
 import { isResumable, keeperLabel, keeperTooltip, type MergedDrop } from '../lib/dropList.js'
+import { NICKNAME_MAX, nicknameOf, setNickname } from '../lib/nicknames.js'
 import { routeHash } from '../lib/route.js'
 import { ChainTag } from './ChainTag.js'
 
@@ -30,6 +32,14 @@ export function DropRow({
   onForgetCancel: () => void
 }) {
   /*
+   * Your own name for this drop, if you have given it one.
+   *
+   * Read on render rather than held in the parent: it changes from inside this row and nowhere else,
+   * and threading it down would make every row re-render when any one of them is renamed.
+   */
+  const nickname = nicknameOf(drop.chainId, drop.address)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  /*
    * No recipe, so no controls. Loading, activating and rescuing all need the exact `setupData` bytes,
    * and only their hash is on-chain — so the absence of a button here is not a UI gap, it is the truth
    * about what this browser can do with this row.
@@ -39,7 +49,52 @@ export function DropRow({
   return (
     <li>
       <div className="saved-main">
-        <strong>{drop.label}</strong>
+        {renaming === null ? (
+          <span className="saved-name">
+            <strong>{nickname ?? drop.label}</strong>
+            {/*
+              The recipe's own name, kept visible underneath once you have overridden it. Replacing
+              it outright would hide the name everyone *else* sees — the share card, the keeper and
+              anybody you sent the drop to all show this one, and two names for one thing is only
+              safe while you can see both.
+            */}
+            {nickname !== null && <span className="saved-meta">recipe: {drop.label}</span>}
+            <button className="link" onClick={() => setRenaming(nickname ?? '')}>
+              {nickname === null ? 'Name it' : 'Rename'}
+            </button>
+          </span>
+        ) : (
+          <span className="saved-rename">
+            <input
+              autoFocus
+              value={renaming}
+              maxLength={NICKNAME_MAX}
+              placeholder={drop.label}
+              aria-label={`Your name for ${drop.label}`}
+              onChange={(event) => setRenaming(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  setNickname(drop.chainId, drop.address, renaming)
+                  setRenaming(null)
+                }
+                if (event.key === 'Escape') setRenaming(null)
+              }}
+            />
+            <button
+              onClick={() => {
+                setNickname(drop.chainId, drop.address, renaming)
+                setRenaming(null)
+              }}
+            >
+              Save
+            </button>
+            <button className="link" onClick={() => setRenaming(null)}>
+              Cancel
+            </button>
+            {/* Clearing is how you go back to the recipe's name; an empty box means exactly that. */}
+            <span className="hint">Local to this browser. Empty to use the recipe's name.</span>
+          </span>
+        )}
         <code>{drop.address}</code>
         <span className="saved-meta">
           {/* The chain, and the way out to this drop on its explorer — the same tag every list uses. */}

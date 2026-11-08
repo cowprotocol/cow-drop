@@ -8,6 +8,7 @@ import {
   type ActivityEntry,
 } from '../lib/activity.js'
 import { chainLabel } from '../lib/chain.js'
+import { nicknameOf, useNicknameRevision } from '../lib/nicknames.js'
 import { listDrops } from '../lib/storage.js'
 import { ChainLogo } from './ChainLogo.js'
 import { ChainTag } from './ChainTag.js'
@@ -94,6 +95,16 @@ export function ActivityLog({ account }: { account: string | null }) {
   useEffect(() => onActivityChanged(() => setEntries(listActivity())), [])
 
   /*
+   * Your own name for the drop a line belongs to, when you have given it one.
+   *
+   * The entry recorded the recipe's name at the time it was written; this is what you have called
+   * the drop since. Looked up live rather than rewritten into the history, so renaming a drop
+   * renames it everywhere at once instead of only on lines logged afterwards.
+   */
+  const nicknames = useNicknameRevision()
+  const nameOf = (entry: ActivityEntry) => nicknameOf(entry.chainId, entry.drop) ?? dropName(entry)
+
+  /*
    * Who owns the drop a line belongs to.
    *
    * An activity entry records what happened, not who owns the thing it happened to — so the owner
@@ -126,7 +137,7 @@ export function ActivityLog({ account }: { account: string | null }) {
     const seen = new Map<string, { label: string; chainId: number; address: string }>()
     for (const entry of onChain) {
       if (!seen.has(dropKey(entry))) {
-        seen.set(dropKey(entry), { label: dropName(entry), chainId: entry.chainId, address: entry.drop })
+        seen.set(dropKey(entry), { label: nameOf(entry), chainId: entry.chainId, address: entry.drop })
       }
     }
     return [
@@ -139,7 +150,8 @@ export function ActivityLog({ account }: { account: string | null }) {
         icon: <ChainLogo chainId={drop.chainId} size={18} />,
       })),
     ]
-  }, [onChain])
+    // `nicknames` matters here too: `nameOf` reads a store it does not close over.
+  }, [onChain, nicknames])
 
   /*
    * A drop selected on one chain is not on the list once another is chosen, and leaving it set would
@@ -223,7 +235,7 @@ export function ActivityLog({ account }: { account: string | null }) {
                     </div>
 
                     <div className="activity-meta">
-                      <ChainTag chainId={entry.chainId} address={entry.drop} label={dropName(entry)} />
+                      <ChainTag chainId={entry.chainId} address={entry.drop} label={nameOf(entry)} />
                       {/* `dateTime` keeps the full instant, so what is read out is never just an hour. */}
                       <time dateTime={new Date(entry.at).toISOString()} title={new Date(entry.at).toLocaleString()}>
                         {timeLabel(entry.at)}

@@ -4,6 +4,7 @@ import type { Address } from 'viem'
 
 import { chainLabel, explorerAddressUrl } from '../lib/chain.js'
 import { routeHash } from '../lib/route.js'
+import { nicknameOf, useNicknameRevision } from '../lib/nicknames.js'
 import { listDrops } from '../lib/storage.js'
 import { ChainLogo } from './ChainLogo.js'
 import { QrZoom } from './QrZoom.js'
@@ -68,14 +69,20 @@ export function DropBadge({
    * builder works on and only the keeper has it. So this offers what it can actually open, and
    * "View all drops" goes where the rest live.
    */
+  /* Re-read when a drop is renamed from the Drops tab, so the strip and the list agree. */
+  const nicknames = useNicknameRevision()
   const saved = useMemo(() => listDrops(), [revision])
+
+  /** What *you* call this drop, falling back to what the recipe calls it. */
+  const nameFor = (chainId: number, address: string, fallback: string) =>
+    nicknameOf(chainId, address) ?? fallback
 
   const current = key(recipe.chainId, address)
 
   const options = useMemo<SelectOption<string>[]>(() => {
     const rows = saved.map((drop) => ({
       value: key(drop.chainId, drop.address),
-      label: drop.label,
+      label: nameFor(drop.chainId, drop.address, drop.label),
       description: `${chainLabel(drop.chainId)} · ${drop.address.slice(0, 10)}…${drop.address.slice(-6)}`,
       keywords: drop.address,
       icon: <ChainLogo chainId={drop.chainId} size={18} />,
@@ -86,7 +93,7 @@ export function DropBadge({
     if (!rows.some((row) => row.value === current)) {
       rows.unshift({
         value: current,
-        label: recipe.label,
+        label: nameFor(recipe.chainId, address, recipe.label),
         description: `${chainLabel(recipe.chainId)} · not saved yet`,
         keywords: address,
         icon: <ChainLogo chainId={recipe.chainId} size={18} />,
@@ -94,7 +101,8 @@ export function DropBadge({
     }
 
     return [...rows, { value: VIEW_ALL, label: 'View all drops', description: 'Open the Drops tab' }]
-  }, [saved, current, recipe, address])
+    // `nicknames` is a dependency in substance: `nameFor` reads a store it does not close over.
+  }, [saved, current, recipe, address, nicknames])
 
   const choose = (next: string) => {
     if (next === VIEW_ALL) {
@@ -130,7 +138,7 @@ export function DropBadge({
       <QrZoom value={address} label={recipe.label} />
 
       <div className="drop-badge-text">
-        <strong>{recipe.label}</strong>
+        <strong>{nameFor(recipe.chainId, address, recipe.label)}</strong>
 
         {/*
           The chain's mark sits on the address line rather than above it: which chain an address is

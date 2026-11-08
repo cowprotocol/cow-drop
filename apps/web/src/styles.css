@@ -1231,6 +1231,37 @@ details.saved > summary {
   min-width: 0;
 }
 
+/*
+ * The row's name, and the control to change it.
+ *
+ * The recipe's own name stays underneath once overridden — it is what the share card, the keeper
+ * and anyone you sent the drop to still show, and two names for one thing is only safe while both
+ * are visible.
+ */
+.saved-name {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.5rem;
+}
+
+.saved-rename {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.saved-rename input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.saved-rename .hint {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
 .saved-main code {
   color: var(--muted);
   word-break: break-all;
