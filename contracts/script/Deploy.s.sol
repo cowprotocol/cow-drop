@@ -8,6 +8,7 @@ import {CowOrderPoster} from "src/CowOrderPoster.sol";
 import {DropExecutor} from "src/DropExecutor.sol";
 import {DropBungeeReceiver} from "src/bridge/DropBungeeReceiver.sol";
 import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
+import {ConvertSteps} from "src/steps/ConvertSteps.sol";
 import {GuardSteps} from "src/steps/GuardSteps.sol";
 import {PaymentSteps} from "src/steps/PaymentSteps.sol";
 import {PresignSteps} from "src/steps/PresignSteps.sol";
@@ -69,6 +70,7 @@ contract DeployScript is Script {
         address twapSteps;
         address stopLossSteps;
         address paymentSteps;
+        address convertSteps;
         address cowOrderPoster;
         address bungeeReceiver;
         address composableCow;
@@ -188,6 +190,19 @@ contract DeployScript is Script {
             );
         }
 
+        // Same shape as the payment step: its entry point calls `activate`, and only recipes naming
+        // a convert step reach this address, so joining the generation moves nothing.
+        bytes memory convertInit = abi.encodePacked(
+            type(ConvertSteps).creationCode, abi.encode(DropConfig.SETTLEMENT, DropConfig.VAULT_RELAYER, executor)
+        );
+        address convertSteps = _create2(convertInit);
+        if (convertSteps.code.length == 0) {
+            vm.broadcast();
+            new ConvertSteps{salt: SALT}(
+                ISettlementLike(DropConfig.SETTLEMENT), DropConfig.VAULT_RELAYER, DropExecutor(executor)
+            );
+        }
+
         // Not part of any drop address: nothing in a recipe reaches it, because the steps inline the
         // `CowOrder` library instead. It ships with the generation because it is the address a
         // third-party contract integrates against, and that address has to be stable and recorded.
@@ -219,6 +234,7 @@ contract DeployScript is Script {
             twapSteps: twapSteps,
             stopLossSteps: stopLossSteps,
             paymentSteps: paymentSteps,
+            convertSteps: convertSteps,
             cowOrderPoster: cowOrderPoster,
             bungeeReceiver: bungeeReceiver,
             composableCow: composableCow,
@@ -246,6 +262,7 @@ contract DeployScript is Script {
         console.log("twapSteps          ", d.twapSteps);
         console.log("stopLossSteps      ", d.stopLossSteps);
         console.log("paymentSteps       ", d.paymentSteps);
+        console.log("convertSteps       ", d.convertSteps);
         console.log("cowOrderPoster     ", d.cowOrderPoster);
         console.log("bungeeReceiver     ", d.bungeeReceiver);
         console.log("executor           ", d.executor);
@@ -276,6 +293,7 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "twapSteps", d.twapSteps);
         vm.serializeAddress(obj, "stopLossSteps", d.stopLossSteps);
         vm.serializeAddress(obj, "paymentSteps", d.paymentSteps);
+        vm.serializeAddress(obj, "convertSteps", d.convertSteps);
         vm.serializeAddress(obj, "cowOrderPoster", d.cowOrderPoster);
         vm.serializeAddress(obj, "bungeeReceiver", d.bungeeReceiver);
         string memory json = vm.serializeAddress(obj, "executor", d.executor);
