@@ -1643,32 +1643,6 @@ export function RecipesTab({
                     ))}
 
                   {/*
-                    * The share card, repeated here from step 3.
-                    *
-                    * Not a duplicate so much as the same action at the moment it is actually wanted:
-                    * step 3 is where the address appears, this is where you sit watching for money to
-                    * arrive — and "send someone the address" is the thing you do between those two.
-                    * New tab, so the drop you are watching stays on screen.
-                    */}
-                  <Tooltip
-                    title="Share"
-                    trigger={
-                      <a
-                        className="button"
-                        href={routeHash({ tab: 'share', recipe })}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={remember}
-                      >
-                        Share ↗
-                      </a>
-                    }
-                  >
-                    Opens a card with the address, a QR code and what the recipe does — made to be sent
-                    to whoever is paying, or shown across a room.
-                  </Tooltip>
-
-                  {/*
                     * Funding from another chain, as an alternative to sending to the address above. Not for a
                     * payment request: the bridge receiver calls plain `activate`, which a payment recipe
                     * refuses, since it cannot say which token arrived.
