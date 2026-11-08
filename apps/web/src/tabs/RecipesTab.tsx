@@ -505,7 +505,13 @@ export function RecipesTab({
   /** Reported up for the header's Connect button, which switches the wallet to the selected chain. */
   onChainSelected: (chainId: number) => void
   /** Reported up so the Drops tab can mark which saved drop is the one on screen. */
-  onAddressChanged: (address: Address | null) => void
+  /**
+   * The drop the builder currently resolves to, for the header badge and the Drops list's marker.
+   *
+   * The recipe travels with the address because the two are inseparable downstream: a share link is
+   * the recipe, and an address without one is a page nobody can act on.
+   */
+  onAddressChanged: (drop: { address: Address; recipe: DropRecipeJson } | null) => void
   /** Moves to the Drops tab, for the rows only the keeper knows about. */
   /**
    * Hands this recipe to the Bridge tab, to be funded from another chain.
@@ -892,9 +898,25 @@ export function RecipesTab({
    */
   useEffect(() => onChainSelected(form.chainId), [form.chainId, onChainSelected])
 
+  /**
+   * Reported only when the page is willing to *show* the address, not merely able to compute one.
+   *
+   * Those are different questions, and conflating them is dangerous. A recipe with an empty owner
+   * still compiles — it derives against the ecrecover precompile — and step 3 refuses to print that
+   * address precisely because a drop owned by it can be funded and never recovered. A header badge
+   * that showed it anyway would hand out, with a QR code and a Share button, the one address nobody
+   * must ever send money to. The same holds on a chain whose contracts are missing and for a
+   * stop-loss with no feeds.
+   */
+  const addressIsShown =
+    compiled.ok && !feedsMissing && !ownerUnusable && probeError === null && chainMissing?.length === 0
+
   useEffect(
-    () => onAddressChanged(compiled.ok ? compiled.value.address : null),
-    [compiled, onAddressChanged],
+    () =>
+      onAddressChanged(
+        addressIsShown && compiled.ok ? { address: compiled.value.address, recipe } : null,
+      ),
+    [addressIsShown, compiled, recipe, onAddressChanged],
   )
 
   /**
@@ -1386,7 +1408,7 @@ export function RecipesTab({
               </div>
             </Section>
           ) : chainMissing === null ? (
-            <Section title={<>3 &middot; Get your drop address</>}>
+            <Section title={<>3 &middot; Fund your drop address</>}>
               <p className="hint">
                 Checking whether {chainName} has the contracts a drop needs&hellip;
               </p>
@@ -1427,7 +1449,7 @@ export function RecipesTab({
             </Section>
           ) : (
             <>
-              <Section title={<>3 &middot; Get your drop address</>}>
+              <Section title={<>3 &middot; Fund your drop address</>}>
                 <DropAddress
                   address={compiled.value.address}
                   saved={saved}
@@ -1444,7 +1466,7 @@ export function RecipesTab({
                 </p>
               </Section>
 
-              <Section title={<>4 &middot; Monitor status</>}>
+              <Section title={<>4 &middot; Monitor activation</>}>
                 {isPayment && (
                   <PaymentPanel
                     recipe={recipe}
