@@ -1202,17 +1202,21 @@ export function RecipesTab({
   const reusable: ReusableKind = isPayment ? 'payment' : isConvert ? 'convert' : null
 
   /**
-   * The typed discount, and whether it is usable.
+   * The typed discount as a signed percentage, matching the preset buttons beside it.
    *
-   * Bounded below by zero — a negative would put the limit *above* market, which is a different
-   * intent and not what this control is for — and below 100, since a full discount is a price of
-   * nothing, which `limitPriceToFraction` refuses anyway.
+   * They read −0.5%, −1%, −5%, so this one is typed the same way: a negative number. A bare positive
+   * is taken as the same discount rather than refused — every control in this row moves the limit
+   * *below* market, so reading "10" as 10% above would be the one surprising thing it could do.
+   *
+   * `applySlippage` wants the magnitude, so the sign is dropped on the way out. Bounded under 100,
+   * since a full discount is a price of nothing, which `limitPriceToFraction` refuses anyway.
    */
+  const customDiscountNumber = Math.abs(Number(customDiscount))
   const customDiscountValid =
     customDiscount.trim() !== '' &&
     Number.isFinite(Number(customDiscount)) &&
-    Number(customDiscount) > 0 &&
-    Number(customDiscount) < 100
+    customDiscountNumber > 0 &&
+    customDiscountNumber < 100
 
   const onQuote = async () => {
     setQuoting(true)
@@ -1540,23 +1544,24 @@ export function RecipesTab({
                   <span className="quote-custom">
                     <input
                       inputMode="decimal"
-                      aria-label="Discount below market, in percent"
-                      placeholder="10"
+                      aria-label="Discount below market, as a percentage"
+                      placeholder="−10"
                       value={customDiscount}
                       onChange={(event) => setCustomDiscount(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' && customDiscountValid) {
                           event.preventDefault()
-                          set('limitPrice', applySlippage(quote.price, Number(customDiscount)))
+                          set('limitPrice', applySlippage(quote.price, customDiscountNumber))
                         }
                       }}
                     />
+                    <span className="quote-custom-unit">%</span>
                     <button
-                      onClick={() => set('limitPrice', applySlippage(quote.price, Number(customDiscount)))}
+                      onClick={() => set('limitPrice', applySlippage(quote.price, customDiscountNumber))}
                       disabled={!customDiscountValid}
                       title="Set the limit this far below the market price"
                     >
-                      −{customDiscountValid ? customDiscount : '…'}%
+                      Apply
                     </button>
                   </span>
                 </>
