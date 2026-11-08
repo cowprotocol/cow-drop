@@ -1,6 +1,7 @@
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 
 import { isResumable, keeperLabel, keeperTooltip, type MergedDrop } from '../lib/dropList.js'
+import { routeHash } from '../lib/route.js'
 import { ChainTag } from './ChainTag.js'
 
 /**
@@ -67,6 +68,21 @@ export function DropRow({
       {readOnly ? null : (
         <div className="saved-actions">
           <button onClick={() => onLoad(drop.saved!.recipe)}>Load</button>
+          {/*
+            Straight to the card, without loading the drop first. Sharing one of these is a thing you
+            do *to* a row — asking someone to pay it — and routing that through Load meant replacing
+            whatever was on the bench to send an address you already had.
+
+            A new tab, so the list you were working through stays where it is.
+          */}
+          <a
+            className="button"
+            href={routeHash({ tab: 'share', recipe: drop.saved!.recipe })}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Share ↗
+          </a>
           <button onClick={() => onForgetRequest(drop.key)} disabled={pendingForget} aria-expanded={pendingForget}>
             Forget
           </button>

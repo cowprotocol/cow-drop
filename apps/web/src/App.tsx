@@ -4,12 +4,14 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { ActivityLog } from './components/ActivityLog.js'
 import { BetaNotice } from './components/BetaNotice.js'
+import { DropBadge } from './components/DropBadge.js'
 import { BuildInfo } from './components/BuildInfo.js'
 import { TOAST_MS, Toasts } from './components/Toasts.js'
 import type { ActivityEntry } from './lib/activity.js'
 import { useFillTracker, useKeeperActivity } from './lib/keeperStream.js'
 import { DEFAULT_CHAIN_ID, connect, onAccountsChanged, readAccount } from './lib/chain.js'
 import { TABS, parseRoute, routeHash } from './lib/route.js'
+import { saveDrop } from './lib/storage.js'
 import { useExternalRoute, useRoute, writeHash } from './lib/useRoute.js'
 import { AboutTab } from './tabs/AboutTab.js'
 import { BridgeTab } from './tabs/BridgeTab.js'
@@ -76,9 +78,15 @@ export function App() {
     const initial = parseRoute(window.location.hash)
     return initial.tab === 'bridge' ? initial.recipe : null
   })
-  /** Mirrors of builder state: the chain to connect on, and the address the Drops list marks. */
+  /** Mirrors of builder state: the chain to connect on, and the drop the builder resolves to. */
   const [connectChainId, setConnectChainId] = useState(DEFAULT_CHAIN_ID)
-  const [dropAddress, setDropAddress] = useState<Address | null>(null)
+  /**
+   * The drop on the bench, shown in the header and marked in the Drops list.
+   *
+   * The recipe rides along with the address because the header's Share link *is* the recipe — an
+   * address on its own is a page nobody can do anything with.
+   */
+  const [drop, setDrop] = useState<{ address: Address; recipe: DropRecipeJson } | null>(null)
 
   /** Follow the wallet's account, so locking it does not leave a stale one on screen. */
   useEffect(() => onAccountsChanged(setAccount), [])
@@ -198,6 +206,20 @@ export function App() {
               </p>
             </div>
           </div>
+          {/*
+            The drop on the bench, kept in reach.
+            
+            Only on the builder's own tab: on Drops or Bridge it would be describing something the
+            page in front of you is not about, and the Drops list already carries a Share per row.
+          */}
+          {drop && route.tab === 'recipes' && (
+            <DropBadge
+              recipe={drop.recipe}
+              address={drop.address}
+              onRemember={() => saveDrop({ address: drop.address, recipe: drop.recipe })}
+            />
+          )}
+
           <div className="wallet">
             {account ? (
               <span className="pill">{account}</span>
@@ -245,7 +267,7 @@ export function App() {
             dropsRevision={dropsRevision}
             onDropsChanged={() => setDropsRevision((n) => n + 1)}
             onChainSelected={setConnectChainId}
-            onAddressChanged={setDropAddress}
+            onAddressChanged={setDrop}
             onBridge={(recipe) => {
               setBridgeRecipe(recipe)
               setError(null)
@@ -266,7 +288,7 @@ export function App() {
           <DropsTab
             account={account}
             revision={dropsRevision}
-            currentAddress={dropAddress}
+            currentAddress={drop?.address ?? null}
             onLoad={(recipe) => {
               setImported(recipe)
               setError(null)

@@ -55,6 +55,118 @@ h2 {
   max-width: 62ch;
 }
 
+/*
+ * The loaded drop, in the header.
+ *
+ * A strip rather than a card: it sits under the name and above the tabs, so it has to read as part
+ * of the chrome. The QR is the only thing in it with any weight, because it is the only thing
+ * somebody across a desk can use.
+ */
+.drop-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  margin-top: 1.2rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.drop-badge-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
+.drop-badge-text code {
+  font-size: 0.82rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drop-badge .chain-tag {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+/* The small QR. A white plate even at this size: a dark QR is not a QR. */
+.qr-chip {
+  flex: 0 0 auto;
+  padding: 3px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: zoom-in;
+  line-height: 0;
+}
+
+.qr-chip:hover {
+  border-color: var(--accent);
+}
+
+.qr-chip img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Nearest-neighbour: smoothing the module edges is what makes a borderline scan fail. */
+  image-rendering: pixelated;
+}
+
+/* The enlarged one, for holding up to someone's camera. */
+.qr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgb(0 0 0 / 0.72);
+}
+
+.qr-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: min(92vw, 30rem);
+  padding: 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.qr-panel-label {
+  margin: 0;
+  font-weight: 600;
+}
+
+/*
+ * Sized off the viewport, so the largest square that fits is what a phone camera gets — this is
+ * shown across a desk and projected in rooms.
+ */
+.qr-panel-code {
+  width: min(70vmin, 380px);
+  height: auto;
+  aspect-ratio: 1;
+  display: block;
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px;
+  image-rendering: pixelated;
+}
+
+.qr-panel .address {
+  font-size: 0.8rem;
+  margin: 0;
+  width: 100%;
+}
+
 header {
   margin-bottom: 2rem;
 }
@@ -1872,6 +1984,16 @@ a.chain-tag:hover {
 
   .actions {
     flex-wrap: wrap;
+  }
+
+  /* The address is the widest thing in the badge; let it take the row. */
+  .drop-badge {
+    gap: 0.6rem;
+  }
+
+  .drop-badge .button {
+    flex: 1 1 100%;
+    text-align: center;
   }
 
   /* Full width, pinned to the bottom: a 380px card does not fit beside a phone's edge padding. */
