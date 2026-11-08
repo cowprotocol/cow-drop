@@ -130,19 +130,7 @@ export function DropBadge({
       <QrZoom value={address} label={recipe.label} />
 
       <div className="drop-badge-text">
-        {/*
-          The name is the switcher. A separate control beside it would be a second thing to find for
-          something people do constantly — come back, and work on a different drop — and the name is
-          already where the eye goes to answer "which one is this".
-        */}
-        <Select
-          className="drop-switcher"
-          value={current}
-          options={options}
-          onChange={choose}
-          searchable={saved.length > 6}
-          filterPlaceholder="Name or address"
-        />
+        <strong>{recipe.label}</strong>
 
         {/*
           The chain's mark sits on the address line rather than above it: which chain an address is
@@ -162,6 +150,20 @@ export function DropBadge({
       </div>
 
       <div className="drop-badge-actions">
+        {/*
+          Switching is an action, so it looks like one. It was the drop's own name for a while —
+          clicking the title to change which title it was — which read as a label that happened to
+          move, rather than as a thing you could press.
+        */}
+        <Select
+          className="drop-switcher"
+          triggerLabel="Change"
+          value={current}
+          options={options}
+          onChange={choose}
+          searchable={saved.length > 6}
+          filterPlaceholder="Name or address"
+        />
         <button onClick={() => void copy()}>{copied ? 'Copied' : 'Copy'}</button>
         <a
           className="button"
