@@ -176,10 +176,20 @@ export function watchModalAccount(listener: (account: Address | null) => void): 
   }
 }
 
-/** Disconnect, when the session came from the modal. A no-op for an injected wallet. */
-export async function disconnectWallet(): Promise<void> {
+/** Whether a modal session is what is currently connected, as opposed to a browser extension. */
+export function hasModalSession(): boolean {
+  return connectedProvider !== null
+}
+
+/**
+ * End the modal's session, if that is what is connected.
+ *
+ * Only half the job: an injected wallet is disconnected by `chain.ts`, which is the only place that
+ * knows about the extension. See `disconnect` there, which calls this one first.
+ */
+export async function disconnectModal(): Promise<void> {
+  connectedProvider = null
   if (appKit === null) return
   const kit = await appKit
   await kit.disconnect('eip155')
-  connectedProvider = null
 }

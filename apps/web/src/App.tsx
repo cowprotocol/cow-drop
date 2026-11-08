@@ -9,8 +9,15 @@ import { BuildInfo } from './components/BuildInfo.js'
 import { TOAST_MS, Toasts } from './components/Toasts.js'
 import type { ActivityEntry } from './lib/activity.js'
 import { useFillTracker, useKeeperActivity } from './lib/keeperStream.js'
-import { DEFAULT_CHAIN_ID, connect, isUserRejection, onAccountsChanged, readAccount } from './lib/chain.js'
-import { disconnectWallet, walletModalEnabled, watchModalAccount } from './lib/wallet.js'
+import {
+  DEFAULT_CHAIN_ID,
+  connect,
+  disconnect,
+  isUserRejection,
+  onAccountsChanged,
+  readAccount,
+} from './lib/chain.js'
+import { watchModalAccount } from './lib/wallet.js'
 import { TABS, parseRoute, routeHash } from './lib/route.js'
 import { saveDrop } from './lib/storage.js'
 import { useExternalRoute, useRoute, writeHash } from './lib/useRoute.js'
@@ -160,7 +167,7 @@ export function App() {
 
   const onDisconnect = async () => {
     setError(null)
-    await disconnectWallet()
+    await disconnect()
     setAccount(null)
   }
 
@@ -250,11 +257,14 @@ export function App() {
             {account ? (
               <>
                 <span className="pill">{account}</span>
-                {walletModalEnabled() && (
-                  <button className="link" onClick={() => void onDisconnect()}>
-                    Disconnect
-                  </button>
-                )}
+                {/*
+                  Shown for both kinds of session, not just the modal's. An injected wallet has no
+                  session to end, but the page can hand back the permission it was granted — and
+                  either way there has to be a way out of a connected state the user did not want.
+                */}
+                <button className="link" onClick={() => void onDisconnect()}>
+                  Disconnect
+                </button>
               </>
             ) : (
               <button className="connect" onClick={() => void onConnect()} disabled={connecting}>

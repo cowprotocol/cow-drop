@@ -21,7 +21,7 @@ import {
 } from 'viem'
 
 import { configuredRpcUrl } from './runtimeConfig'
-import { modalProviderSync, openWalletModal, walletModalEnabled } from './wallet.js'
+import { disconnectModal, modalProviderSync, openWalletModal, walletModalEnabled } from './wallet.js'
 
 /**
  * CoW-facing chain metadata comes from the official SDK rather than being retyped here — it already
@@ -394,7 +394,7 @@ export function onChainChanged(listener: (chainId: number) => void): () => void 
  * disabled.
  */
 export async function readAccount(): Promise<Address | null> {
-  if (!hasWallet()) return null
+  if (dismissed() || !hasWallet()) return null
   const [account] = (await walletProvider().request({ method: 'eth_accounts' })) as Address[]
   return account ?? null
 }
@@ -426,6 +426,9 @@ export function onAccountsChanged(listener: (account: Address | null) => void): 
  * rather than a dependency, and why declining it leaves the page fully usable.
  */
 export async function connect(chainId: number): Promise<Address> {
+  // Connecting is the thing that un-says a previous disconnect.
+  forget(false)
+
   if (walletModalEnabled()) {
     const account = await openWalletModal()
     // Dismissed without choosing. Not an error: the page works without a wallet.
@@ -439,6 +442,61 @@ export async function connect(chainId: number): Promise<Address> {
   if (!account) throw new Error('Wallet returned no account')
   await switchToChain(chainId)
   return account
+}
+
+/**
+ * Disconnect, as far as a web page is allowed to.
+ *
+ * Two halves, because "connected" means two different things. A modal session is a real session and
+ * AppKit can end it. A browser extension has no session to end — the page simply holds a permission
+ * the user granted — so the honest equivalent is to hand that permission back, which EIP-2255's
+ * `wallet_revokePermissions` does. Not every wallet implements it; the ones that do stop answering
+ * `eth_accounts`, which is what makes the disconnect survive a reload.
+ *
+ * The flag below covers the ones that do not. Without it, disconnecting and pressing reload brings
+ * the account straight back from `eth_accounts` and the button looks broken.
+ */
+export async function disconnect(): Promise<void> {
+  await disconnectModal()
+
+  const provider = injectedProvider()
+  if (provider) {
+    try {
+      await provider.request({
+        method: 'wallet_revokePermissions',
+        params: [{ eth_accounts: {} }],
+      } as unknown as Parameters<EIP1193Provider['request']>[0])
+    } catch {
+      // Unsupported, or declined. The flag below still makes the page forget.
+    }
+  }
+
+  forget(true)
+}
+
+/**
+ * That the user disconnected on purpose, so the page does not restore the account on the next load.
+ *
+ * Per tab, not per browser: a disconnect is about this sitting, and `sessionStorage` is exactly that
+ * scope. Guarded, because a blocked store must not break the button.
+ */
+const DISMISSED = 'cow-drop:wallet-dismissed'
+
+function dismissed(): boolean {
+  try {
+    return sessionStorage.getItem(DISMISSED) === '1'
+  } catch {
+    return false
+  }
+}
+
+function forget(value: boolean): void {
+  try {
+    if (value) sessionStorage.setItem(DISMISSED, '1')
+    else sessionStorage.removeItem(DISMISSED)
+  } catch {
+    // Private mode, or a full store. Costs the reload behaviour, nothing else.
+  }
 }
 
 /** Ask the wallet to move to `chainId`, but only when it is somewhere else. */
