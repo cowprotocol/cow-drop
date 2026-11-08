@@ -83,6 +83,53 @@ h2 {
 }
 
 /*
+ * Switching drops: a button beside Copy and Share, shaped like them.
+ *
+ * It was the drop's own name for a while — you clicked the title to change which title it was —
+ * which read as a label that happened to move rather than as something you could press.
+ */
+.drop-switcher {
+  gap: 0;
+  flex: 0 0 auto;
+}
+
+.drop-switcher .select-trigger {
+  width: auto;
+  gap: 0.35rem;
+  background: var(--panel-2);
+  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+}
+
+.drop-switcher .select-caret {
+  margin-left: 0;
+  font-size: 0.65rem;
+}
+
+/* Hangs off a button near the right edge, so it opens leftwards rather than off the page. */
+.drop-switcher .select-popover {
+  left: auto;
+  right: 0;
+  min-width: min(22rem, calc(100vw - 2.5rem));
+}
+
+/*
+ * "View all drops" is a departure, not a choice, so it is set apart from the rows above it — a rule
+ * above, and the muted weight of a link rather than the bold of a name.
+ */
+.drop-switcher .select-option:last-child {
+  margin-top: 0.3rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.drop-switcher .select-option:last-child .select-option-label {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/*
  * The address line: the chain's mark, then the address in full.
  *
  * Never truncated. This is what somebody checks against their wallet before sending, and that check
@@ -213,7 +260,16 @@ header {
   align-items: center;
   justify-content: center;
   gap: 0.6rem;
+  /*
+   * Set apart from the drop strip above it, and from the tabs below.
+   *
+   * These are two unrelated facts — which drop is loaded, and which account is connected — and with
+   * the badge directly above, the pill read as part of it. A rule rather than more space: the gap
+   * alone still let the eye group them.
+   */
   margin-top: 1.4rem;
+  padding-top: 1.3rem;
+  border-top: 1px solid var(--border);
 }
 
 button.connect {
@@ -2076,6 +2132,15 @@ a.chain-tag:hover {
   .drop-badge-actions > * {
     flex: 1 1 0;
     text-align: center;
+  }
+
+  /*
+   * The switcher is the leftmost of three buttons here, not the rightmost of a strip, so the
+   * popover has to open rightwards — anchored to its right edge it ran off the left of the screen.
+   */
+  .drop-switcher .select-popover {
+    left: 0;
+    right: auto;
   }
 
   /* Full width, pinned to the bottom: a 380px card does not fit beside a phone's edge padding. */

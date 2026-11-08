@@ -235,16 +235,33 @@ export function App() {
             </div>
           </div>
           {/*
-            The drop on the bench, kept in reach.
-
-            Only on the builder's own tab: on Drops or Bridge it would be describing something the
-            page in front of you is not about, and the Drops list already carries a Share per row.
+            The drop on the bench, on every tab.
+            
+            It used to be the builder's alone, on the reasoning that elsewhere it described something
+            the page was not about. That was wrong in the one direction that matters: the Bridge tab
+            is *funding this drop*, Activity is watching it, and Drops is where you came to find it.
+            Hiding the address on exactly the pages where you act on it made it something to go back
+            for.
           */}
-          {drop && route.tab === 'recipes' && (
+          {drop && (
             <DropBadge
               recipe={drop.recipe}
               address={drop.address}
-              onRemember={() => saveDrop({ address: drop.address, recipe: drop.recipe })}
+              revision={dropsRevision}
+              onRemember={() => {
+                saveDrop({ address: drop.address, recipe: drop.recipe })
+                /*
+                 * Announce it, or nothing re-reads. Saving from here is a real save — the same one
+                 * the Drops tab lists and the switcher above offers — and without this the drop you
+                 * just copied stayed absent from both until something else happened to bump them.
+                 */
+                setDropsRevision((n) => n + 1)
+              }}
+              onLoad={(next) => {
+                setImported(next)
+                setError(null)
+              }}
+              onViewAll={() => navigate('drops')}
             />
           )}
 

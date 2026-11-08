@@ -33,6 +33,7 @@ export function Select<T extends string | number>({
   filterPlaceholder = 'Search',
   placeholder = 'Select',
   emptyText = 'Nothing matches',
+  triggerLabel,
   className,
 }: {
   /** The field label above the trigger. Omit for a bare dropdown. */
@@ -44,6 +45,13 @@ export function Select<T extends string | number>({
   filterPlaceholder?: string
   placeholder?: string
   emptyText?: string
+  /**
+   * Fixed text for the trigger, instead of whatever is selected.
+   *
+   * For a dropdown that is an *action* rather than a field — "Change", not the current value. The
+   * selection still drives the tick and the opening highlight; only the button's own label differs.
+   */
+  triggerLabel?: ReactNode
   className?: string
 }) {
   const [open, setOpen] = useState(false)
@@ -189,14 +197,20 @@ export function Select<T extends string | number>({
           }
         }}
       >
-        {selected?.icon}
-        {selected ? (
-          <span className="select-trigger-text">
-            <span className="select-trigger-label">{selected.label}</span>
-            {selected.note && <span className="select-note"> {selected.note}</span>}
-          </span>
+        {triggerLabel !== undefined ? (
+          <span className="select-trigger-text">{triggerLabel}</span>
         ) : (
-          <span className="muted">{placeholder}</span>
+          <>
+            {selected?.icon}
+            {selected ? (
+              <span className="select-trigger-text">
+                <span className="select-trigger-label">{selected.label}</span>
+                {selected.note && <span className="select-note"> {selected.note}</span>}
+              </span>
+            ) : (
+              <span className="muted">{placeholder}</span>
+            )}
+          </>
         )}
         <span className="select-caret" aria-hidden="true">
           ▾
