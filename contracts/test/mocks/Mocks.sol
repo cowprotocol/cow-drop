@@ -124,6 +124,29 @@ contract MockWrappedNative {
     }
 }
 
+/// @dev A wrapper that is also a full ERC20, for steps that go on to trade what they wrapped.
+contract MockWrappedERC20 is MockERC20 {
+    function deposit() external payable {
+        balanceOf[msg.sender] += msg.value;
+    }
+}
+
+/// @dev CoW's ETH Flow, as `ConvertSteps` uses it: the one function naming this chain's wrapper.
+///
+///      Immutable rather than stored, so `vm.etch`ing this runtime code at ETH Flow's real address
+///      carries the answer with it — storage would not survive the etch.
+contract MockEthFlow {
+    address private immutable WRAPPED;
+
+    constructor(address wrapped) {
+        WRAPPED = wrapped;
+    }
+
+    function wrappedNativeToken() external view returns (address) {
+        return WRAPPED;
+    }
+}
+
 /// @dev A Chainlink-style feed, enough for `Oracle` and for guard reads.
 contract MockPriceFeed {
     uint8 public decimals;

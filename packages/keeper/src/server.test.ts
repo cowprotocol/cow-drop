@@ -1,7 +1,7 @@
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { runInNewContext } from 'node:vm'
-import { compileRecipe } from '@cowprotocol/cow-drop-sdk'
+import { compileRecipe, CONVERT_HAIRCUT_BPS } from '@cowprotocol/cow-drop-sdk'
 import { afterEach, describe, expect, it } from 'vitest'
 import { keccak256 } from 'viem'
 
@@ -420,6 +420,21 @@ describe('GET /v1/about', () => {
     })
     expect(body.contracts.cowOrderPoster.dropAddress).toBe(false)
     expect(body.proxyCreationCodeHash).toBe(keccak256(deployed.proxyCreationCode))
+  })
+
+  it('reports the convert haircut, so a page starts its box where this keeper actually sits', async () => {
+    const { base } = await serve({ convertHaircutBps: 250 })
+    const body = await json(await fetch(`${base}/v1/about`))
+
+    expect(body.convertHaircutBps).toBe(250)
+  })
+
+  it('reports the SDK default when the operator has not changed it', async () => {
+    const { base } = await serve()
+    const body = await json(await fetch(`${base}/v1/about`))
+
+    // Not absent: a page reading this must be able to tell "100" from "this keeper never said".
+    expect(body.convertHaircutBps).toBe(CONVERT_HAIRCUT_BPS)
   })
 
   it('covers every address of the deployment', async () => {

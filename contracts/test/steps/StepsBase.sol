@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {DropExecutor} from "src/DropExecutor.sol";
 import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
+import {ConvertSteps} from "src/steps/ConvertSteps.sol";
 import {GuardSteps} from "src/steps/GuardSteps.sol";
 import {PaymentSteps} from "src/steps/PaymentSteps.sol";
 import {PresignSteps} from "src/steps/PresignSteps.sol";
@@ -42,6 +43,7 @@ abstract contract StepsBase is Test {
     TwapSteps internal twapSteps;
     StopLossSteps internal stopLossSteps;
     PaymentSteps internal payments;
+    ConvertSteps internal converts;
 
     MockSettlement internal settlement;
     MockComposableCow internal composableCow;
@@ -76,6 +78,7 @@ abstract contract StepsBase is Test {
 
         stopLossSteps = new StopLossSteps(VAULT_RELAYER, IComposableCowLike(address(composableCow)), STOP_LOSS_HANDLER);
         payments = new PaymentSteps(ISettlementLike(address(settlement)), VAULT_RELAYER, executor);
+        converts = new ConvertSteps(ISettlementLike(address(settlement)), VAULT_RELAYER, executor);
 
         // Timestamps below uint32 max, so `validTo` arithmetic is meaningful.
         vm.warp(1_800_000_000);

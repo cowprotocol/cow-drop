@@ -2,6 +2,7 @@ import { encodeFunctionData, type Address, type Hex } from 'viem'
 
 import {
   GUARD_STEPS_ABI,
+  CONVERT_STEPS_ABI,
   PAYMENT_STEPS_ABI,
   PRESIGN_STEPS_ABI,
   STOP_LOSS_STEPS_ABI,
@@ -77,6 +78,25 @@ export interface StopLossTrigger {
   strike: bigint
   /** How stale a feed may be before the handler refuses to price the pair. */
   maxTimeSinceLastOracleUpdate: bigint
+}
+
+export interface ConvertParams {
+  /** The token everything is converted into. */
+  buyToken: Address
+  /** Who receives it. `compileRecipe` defaults it to the owner. */
+  receiver: Address
+  /** The owner, admitted alongside the pricer so a dead pricer cannot strand them. */
+  owner: Address
+  /**
+   * The only address allowed to activate, or zero for anyone.
+   *
+   * Zero is a deliberate opt-out: the activator names the order's minimum, so an open drop is
+   * protected by solver competition rather than by anything the order carries.
+   */
+  pricer: Address
+  /** Order lifetime from activation. */
+  validitySeconds: bigint
+  appData?: Hex
 }
 
 export interface PaymentParams {
@@ -278,6 +298,27 @@ export const steps = {
    * committed: whatever token is chosen, the receiver gets at least the price, and the surplus is
    * theirs. Plain `activate` on a payment recipe reverts with `NoPaymentToken`.
    */
+  convert(deployment: Pick<DropDeployment, 'convertSteps'>, params: ConvertParams): DropCall {
+    if (!deployment.convertSteps) {
+      throw new Error('this generation has no ConvertSteps deployment; compile against generation 2 or later')
+    }
+    if (params.validitySeconds <= 0n) {
+      throw new Error('a convert needs a positive validitySeconds; it is measured from activation')
+    }
+    if (params.receiver.toLowerCase() === ZERO_ADDRESS) {
+      throw new Error('a convert needs a receiver; the zero address would leave the money in the drop')
+    }
+    return stepCall(
+      deployment.convertSteps,
+      encodeFunctionData({
+        abi: CONVERT_STEPS_ABI,
+        functionName: 'presignConvert',
+        args: [params.buyToken, params.receiver, params.owner, params.pricer, params.validitySeconds, params.appData ?? ZERO_BYTES32],
+      }),
+      false,
+    )
+  },
+
   payment(deployment: Pick<DropDeployment, 'paymentSteps'>, params: PaymentParams): DropCall {
     if (!deployment.paymentSteps) {
       throw new Error('this generation has no PaymentSteps deployment; compile against generation 2 or later')
@@ -428,6 +469,7 @@ export const steps = {
       false,
     )
   },
+
 
   /**
    * Refuse to proceed outside an absolute time window. Either bound may be omitted.

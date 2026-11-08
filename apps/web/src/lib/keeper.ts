@@ -85,6 +85,9 @@ const MESSAGES: Record<string, string> = {
   // already paid for a transaction and will not abandon it unreconciled.
   activating: 'the keeper is activating this drop right now — try again in a few seconds',
   'not-found': 'the keeper has no record of this drop',
+  // A convert drop names who may price it, and this keeper is not that address, so it could never
+  // activate the drop. Set the pricer to the keeper — or leave it blank — and derive a new address.
+  'cannot-price': 'this drop names a different pricer, so the keeper could never activate it',
 }
 
 /** The body as JSON, or undefined. An error response is not guaranteed to carry one. */
@@ -106,6 +109,46 @@ function fail(response: Response, body: unknown): never {
   throw new Error(
     (error && MESSAGES[error]) ?? message ?? `keeper responded ${response.status}`,
   )
+}
+
+/**
+ * The address this keeper activates from, or null when there is no keeper for the chain.
+ *
+ * Needed before a convert drop exists, not after: the pricer is part of the recipe and therefore part
+ * of the address, so naming the keeper has to happen while the form is still being filled in.
+ */
+export async function keeperPayer(chainId?: number): Promise<Address | null> {
+  const base = keeperUrl(chainId)
+  if (!base) return null
+  try {
+    // 503 still carries a body — a payer below its floor is still the payer this keeper would use.
+    const reported = (await parse(await fetch(`${base}/v1/health`))) as { payer?: Address } | undefined
+    return reported?.payer ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * How far under the market this keeper prices a convert activation, in bps.
+ *
+ * Asked rather than configured separately: the keeper is what actually names the minimum when it
+ * activates, so a second setting here could only ever disagree with it. `null` when there is no
+ * keeper for the chain, or it is too old to report one — the caller then falls back to the SDK
+ * default, which is what such a keeper is using anyway.
+ */
+export async function keeperConvertHaircutBps(chainId?: number): Promise<number | null> {
+  const base = keeperUrl(chainId)
+  if (!base) return null
+  try {
+    const about = (await parse(await fetch(`${base}/v1/about`))) as
+      | { convertHaircutBps?: number }
+      | undefined
+    const bps = about?.convertHaircutBps
+    return typeof bps === 'number' && Number.isInteger(bps) && bps >= 0 && bps < 10_000 ? bps : null
+  } catch {
+    return null
+  }
 }
 
 /**

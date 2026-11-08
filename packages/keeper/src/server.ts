@@ -5,7 +5,7 @@ import type {
   DropRecipeJson,
   RecipeExportRequest,
 } from '@cowprotocol/cow-drop-sdk'
-import { getDropChain } from '@cowprotocol/cow-drop-sdk'
+import { CONVERT_HAIRCUT_BPS, getDropChain } from '@cowprotocol/cow-drop-sdk'
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
 import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
 import { keccak256, type Address, type Hex } from 'viem'
@@ -35,6 +35,15 @@ export interface ServerOptions {
   allowOrigin?: string
   keepaliveMs?: number
   logger?: Logger
+  /**
+   * How far under the market this keeper prices a convert activation, in bps.
+   *
+   * Reported so the page can start its own haircut box where the keeper actually sits. Without it the
+   * two would be configured separately and could silently disagree — and a convert recipe commits no
+   * price, so that disagreement would be the whole difference between what a user saw and what the
+   * keeper accepts.
+   */
+  convertHaircutBps?: number
   /** Injected so the server tests without a chain. Omitted, the endpoint answers 501. */
   verifySignature?: SignatureVerifier
 }
@@ -149,7 +158,12 @@ const ADDRESS = new RegExp(ADDRESS_PATTERN)
 export const ROUTES: readonly RouteDoc[] = [
   { method: 'GET', path: '/v1/health', summary: 'Liveness, payer balance, today\'s spend. 503 when the payer is below its floor.' },
   { method: 'GET', path: '/v1/policy', summary: 'The subsidy policy in force.' },
-  { method: 'GET', path: '/v1/about', summary: 'The chain, generation and contract addresses this keeper serves.' },
+  {
+    method: 'GET',
+    path: '/v1/about',
+    summary:
+      'The chain, generation and contract addresses this keeper serves, and how it prices a convert drop.',
+  },
   { method: 'GET', path: '/v1/openapi.json', summary: 'This surface as an OpenAPI 3.1 document.' },
   { method: 'GET', path: '/v1/docs', summary: 'Swagger UI over that document.', produces: 'text/html' },
   {
@@ -330,6 +344,7 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
     allowOrigin = '*',
     keepaliveMs = 15_000,
     logger = silentLogger,
+    convertHaircutBps = CONVERT_HAIRCUT_BPS,
     verifySignature,
   } = options
 
@@ -459,6 +474,7 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
         CONTRACTS.map(({ key, name, dropAddress }) => [key, { name, address: deployment[key], dropAddress }]),
       ),
       proxyCreationCodeHash: keccak256(deployment.proxyCreationCode),
+      convertHaircutBps,
     })
   }
 
@@ -593,6 +609,8 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
       // payer, so an operator does not have to keep two addresses in step.
       requireFeeFor: policy.mode === 'paying' ? (policy.feeRecipient ?? (await submitter.payer())) : undefined,
       minFeeBps: policy.minFeeBps,
+      // So a convert drop that names a different pricer is refused now, not left watched forever.
+      keeper: await submitter.payer(),
     })
 
     if (result.ok) {
@@ -834,6 +852,9 @@ function statusFor(error: string): number {
     // Not 403: nothing is forbidden, the terms were simply not met. 402 says exactly that.
     case 'no-fee':
       return 402
+    // The recipe names someone else as its pricer, so this keeper could never activate it.
+    case 'cannot-price':
+      return 422
     case 'at-capacity':
       return 429
     // 401, not 403: a fresh signature is exactly what would make it work.

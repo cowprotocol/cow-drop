@@ -34,6 +34,8 @@ function fixedQuoter(cost: bigint | undefined) {
       asked.push(sellToken)
       return cost === undefined ? undefined : { sellAmount: cost, feeAmount: 1n }
     },
+    // Unused by these tests: a payment drop asks what a price costs, never what a balance fetches.
+    quoteSell: async () => undefined,
   }
   return { quoter, asked }
 }

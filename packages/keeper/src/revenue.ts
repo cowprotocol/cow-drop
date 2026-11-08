@@ -1,4 +1,9 @@
-import { OrderQuoteSideKindBuy, SigningScheme, type OrderQuoteRequest } from '@cowprotocol/cow-sdk'
+import {
+  OrderQuoteSideKindBuy,
+  OrderQuoteSideKindSell,
+  SigningScheme,
+  type OrderQuoteRequest,
+} from '@cowprotocol/cow-sdk'
 import type { Address } from 'viem'
 
 /**
@@ -27,11 +32,29 @@ export interface PaymentQuoter {
     from: Address
     receiver: Address
   }): Promise<{ sellAmount: bigint; feeAmount: bigint } | undefined>
+
+  /**
+   * What the market pays for `sellAmount` of `sellToken`, right now.
+   *
+   * A convert drop commits no price at all, so this is where its order's minimum comes from: the
+   * keeper quotes the balance it is about to sell and takes a haircut off the result. `undefined`
+   * means the order book would not quote the pair, which must refuse the activation rather than
+   * fall back to a number — there is no committed price to fall back to.
+   */
+  quoteSell(params: {
+    sellToken: Address
+    buyToken: Address
+    sellAmount: bigint
+    from: Address
+    receiver: Address
+  }): Promise<{ buyAmount: bigint; feeAmount: bigint } | undefined>
 }
 
 /** The order book's `/quote`, as a `PaymentQuoter`. Quoted as a pre-signed buy, since that is the price asked. */
 export function orderBookPaymentQuoter(api: {
-  getQuote(request: OrderQuoteRequest): Promise<{ quote: { sellAmount: string; feeAmount: string } }>
+  getQuote(
+    request: OrderQuoteRequest,
+  ): Promise<{ quote: { sellAmount: string; buyAmount: string; feeAmount: string } }>
 }): PaymentQuoter {
   return {
     async quoteBuy({ sellToken, buyToken, buyAmount, from, receiver }) {
@@ -46,6 +69,23 @@ export function orderBookPaymentQuoter(api: {
           signingScheme: SigningScheme.PRESIGN,
         })
         return { sellAmount: BigInt(quote.sellAmount), feeAmount: BigInt(quote.feeAmount) }
+      } catch {
+        return undefined
+      }
+    },
+
+    async quoteSell({ sellToken, buyToken, sellAmount, from, receiver }) {
+      try {
+        const { quote } = await api.getQuote({
+          sellToken,
+          buyToken,
+          from,
+          receiver,
+          kind: OrderQuoteSideKindSell.SELL,
+          sellAmountBeforeFee: sellAmount.toString(),
+          signingScheme: SigningScheme.PRESIGN,
+        })
+        return { buyAmount: BigInt(quote.buyAmount), feeAmount: BigInt(quote.feeAmount) }
       } catch {
         return undefined
       }

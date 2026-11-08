@@ -1,4 +1,7 @@
 import {
+  buildActivateConvertTx,
+  CONVERT_HAIRCUT_BPS,
+  convertMinimum,
   buildActivatePaymentTx,
   buildActivateTx,
   requiredPayment,
@@ -6,6 +9,7 @@ import {
   type DropRecipeJson,
   type EvmCall,
 } from '@cowprotocol/cow-drop-sdk'
+import { getWrappedTokenForChain, type SupportedChainId } from '@cowprotocol/cow-sdk'
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
 import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
 import type { Address } from 'viem'
@@ -52,6 +56,11 @@ export interface KeeperOptions {
   blindProbeIntervalMs?: number
   /** Cap per tick, so one crowded pass cannot starve the rest. Oldest poll goes first. */
   maxSimulationsPerTick?: number
+  /**
+   * How far under the market a convert activation sets its order minimum. Defaults to the SDK's 100
+   * bps, which is what the web panel offers, so the keeper does not quietly undercut what a user saw.
+   */
+  convertHaircutBps?: number
   /** Multiply the simulated gas by this before sending. */
   gasBuffer?: number
   /** No receipt after this long means the transaction is stuck. */
@@ -113,6 +122,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     resimulateIntervalMs = 5 * 60_000,
     blindProbeIntervalMs = 5 * 60_000,
     maxSimulationsPerTick = 25,
+    convertHaircutBps = CONVERT_HAIRCUT_BPS,
     gasBuffer = 1.25,
     receiptTimeoutMs = 3 * 60_000,
     dryRun = false,
@@ -244,7 +254,8 @@ export function createKeeper(options: KeeperOptions): Keeper {
    */
   async function discoverPayments(live: RegisteredDrop[]): Promise<Map<Address, Address[]>> {
     const tokensByDrop = new Map<Address, Address[]>()
-    const payers = live.filter((drop) => drop.hints.payment)
+    // Both open-ended recipes: neither names a sell token, so both learn it from `Transfer` logs.
+    const payers = live.filter((drop) => openEnded(drop))
     if (payers.length === 0) return tokensByDrop
 
     const head = await chain.getBlockNumber()
@@ -313,6 +324,79 @@ export function createKeeper(options: KeeperOptions): Keeper {
    * `drop` is the record as loaded at the start of the tick, so its `payment.tokens` may predate this
    * tick's scan — `tokens` is passed in for that reason.
    */
+  /**
+   * Whether a recipe leaves its sell token to whoever funds it.
+   *
+   * `payment` and `convert` differ in what they commit — a price, or nothing — but they poll, scan
+   * and latch identically, because the thing neither can name in advance is the same thing.
+   */
+  function openEnded(drop: RegisteredDrop): boolean {
+    return drop.hints.payment !== undefined || drop.hints.convert !== undefined
+  }
+
+  /**
+   * Price one arrival at a convert drop: the balance, and the least the keeper will take for it.
+   *
+   * The whole of a convert drop's price protection. The recipe commits nothing, so a quote is not an
+   * optimisation here — without one there is no number to put in the order, and the activation is
+   * refused rather than sent at a price nobody checked.
+   */
+  async function chooseConvert(
+    drop: RegisteredDrop,
+    tokens: readonly Address[],
+    balances: Record<string, bigint>,
+  ): Promise<{ sellToken: Address; balance: bigint; minBuyAmount: bigint } | undefined> {
+    const convert = drop.hints.convert
+    if (!convert) return undefined
+    const committedByToken = drop.payment?.committed ?? {}
+
+    /*
+     * Native, folded into the wrapper.
+     *
+     * `ConvertSteps` wraps the drop's native balance when the wrapper is the token being sold, so to
+     * this keeper native *is* the wrapper: it is offered as a candidate even though no `Transfer`
+     * announced it, and quoted at the combined amount, because that is the balance the order will
+     * sell once the step has wrapped.
+     */
+    const nativeBalance = balances['native'] ?? 0n
+    const wrapper = nativeBalance > 0n ? wrappedNativeOf(chainId) : undefined
+    const candidates = wrapper && !tokens.includes(wrapper) ? [wrapper, ...tokens] : tokens
+    const heldOf = (token: Address) => (balances[token] ?? 0n) + (token === wrapper ? nativeBalance : 0n)
+
+    for (const token of candidates) {
+      const balance = heldOf(token)
+      if (balance === 0n) continue
+
+      // Already sold at this balance and not yet settled: see `choosePayment` for why this latches
+      // per token rather than on the whole digest.
+      const committed = committedByToken[token]
+      if (committed && committed.balance === String(balance) && now() < committed.until) continue
+
+      if (token === convert.buyToken) {
+        // Already in the buy token: the step forwards it untraded, so any positive minimum does.
+        return { sellToken: token, balance, minBuyAmount: balance }
+      }
+
+      if (!quoter) continue
+      const quote = await quoter.quoteSell({
+        sellToken: token,
+        buyToken: convert.buyToken,
+        sellAmount: balance,
+        from: drop.address,
+        receiver: receiverOf(drop),
+      })
+      if (!quote || quote.buyAmount === 0n) continue
+
+      try {
+        return { sellToken: token, balance, minBuyAmount: convertMinimum(quote.buyAmount, convertHaircutBps) }
+      } catch {
+        // A quote so small the haircut rounds it to nothing. Not sellable at any honest price.
+        continue
+      }
+    }
+    return undefined
+  }
+
   async function choosePayment(
     drop: RegisteredDrop,
     tokens: readonly Address[],
@@ -460,7 +544,32 @@ export function createKeeper(options: KeeperOptions): Keeper {
 
     let call: EvmCall
     let paying: { sellToken: Address; balance: bigint } | undefined
-    if (drop.hints.payment) {
+    if (drop.hints.convert) {
+      const converting = await chooseConvert(drop, paymentTokens, balances)
+      if (!converting) {
+        // Same shape as the payment miss: recorded as a failed simulation so the digest gate holds
+        // the drop until a balance moves or `resimulateIntervalMs` passes, which re-quotes it.
+        await store.update(chainId, drop.address, (current) => ({
+          ...current,
+          lastSimulation: {
+            at: now(),
+            ok: false,
+            balancesDigest: digest,
+            revert: 'nothing here can be priced into an order',
+          },
+          updatedAt: now(),
+        }))
+        return
+      }
+      paying = { sellToken: converting.sellToken, balance: converting.balance }
+      call = buildActivateConvertTx({
+        deployment,
+        owner: drop.recipe.owner,
+        setupData: drop.setupData,
+        sellToken: converting.sellToken,
+        minBuyAmount: converting.minBuyAmount,
+      })
+    } else if (drop.hints.payment) {
       paying = await choosePayment(drop, paymentTokens, balances)
       if (!paying) {
         // Recorded like a failed simulation, so the digest gate holds the drop until a balance moves
@@ -518,7 +627,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     const gasLimit = (simulation.gas * BigInt(Math.round(gasBuffer * 1000))) / 1000n
     const day = utcDay(now())
     const spend = await store.spendOn(day)
-    const revenueWei = await priceFee(drop, balances)
+    const revenueWei = await priceFee(drop, balances, paying)
 
     const verdict = evaluatePolicy({
       policy,
@@ -668,9 +777,9 @@ export function createKeeper(options: KeeperOptions): Keeper {
       const confirmed = receipt.status === 'success'
       const once = drop.recipe.once === true
       const parked = selfDriving(drop.recipe)
-      // A payment drop latches per token rather than on the whole digest: a second token arriving must
-      // not release the first token's order, and the first must not hold the second back.
-      const paidWith = confirmed && drop.hints.payment ? pending.sellToken : undefined
+      // An open-ended drop latches per token rather than on the whole digest: a second token arriving
+      // must not release the first token's order, and the first must not hold the second back.
+      const paidWith = confirmed && openEnded(drop) ? pending.sellToken : undefined
 
       await store.update(chainId, drop.address, (current) => ({
         ...current,
@@ -682,7 +791,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
         // until a solver settles it. Recorded so the next tick does not sign a second order for the
         // same money — see `shouldSimulate`.
         committedDigest:
-          confirmed && !once && !parked && !drop.hints.payment ? current.lastSimulation?.balancesDigest : undefined,
+          confirmed && !once && !parked && !openEnded(drop) ? current.lastSimulation?.balancesDigest : undefined,
         ...(paidWith && current.payment
           ? {
               payment: {
@@ -828,20 +937,34 @@ export function createKeeper(options: KeeperOptions): Keeper {
    * is sized at activation and the balance can move in between — which is exactly why
    * `minRevenueRatio` sits above 1 rather than at it.
    */
-  async function priceFee(drop: RegisteredDrop, balances: Record<string, bigint>): Promise<bigint | undefined> {
+  async function priceFee(
+    drop: RegisteredDrop,
+    balances: Record<string, bigint>,
+    /** The token and amount this activation settled on, for a recipe that names neither in advance. */
+    chosen?: { sellToken: Address; balance: bigint },
+  ): Promise<bigint | undefined> {
     if (!drop.fee || !prices) return undefined
 
-    // A payment drop's fee is registered against its buy token, since the sell token is the payer's
-    // choice; the volume is the price itself.
-    const sellAmount = drop.hints.payment
-      ? BigInt(drop.hints.payment.buyAmount)
-      : (balances[drop.fee.sellToken] ?? 0n)
-    if (sellAmount === 0n) return 0n
+    /*
+     * Which token carries the volume depends on what the recipe committed.
+     *
+     * A payment drop fixes the price, so its own `buyAmount` is the volume whatever pays for it. A
+     * convert drop fixes nothing — the volume is only known once a balance has been chosen — so it is
+     * valued against that balance, in the token actually being sold. Everything else sells a token
+     * the recipe names, and the balance of it is the volume.
+     */
+    const valued = drop.hints.payment
+      ? { token: drop.fee.sellToken, amount: BigInt(drop.hints.payment.buyAmount) }
+      : drop.hints.convert && chosen
+        ? { token: chosen.sellToken, amount: chosen.balance }
+        : { token: drop.fee.sellToken, amount: balances[drop.fee.sellToken] ?? 0n }
 
-    const nativePrice = await prices.nativePrice(drop.fee.sellToken)
+    if (valued.amount === 0n) return 0n
+
+    const nativePrice = await prices.nativePrice(valued.token)
     if (nativePrice === undefined) return undefined
 
-    return feeValueWei({ sellAmount, volumeBps: drop.fee.volumeBps, nativePrice })
+    return feeValueWei({ sellAmount: valued.amount, volumeBps: drop.fee.volumeBps, nativePrice })
   }
 
   /** Exponential backoff after a failed send, capped at ten minutes. */
@@ -922,4 +1045,17 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       resolve()
     }
   })
+}
+
+/**
+ * The token that wraps this chain's native currency, lowercased.
+ *
+ * Read from cow-sdk, which is the same data `ConvertSteps` reads on-chain from CoW's ETH Flow. They
+ * agree on every chain CoW serves; if they ever did not, the keeper would name a sell token the step
+ * declines to wrap and the activation would simply find nothing to sell — a missed activation, never
+ * a wrong one.
+ */
+function wrappedNativeOf(chainId: number): Address | undefined {
+  const token = getWrappedTokenForChain(chainId as SupportedChainId)
+  return token ? (token.address.toLowerCase() as Address) : undefined
 }

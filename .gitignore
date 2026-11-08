@@ -31,3 +31,6 @@ out/
 .vscode/*
 !.vscode/extensions.json
 .history/
+
+# Solidity compiler fetched by JS tooling; Foundry uses its own solc.
+soljson-latest.js

@@ -1,4 +1,5 @@
 import {
+  buildActivateConvertTx,
   buildActivatePaymentTx,
   buildActivateTx,
   compileRecipe,
@@ -236,6 +237,35 @@ export async function activatePaymentDrop(params: {
 }
 
 /**
+ * Activate a convert drop: sell its balance of `sellToken` for at least `minBuyAmount`.
+ *
+ * A convert recipe commits to no price, so the minimum is supplied here and goes through
+ * `ConvertSteps.activateConvert` — plain `activate` records no minimum and is refused. Whether this
+ * wallet is allowed to name it is the recipe's business: the step reverts with `NotThePricer` unless
+ * the caller is the committed pricer, the owner, or the pricer is zero.
+ */
+export async function activateConvertDrop(params: {
+  account: Address
+  recipe: DropRecipeJson
+  sellToken: Address
+  minBuyAmount: bigint
+}): Promise<{ hash: Hex; receipt: TransactionReceipt }> {
+  const compiled = compileRecipe(params.recipe)
+  const tx = buildActivateConvertTx({
+    deployment: compiled.deployment,
+    owner: params.recipe.owner,
+    setupData: compiled.setupData,
+    sellToken: params.sellToken,
+    minBuyAmount: params.minBuyAmount,
+  })
+
+  const chainId = compiled.deployment.chainId
+  const hash = await sendTransaction({ chainId, account: params.account, ...tx })
+  const receipt = await getPublicClient(chainId).waitForTransactionReceipt({ hash })
+  return { hash, receipt }
+}
+
+/**
  * Pay a payment drop: a plain ERC20 `transfer` of `amount` from the connected wallet to the drop.
  *
  * Nothing drop-specific happens here, on purpose. The drop does not exist yet and needs no call: a
@@ -262,6 +292,18 @@ export async function sendPayment(params: {
 }
 
 /** One ERC20 balance of an address. A token that does not answer reads as zero. */
+/**
+ * The native balance of an address.
+ *
+ * Its own read because native is not an ERC20 and `balanceOf` cannot see it — which is exactly why a
+ * natively-funded drop looked empty before `ConvertSteps` learned to wrap.
+ */
+export async function readNativeBalance(chainId: number, holder: Address): Promise<bigint> {
+  return getPublicClient(chainId)
+    .getBalance({ address: holder })
+    .catch(() => 0n)
+}
+
 export async function readTokenBalance(chainId: number, token: Address, holder: Address): Promise<bigint> {
   return getPublicClient(chainId)
     .readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [holder] })

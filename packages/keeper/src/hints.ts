@@ -10,7 +10,7 @@ import type { WatchHints } from './types.js'
  * pin the poll set for the life of a registration — a drop stuck `blind` forever because the SDK that
  * first saw it could not name a step the current one can.
  */
-export const HINTS_VERSION = '2'
+export const HINTS_VERSION = '3'
 
 const ZERO: Address = '0x0000000000000000000000000000000000000000'
 
@@ -34,6 +34,7 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
 
   let native = false
   let payment: WatchHints['payment']
+  let convert: WatchHints['convert']
   let notBefore: number | null = null
   let notAfter: number | null = null
   let timeWindows = 0
@@ -50,6 +51,15 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
       case 'payment':
         // No sell token to poll: the payer picks it. The tokens come from `Transfer` logs instead.
         payment = { buyToken: lower(step.buyToken), buyAmount: String(step.buyAmount) }
+        break
+
+      case 'convert':
+        // Same shape as `payment`: nothing names the sell token, so the `Transfer` scan finds it.
+        convert = { buyToken: lower(step.buyToken), pricer: lower(step.pricer ?? ZERO) }
+        // Unlike `payment`, native counts. `ConvertSteps` wraps whatever native the drop holds when
+        // the wrapper is the token being sold, so a plain ETH/xDAI transfer — which carries no
+        // `Transfer` log for the scan to find — is a fundable arrival and has to be polled for.
+        native = true
         break
 
       case 'wrapNative':
@@ -93,7 +103,7 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
     }
   }
 
-  const blind = tokens.size === 0 && !native && !payment
+  const blind = tokens.size === 0 && !native && !payment && !convert
 
   return {
     tokens: [...tokens],
@@ -110,6 +120,7 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
     blind,
     warnings,
     ...(payment ? { payment } : {}),
+    ...(convert ? { convert } : {}),
   }
 }
 
@@ -203,8 +214,10 @@ export function tradesOf(recipe: DropRecipeJson): RecipeTrade[] {
         trades.push({ sellToken: lower(step.sellToken), appData: step.appData ?? ZERO_APP_DATA })
         break
       case 'payment':
-        // The sell token is unknown until a payer picks one, so a fee is valued against what the order
-        // must buy instead — `buyAmount` of `buyToken` is the trade's volume, whatever pays for it.
+      case 'convert':
+        // The sell token is unknown until a payer or an arrival picks one, so a fee is registered
+        // against the buy token instead. For a payment that also fixes the volume (`buyAmount`); a
+        // convert commits no amount, so its volume is only known at activation — see `priceFee`.
         trades.push({ sellToken: lower(step.buyToken), appData: step.appData ?? ZERO_APP_DATA })
         break
       default:

@@ -47,6 +47,13 @@ export interface ChainKeeperOptions {
    * 0.1 native.
    */
   minBalanceWarnWei?: bigint
+  /**
+   * How far under the market a convert activation sets its order minimum, in bps.
+   *
+   * Defaults to the SDK's `CONVERT_HAIRCUT_BPS`, which is also what the web panel offers — so an
+   * operator who changes it here is deliberately pricing differently from what a user was shown.
+   */
+  convertHaircutBps?: number
   client?: PublicClient
   store?: KeeperStore
 }
@@ -129,6 +136,7 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
     dryRun = false,
     logger = silentLogger,
     minBalanceWarnWei = 10n ** 17n, // 0.1 native
+    convertHaircutBps,
   } = options
 
   const network = getDropChain(chainId)?.network
@@ -164,6 +172,7 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
     pollIntervalMs,
     dryRun,
     logger,
+    ...(convertHaircutBps === undefined ? {} : { convertHaircutBps }),
   })
 
   const watchTower = createWatchTower({
@@ -204,6 +213,7 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
   }
 
   const handler = createKeeperHandler({
+    ...(convertHaircutBps === undefined ? {} : { convertHaircutBps }),
     store,
     deployment,
     events,

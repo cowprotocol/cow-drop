@@ -47,6 +47,30 @@ function gcd(a: bigint, b: bigint): bigint {
 /** The slippage the UI adds to what it asks a payer to send to a payment drop: 50 bps. */
 export const PAYMENT_SLIPPAGE_BPS = 50
 
+/** How far under the market a convert activation sets its minimum, unless told otherwise: 100 bps. */
+export const CONVERT_HAIRCUT_BPS = 100
+
+/**
+ * The least a convert activation will accept, from a CoW **sell** quote for the drop's balance.
+ *
+ * A convert recipe commits no price, so this number *is* the price protection, and both activators —
+ * the panel and the keeper — must compute it the same way or the keeper would undercut what the UI
+ * showed. Rounded down, so the minimum is never nudged above what the quote actually supports.
+ *
+ * Zero is refused rather than clamped: an order anyone may fill for nothing is not a price, and the
+ * step reverts on it anyway.
+ */
+export function convertMinimum(buyAmount: bigint, haircutBps: number = CONVERT_HAIRCUT_BPS): bigint {
+  if (!Number.isInteger(haircutBps) || haircutBps < 0 || haircutBps >= 10_000) {
+    throw new Error(`haircutBps must be an integer in [0, 10000), got: ${haircutBps}`)
+  }
+  const minimum = (buyAmount * BigInt(10_000 - haircutBps)) / 10_000n
+  if (minimum <= 0n) {
+    throw new Error('a convert activation needs a positive minimum; this quote and haircut leave none')
+  }
+  return minimum
+}
+
 /**
  * How much of a token pays for a payment drop, from a CoW **buy** quote for the drop's `buyAmount`.
  *
