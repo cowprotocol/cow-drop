@@ -220,6 +220,21 @@ const INITIAL: FormState = {
   pricer: '',
 }
 
+/**
+ * The typed discount as a magnitude `applySlippage` can use, or null while it is not usable.
+ *
+ * The control carries its own `−`, so what is typed is the size of the discount. A sign typed anyway
+ * is absorbed rather than refused: every control in this row moves the limit *below* market, so
+ * reading "−10" as anything other than ten percent down would be the one surprising thing it could
+ * do. Bounded under 100, since a full discount is a price of nothing — which `limitPriceToFraction`
+ * refuses anyway — and above zero, since zero is the market price and not a discount at all.
+ */
+function discountMagnitude(typed: string): number | null {
+  if (typed.trim() === '') return null
+  const value = Math.abs(Number(typed))
+  return Number.isFinite(value) && value > 0 && value < 100 ? value : null
+}
+
 /** A blank guard field means "no guard", not "zero". */
 function optionalBigInt(value: string): bigint | undefined {
   const trimmed = value.trim()
@@ -671,6 +686,8 @@ export function RecipesTab({
   const [referenceAmount, setReferenceAmount] = useState('100')
   const [quote, setQuote] = useState<MarketQuote | null>(null)
   const [quoting, setQuoting] = useState(false)
+  /** The fourth discount button's amount, typed rather than preset. Kept as a string so it can be half-typed. */
+  const [customDiscount, setCustomDiscount] = useState('')
   /**
    * Beside the button rather than in the top banner. The banner is a screen away from the market-price
    * box on a filled-in form, so a failed quote looked like a button that did nothing at all.
@@ -1532,6 +1549,28 @@ export function RecipesTab({
                       −{slippage}%
                     </button>
                   ))}
+                  {/*
+                    * A fourth, open-ended option.
+                    *
+                    * The presets stop at 5%, which is nowhere near enough for a schedule that has to
+                    * stay fillable while the market moves under it — a TWAP wants to sit well below
+                    * market, and picking that number is the user's call rather than ours.
+                    */}
+                  <span className="quote-custom">
+                    −
+                    <input
+                      inputMode="decimal"
+                      aria-label="Discount below market, as a percentage"
+                      placeholder="10"
+                      value={customDiscount}
+                      onChange={(event) => {
+                        setCustomDiscount(event.target.value)
+                        const magnitude = discountMagnitude(event.target.value)
+                        if (magnitude !== null) set('limitPrice', applySlippage(quote.price, magnitude))
+                      }}
+                    />
+                    %
+                  </span>
                 </>
               )}
             </div>
