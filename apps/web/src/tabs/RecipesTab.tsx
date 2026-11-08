@@ -867,7 +867,17 @@ export function RecipesTab({
     )
   }, [account, placeholderOwner])
 
-  // Default to whatever network the wallet is already on, when we support it.
+  /*
+   * Default to whatever network the wallet is already on, when we support it.
+   *
+   * Re-read whenever the account changes, not only on mount. Connecting happens after mount by
+   * definition — it takes a click — so a mount-only read answered `null` for every wallet anyone
+   * ever connected, and `NetworkPicker`'s "your wallet is on X" banner could not appear.
+   *
+   * That was survivable while a failed chain switch also failed the connection. It is not now: a
+   * wallet that refuses to move stays connected on its own chain, and this banner is the only thing
+   * that says so.
+   */
   useEffect(() => {
     void walletChainId().then((chain) => {
       setWalletChain(chain)
@@ -875,7 +885,7 @@ export function RecipesTab({
         setForm((previous) => (previous.chainId === DEFAULT_CHAIN_ID ? { ...previous, chainId: chain } : previous))
       }
     })
-  }, [])
+  }, [account])
 
   // And keep following it, so switching in the wallet moves the page rather than leaving the two
   // disagreeing. Switching here asks the wallet too, so this closes the loop from both directions.

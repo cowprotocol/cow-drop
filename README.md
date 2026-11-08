@@ -69,6 +69,11 @@ VITE_KEEPER_BASE_URL=http://localhost:8787 pnpm --filter @cowprotocol/cow-drop-w
 
 Drop `VITE_KEEPER_BASE_URL` to hide the **Hand to keeper** button. `VITE_RPC_URL` overrides the RPC.
 
+`VITE_REOWN_PROJECT_ID` (`REOWN_PROJECT_ID` in the container) turns **Connect wallet** into
+[Reown AppKit](https://reown.com)'s modal — WalletConnect, so a phone can sign. Get one from
+[dashboard.reown.com](https://dashboard.reown.com); it is public, and restricted by origin there.
+Without it the page connects to an injected wallet directly, and none of AppKit is downloaded.
+
 Once a keeper is watching a drop, that button becomes **Stop keeper watching** — the recipe is the
 authorisation for both directions, and stopping is reversible.
 
