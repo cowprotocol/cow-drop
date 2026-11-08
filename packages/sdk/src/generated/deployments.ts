@@ -43,6 +43,7 @@ export const GENERATIONS: Record<number, DropAddresses> = {
     bungeeReceiver: '0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C',
     paymentSteps: '0x8BA52FAcbeFCC97CB93ccfCB53e3f2204543EEe8',
     convertSteps: '0x6448aDEd8b22FD216ef3df6DbD4Eb64e523419a2',
+    cooldownSteps: '0xa92B50b160e20554F9845BAaF52D42b70034657b',
   },
 }
 
