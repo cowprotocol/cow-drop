@@ -11,7 +11,7 @@ import {ConvertSteps} from "src/steps/ConvertSteps.sol";
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
-import {MockEthFlow, MockERC20, MockWrappedERC20} from "../mocks/Mocks.sol";
+import {MockERC20, MockEthFlow, MockWrappedERC20} from "../mocks/Mocks.sol";
 import {StepsBase} from "./StepsBase.sol";
 
 /// @notice A reusable address whose price comes from the activator, not the recipe. With no committed
