@@ -1329,21 +1329,22 @@ export function RecipesTab({
           {form.recipeKind === 'twap' && (
             <div className="choice-field">
               <span className="label-text">
-                Schedule
-                <Tooltip title="Reusable TWAP">
+                Address reuse
+                <Tooltip title="Address reuse">
                   <span>
-                    Reusable is paced by a cooldown the length of the schedule, so the next arrival
-                    is taken only once the previous one has run out of parts — never two schedules
-                    over one balance.
+                    Reusable is paced by a cooldown as long as the schedule itself, so the next TWAP
+                    starts only once the previous one has run out of parts — never two running over
+                    one balance.
                   </span>
                   <span>
-                    The cooldown is a step, so it changes the address. A recipe left one-shot keeps
-                    deriving exactly where it did.
+                    It needs a minimum amount, or anyone can restart it on dust the moment the
+                    cooldown expires. And the cooldown is a step, so it changes the address: a recipe
+                    left one-shot keeps deriving exactly where it did.
                   </span>
                 </Tooltip>
               </span>
               <div className="choice-row">
-                <div className="choice" role="radiogroup" aria-label="Schedule">
+                <div className="choice" role="radiogroup" aria-label="Address reuse">
                   {[
                     { value: false, label: 'One-shot' },
                     { value: true, label: 'Reusable' },
@@ -1364,8 +1365,8 @@ export function RecipesTab({
                 </div>
                 <p className="hint choice-explainer">
                   {form.reusableTwap
-                    ? 'Takes the next arrival once this schedule finishes. Needs a minimum amount.'
-                    : 'Spends the address on the first arrival, however much that is.'}
+                    ? 'A new TWAP for each arrival, once the previous one finishes.'
+                    : 'Runs one TWAP. Funds arriving later sit untouched.'}
                 </p>
               </div>
             </div>
