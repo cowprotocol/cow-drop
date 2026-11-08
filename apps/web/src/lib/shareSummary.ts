@@ -117,6 +117,7 @@ const STEP_LABELS: Record<string, string> = {
   requireCallResult: 'checks a value on another contract',
   requireMinBalance: 'waits for a minimum balance',
   requireTimeWindow: 'only runs inside a time window',
+  claimCooldown: 'waits out a cooldown between runs',
   wrapNative: 'wraps the native token',
   approveMax: 'approves a spender',
   approveBalance: 'approves what arrived',

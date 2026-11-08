@@ -263,11 +263,26 @@ export interface TwapOnArrivalParams extends RecipeGuards {
   /**
    * Refuse to activate until this much has arrived, in atomic units.
    *
-   * Strongly recommended here. This recipe is one-shot, so without a floor anyone may activate it
-   * the moment the first wei lands and the whole schedule gets sized from a part-delivered balance —
-   * which is exactly what happens if a bridge pays out in tranches. The guard reverts, so an early
-   * activation is a no-op rather than a spent run.
+   * Strongly recommended here. This recipe is one-shot by default, so without a floor anyone may
+   * activate it the moment the first wei lands and the whole schedule gets sized from a
+   * part-delivered balance — which is exactly what happens if a bridge pays out in tranches. The
+   * guard reverts, so an early activation is a no-op rather than a spent run.
+   *
+   * Required when `reusableAfter` is set, where it stops a third party re-activating on dust.
    */
+  /**
+   * Make the address reusable, with a cooldown between activations. Omit it for the one-shot
+   * default.
+   *
+   * `true` is the setting to want: a cooldown of `parts * partDuration`, the schedule's own length.
+   * By the time the window reopens the previous TWAP has run out of parts, so the drop takes the
+   * next arrival without ever holding two live schedules over one balance. A number sets the
+   * cooldown in seconds, and cannot be shorter than the schedule.
+   *
+   * Setting this changes the drop address, because it adds a step. A recipe written without it keeps
+   * resolving exactly where it did.
+   */
+  reusableAfter?: number | true
 }
 
 /**
@@ -282,6 +297,29 @@ export interface TwapOnArrivalParams extends RecipeGuards {
 export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
   const steps: DropRecipeJson['steps'] = []
 
+  const schedule = params.parts * params.partDuration
+  const cooldownSeconds = params.reusableAfter === true ? schedule : params.reusableAfter
+  if (cooldownSeconds !== undefined) {
+    // Shorter than the schedule and the two TWAPs overlap, which is the thing the cooldown exists to
+    // prevent. Hand-build the recipe if overlap is genuinely wanted.
+    if (cooldownSeconds < schedule) {
+      throw new Error(
+        `reusableAfter is ${cooldownSeconds}s but the schedule runs for ${schedule}s ` +
+          `(${params.parts} x ${params.partDuration}s): the next activation would register a second ` +
+          `TWAP while the first is still live. Use at least ${schedule}, or true for exactly that.`,
+      )
+    }
+    // Activation is permissionless and the claim is what paces it, so without a floor anyone can
+    // re-activate on dust the moment the window opens and push the next real one out by a full
+    // cooldown. The balance guard runs first and reverts, which rolls the claim back with it.
+    if (params.minAmount === undefined) {
+      throw new Error(
+        'a reusable TWAP needs minAmount: without it anyone can re-activate on dust the moment the ' +
+          'cooldown expires and push the next activation out by another full cooldown.',
+      )
+    }
+  }
+
   // Guards go first, before anything has side effects.
   steps.push(...timeGuards(params))
 
@@ -291,6 +329,11 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
 
   // After wrapping, so a native-funded drop is measured in the token it will actually sell.
   steps.push(...balanceGuard(params, params.sellToken))
+
+  // After the balance guard, so a dust activation reverts before it can claim the window.
+  if (cooldownSeconds !== undefined) {
+    steps.push({ type: 'claimCooldown', cooldownSeconds })
+  }
 
   steps.push({
     type: 'twapFromBalance',
@@ -311,7 +354,9 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
     chainId: params.chainId,
     owner: params.owner,
     salt: params.salt,
-    once: true,
+    // A cooldown replaces `once` rather than joining it: `once` is checked first and would spend the
+    // single run regardless, leaving the cooldown gating nothing. `compileRecipe` refuses the pair.
+    once: cooldownSeconds === undefined,
     steps,
   }
 }
