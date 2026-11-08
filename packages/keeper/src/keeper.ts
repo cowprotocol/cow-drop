@@ -16,7 +16,7 @@ import type { Address } from 'viem'
 
 import type { KeeperChain, Submitter } from './chain.js'
 import type { EventBus } from './events.js'
-import { balancesDigest, pollTargets, selfDriving } from './hints.js'
+import { balancesDigest, pacedOnChain, pollTargets, selfDriving } from './hints.js'
 import { evaluatePolicy } from './policy.js'
 import type { PaymentQuoter, PriceOracle } from './revenue.js'
 import { feeValueWei } from './revenue.js'
@@ -790,8 +790,16 @@ export function createKeeper(options: KeeperOptions): Keeper {
         // Those balances are committed to the order this activation signed, and they stay in the drop
         // until a solver settles it. Recorded so the next tick does not sign a second order for the
         // same money — see `shouldSimulate`.
+        /*
+         * Not latched for a recipe that paces itself: the cooldown already refuses a second run, and
+         * it knows when it expires where this does not. `committedValiditySeconds` reads
+         * `validitySeconds`, which a TWAP step does not carry, so the latch would fall back to a
+         * default that outlives the cooldown and hold a drop the contract was ready to run.
+         */
         committedDigest:
-          confirmed && !once && !parked && !openEnded(drop) ? current.lastSimulation?.balancesDigest : undefined,
+          confirmed && !once && !parked && !openEnded(drop) && !pacedOnChain(drop.recipe)
+            ? current.lastSimulation?.balancesDigest
+            : undefined,
         ...(paidWith && current.payment
           ? {
               payment: {

@@ -2,7 +2,7 @@ import type { DropStepJson } from '@cowprotocol/cow-drop-sdk'
 import { describe, expect, it } from 'vitest'
 
 import { COW, OWNER, recipeJson, WXDAI } from './fixtures.js'
-import { balancesDigest, deriveHints, pollTargets } from './hints.js'
+import { balancesDigest, deriveHints, pacedOnChain, pollTargets, selfDriving } from './hints.js'
 
 const ZERO = '0x0000000000000000000000000000000000000000'
 const wxdai = WXDAI.toLowerCase() as `0x${string}`
@@ -147,5 +147,57 @@ describe('balancesDigest', () => {
     expect(balancesDigest([1n, 2n])).not.toBe(balancesDigest([1n, 3n]))
     // Position matters — the same total from different tokens is not the same state.
     expect(balancesDigest([1n, 2n])).not.toBe(balancesDigest([2n, 1n]))
+  })
+})
+
+describe('selfDriving', () => {
+  const TWAP: DropStepJson = {
+    type: 'twapFromBalance',
+    sellToken: WXDAI,
+    buyToken: COW,
+    parts: 2,
+    partDuration: 120,
+    limitPrice: { price: '45', sellDecimals: 18, buyDecimals: 18 },
+  }
+  const COOLDOWN: DropStepJson = { type: 'claimCooldown', cooldownSeconds: 240 }
+
+  it('parks a bare TWAP, which nothing off-chain can pace', () => {
+    expect(selfDriving(recipeJson({ steps: [TWAP] }))).toBe(true)
+  })
+
+  it('keeps watching a TWAP the contract paces for it', () => {
+    // The whole point: a cooldown refuses the second TWAP that parking existed to prevent, so parking
+    // on top of it only stops a drop the contract was willing to run.
+    expect(selfDriving(recipeJson({ steps: [COOLDOWN, TWAP] }))).toBe(false)
+    expect(pacedOnChain(recipeJson({ steps: [COOLDOWN, TWAP] }))).toBe(true)
+  })
+
+  it('leaves an ordinary order-signing recipe alone either way', () => {
+    expect(selfDriving(recipeJson({ steps: [SWAP] }))).toBe(false)
+    expect(pacedOnChain(recipeJson({ steps: [SWAP] }))).toBe(false)
+  })
+
+  it('still parks a stop-loss, which has no cooldown to pace it', () => {
+    expect(
+      selfDriving(
+        recipeJson({
+          steps: [
+            {
+              type: 'stopLossFromBalance',
+              sellToken: WXDAI,
+              buyToken: COW,
+              limitPrice: { price: '45', sellDecimals: 18, buyDecimals: 18 },
+              validitySeconds: 604800,
+              trigger: {
+                sellTokenPriceOracle: '0x0000000000000000000000000000000000000fe1',
+                buyTokenPriceOracle: '0x0000000000000000000000000000000000000fe2',
+                strike: '1',
+                maxTimeSinceLastOracleUpdate: 3600,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true)
   })
 })

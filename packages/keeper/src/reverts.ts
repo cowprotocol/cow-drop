@@ -1,4 +1,5 @@
 import {
+  COOLDOWN_STEPS_ABI,
   DROP_EXECUTOR_ABI,
   GUARD_STEPS_ABI,
   PRESIGN_STEPS_ABI,
@@ -54,6 +55,9 @@ const ABIS = [
   PRESIGN_STEPS_ABI,
   TWAP_STEPS_ABI,
   STOP_LOSS_STEPS_ABI,
+  // A paced TWAP reverts here between runs, which is the commonest revert the keeper now sees: without
+  // the ABI it would be logged as `unknown` and an operator could not tell waiting from broken.
+  COOLDOWN_STEPS_ABI,
 ] as const
 
 /** `Error(string)`, which is what a `require` with a message and most ERC20s produce. */

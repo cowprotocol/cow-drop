@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { CHAIN_ID, recipeJson, registered, twapRecipeJson } from './fixtures.js'
+import { CHAIN_ID, COW, recipeJson, registered, twapRecipeJson, WXDAI } from './fixtures.js'
 import { DropConflict, fileStore, memoryStore, utcDay, type KeeperStore } from './store.js'
 
 async function tempPath(name = 'keeper.json'): Promise<string> {
@@ -172,6 +172,32 @@ describe('fileStore', () => {
     await fileStore(path, CHAIN_ID).put({ ...drop, status: 'activated' })
 
     expect((await fileStore(path, CHAIN_ID).get(CHAIN_ID, drop.address))?.status).toBe('activated')
+  })
+
+  it('releases a parked TWAP once the contract paces it', async () => {
+    // The gap this closes. A reusable TWAP with a cooldown was parked like any other, so it fired once
+    // and was never looked at again — while on chain the cooldown had expired and the activation would
+    // have gone through. The record is already on disk, so the release happens on the way in.
+    const path = await tempPath()
+    const recipe = twapRecipeJson({
+      // Generation 2 is the one that has CooldownSteps at all.
+      generation: 2,
+      steps: [
+        { type: 'claimCooldown', cooldownSeconds: 3600 },
+        {
+          type: 'twapFromBalance',
+          sellToken: WXDAI,
+          buyToken: COW,
+          parts: 4,
+          partDuration: 900,
+          limitPrice: { price: '45', sellDecimals: 18, buyDecimals: 18 },
+        },
+      ],
+    })
+    const drop = registered({ recipe, generation: 2 })
+    await fileStore(path, CHAIN_ID).put({ ...drop, status: 'activated' })
+
+    expect((await fileStore(path, CHAIN_ID).get(CHAIN_ID, drop.address))?.status).toBe('watching')
   })
 
   it('refuses a state file written for another chain', async () => {
