@@ -1903,12 +1903,23 @@ label.radio input {
   margin-bottom: 0.9rem;
 }
 
-.activity-head {
+/*
+ * Filters, right-aligned above the list they narrow.
+ *
+ * One rule for both lists — the activity feed and the saved drops ask the same questions of the
+ * same kind of thing, and a reader should not have to learn two shapes to read them.
+ */
+.activity-head,
+.list-filters {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.5rem;
   margin-bottom: 0.9rem;
+}
+
+.list-filter {
+  width: min(13rem, 100%);
 }
 
 .activity-filter {
@@ -2097,7 +2108,9 @@ a.chain-tag:hover {
   }
 
   /* Stacked and full width: two dropdowns do not fit side by side on a phone. */
-  .activity-filter {
+  /* Stacked and full width: three dropdowns do not fit side by side on a phone. */
+  .activity-filter,
+  .list-filter {
     width: 100%;
   }
 

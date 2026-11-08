@@ -1,9 +1,17 @@
 import { getDropChain } from '@cowprotocol/cow-drop-sdk'
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
 import type { Address } from 'viem'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { DropRow } from '../components/DropRow.js'
+import {
+  ALL,
+  ChainFilterSelect,
+  OwnerFilterSelect,
+  ownerMatches,
+  type ChainFilter,
+  type OwnerFilter,
+} from '../components/ListFilters.js'
 import { Section } from '../components/Section.js'
 import { Tooltip } from '../components/Tooltip.js'
 import { useDropList } from '../components/DropList.js'
@@ -50,6 +58,24 @@ export function DropsTab({
    */
   const primary = account ? groups.mine : groups.otherOwners
   const others = account ? groups.otherOwners : []
+
+  /*
+   * The same two filters the activity feed has, over the same kind of list.
+   *
+   * Applied to the primary group only. "Other accounts" is already an owner filter — it is the rows
+   * whose owner is not the connected one — and filtering a filter would be two controls disagreeing
+   * about the same question.
+   */
+  const [chain, setChain] = useState<ChainFilter>(ALL)
+  const [owner, setOwner] = useState<OwnerFilter>(ALL)
+
+  const shown = useMemo(
+    () =>
+      primary.filter(
+        (drop) => (chain === ALL || drop.chainId === chain) && ownerMatches(owner, drop.owner),
+      ),
+    [primary, chain, owner],
+  )
 
   /** One signature for all the rows: a prompt per drop teaches people to click through prompts. */
   const recover = async () => {
@@ -131,7 +157,31 @@ export function DropsTab({
           <p className="hint">Connect a wallet to also see drops this keeper holds for your account.</p>
         ) : null}
 
-        {primary.length > 0 ? rows(primary) : null}
+        {primary.length > 0 && (
+          <div className="list-filters">
+            <ChainFilterSelect
+              chainIds={primary.map((drop) => drop.chainId)}
+              value={chain}
+              onChange={setChain}
+              noun="drop"
+              total={primary.length}
+            />
+            <OwnerFilterSelect
+              owners={primary.map((drop) => drop.owner)}
+              value={owner}
+              onChange={setOwner}
+              noun="drop"
+              total={primary.length}
+              account={account}
+            />
+          </div>
+        )}
+
+        {shown.length > 0 ? rows(shown) : null}
+
+        {primary.length > 0 && shown.length === 0 ? (
+          <p className="hint">No drop matches this filter.</p>
+        ) : null}
 
         {/* Not an empty list: a keeper that did not answer must never read as "you have nothing". */}
         {remoteFailed ? (

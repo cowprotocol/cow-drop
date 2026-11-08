@@ -8,17 +8,18 @@ import {
   type ActivityEntry,
 } from '../lib/activity.js'
 import { chainLabel } from '../lib/chain.js'
+import { listDrops } from '../lib/storage.js'
 import { ChainLogo } from './ChainLogo.js'
 import { ChainTag } from './ChainTag.js'
+import {
+  ALL,
+  ChainFilterSelect,
+  OwnerFilterSelect,
+  ownerMatches,
+  type ChainFilter,
+  type OwnerFilter,
+} from './ListFilters.js'
 import { Select, type SelectOption } from './Select.js'
-
-/**
- * The filter value meaning "no restriction".
- *
- * Safe for both filters: it is not an address, and `Select` compares chain options by number, so it
- * cannot collide with a chain id either.
- */
-const ALL = 'all'
 
 /** `1 event`, not `1 events`. */
 function events(count: number): string {
@@ -84,26 +85,27 @@ function byDay(entries: ActivityEntry[]): { key: string; at: number; entries: Ac
  * it inside the title — and naming it is what makes the filter below possible: with three drops
  * running, a page of "Order posted" lines is not a history of anything.
  */
-export function ActivityLog() {
+export function ActivityLog({ account }: { account: string | null }) {
   const [entries, setEntries] = useState(listActivity)
   const [only, setOnly] = useState<string>(ALL)
-  const [chain, setChain] = useState<number | typeof ALL>(ALL)
+  const [chain, setChain] = useState<ChainFilter>(ALL)
+  const [owner, setOwner] = useState<OwnerFilter>(ALL)
 
   useEffect(() => onActivityChanged(() => setEntries(listActivity())), [])
 
-  /** One option per chain in the history, each counting its own events. */
-  const chainOptions = useMemo<SelectOption<number | typeof ALL>[]>(() => {
-    const counts = new Map<number, number>()
-    for (const entry of entries) counts.set(entry.chainId, (counts.get(entry.chainId) ?? 0) + 1)
-    return [
-      { value: ALL, label: 'All chains', description: events(entries.length) },
-      ...[...counts].map(([chainId, count]) => ({
-        value: chainId,
-        label: chainLabel(chainId),
-        description: events(count),
-        icon: <ChainLogo chainId={chainId} size={18} />,
-      })),
-    ]
+  /*
+   * Who owns the drop a line belongs to.
+   *
+   * An activity entry records what happened, not who owns the thing it happened to — so the owner
+   * is looked up in the saved recipes, the only place this browser holds one. A line about a drop
+   * it has never saved has no owner to report, and says so rather than guessing.
+   */
+  const ownerOf = useMemo(() => {
+    const byDrop = new Map<string, string>()
+    for (const saved of listDrops()) {
+      byDrop.set(`${saved.chainId}:${saved.address.toLowerCase()}`, saved.recipe.owner.toLowerCase())
+    }
+    return (entry: ActivityEntry) => byDrop.get(dropKey(entry)) ?? null
   }, [entries])
 
   /*
@@ -112,8 +114,11 @@ export function ActivityLog() {
    * to restrict the other.
    */
   const onChain = useMemo(
-    () => (chain === ALL ? entries : entries.filter((entry) => entry.chainId === chain)),
-    [entries, chain],
+    () =>
+      entries.filter(
+        (entry) => (chain === ALL || entry.chainId === chain) && ownerMatches(owner, ownerOf(entry)),
+      ),
+    [entries, chain, owner, ownerOf],
   )
 
   /** One option per drop on the chosen chain, newest first. */
@@ -172,7 +177,21 @@ export function ActivityLog() {
       */}
       {entries.length > 0 && (
         <div className="activity-head">
-          <Select className="activity-filter" value={chain} options={chainOptions} onChange={setChain} />
+          <ChainFilterSelect
+            chainIds={entries.map((entry) => entry.chainId)}
+            value={chain}
+            onChange={setChain}
+            noun="event"
+            total={entries.length}
+          />
+          <OwnerFilterSelect
+            owners={entries.map(ownerOf)}
+            value={owner}
+            onChange={setOwner}
+            noun="event"
+            total={entries.length}
+            account={account}
+          />
           <Select
             className="activity-filter"
             value={only}
