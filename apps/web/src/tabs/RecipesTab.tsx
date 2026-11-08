@@ -1321,6 +1321,55 @@ export function RecipesTab({
           onChange={(chainId) => void onNetworkChange(chainId)}
         />
         <div className="grid">
+          {/*
+            * First, and across the whole row, because it is not a parameter like the others: it
+            * decides whether the address is spent on one arrival or keeps working, and it changes
+            * which other fields matter. A checkbox buried among the inputs read as an afterthought.
+            */}
+          {form.recipeKind === 'twap' && (
+            <div className="choice-field">
+              <span className="label-text">
+                Schedule
+                <Tooltip title="Reusable TWAP">
+                  <span>
+                    Reusable is paced by a cooldown the length of the schedule, so the next arrival
+                    is taken only once the previous one has run out of parts — never two schedules
+                    over one balance.
+                  </span>
+                  <span>
+                    The cooldown is a step, so it changes the address. A recipe left one-shot keeps
+                    deriving exactly where it did.
+                  </span>
+                </Tooltip>
+              </span>
+              <div className="choice-row">
+                <div className="choice" role="radiogroup" aria-label="Schedule">
+                  {[
+                    { value: false, label: 'One-shot' },
+                    { value: true, label: 'Reusable' },
+                  ].map((option) => (
+                    <label
+                      key={String(option.value)}
+                      className={form.reusableTwap === option.value ? 'selected' : undefined}
+                    >
+                      <input
+                        type="radio"
+                        name="twap-schedule"
+                        checked={form.reusableTwap === option.value}
+                        onChange={() => set('reusableTwap', option.value)}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+                <p className="hint choice-explainer">
+                  {form.reusableTwap
+                    ? 'Takes the next arrival once this schedule finishes. Needs a minimum amount.'
+                    : 'Spends the address on the first arrival, however much that is.'}
+                </p>
+              </div>
+            </div>
+          )}
           <label>
             <span className="label-text">
               Name
@@ -1459,29 +1508,6 @@ export function RecipesTab({
               <label>
                 Minutes per part
                 <input value={form.partMinutes} onChange={(event) => set('partMinutes', event.target.value)} />
-              </label>
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={form.reusableTwap}
-                  onChange={(event) => set('reusableTwap', event.target.checked)}
-                />
-                <span className="label-text">
-                  Reusable, one schedule at a time
-                  <Tooltip title="Reusable TWAP">
-                    <span>
-                      A one-shot TWAP spends the address on the first arrival. Reusable keeps it
-                      working, paced by a cooldown the length of the schedule — so the next arrival is
-                      taken only once the previous one has run out of parts, never two schedules over
-                      one balance.
-                    </span>
-                    <span>
-                      It adds a step, so it changes the address. A recipe left one-shot keeps deriving
-                      exactly where it did. A minimum amount is required, or anyone can re-activate on
-                      dust the moment the window opens.
-                    </span>
-                  </Tooltip>
-                </span>
               </label>
             </>
           )}
