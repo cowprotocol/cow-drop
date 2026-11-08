@@ -150,14 +150,31 @@ function minOf(current: number | null, next: number): number {
 const SELF_DRIVING_STEPS = new Set<DropStepJson['type']>(['twapFromBalance', 'stopLossFromBalance'])
 
 /**
+ * Whether the recipe paces itself on chain, with a cooldown the contract enforces.
+ *
+ * `claimCooldown` records a deadline in the drop's own storage and refuses to run before it. That is
+ * the same job the keeper's own gates do — parking a self-driving drop, latching a balance digest —
+ * except the contract cannot be out-guessed, so where it applies the keeper should defer to it rather
+ * than add a second, blunter gate on top.
+ */
+export function pacedOnChain(recipe: DropRecipeJson): boolean {
+  return recipe.steps.some((step) => step.type === 'claimCooldown')
+}
+
+/**
  * Whether activating this recipe leaves behind a conditional order the keeper cannot see the end of.
  *
  * The reason a reusable drop is not always re-armed after it activates. A TWAP's balance *falls as its
  * parts fill*, so no balance-watching gate can hold it — activating again would register a second TWAP
  * over what the first has left. Such a drop is parked in `activated`; every other reusable recipe signs
  * a discrete order with a deadline this keeper can read, and goes back to watching.
+ *
+ * Unless the recipe paces itself. A cooldown is precisely a gate against that second TWAP, enforced
+ * where it cannot be got around, so parking on top of it would stop a drop the contract was willing to
+ * run — which is what it did to every reusable TWAP until this read `pacedOnChain`.
  */
 export function selfDriving(recipe: DropRecipeJson): boolean {
+  if (pacedOnChain(recipe)) return false
   return recipe.steps.some((step) => SELF_DRIVING_STEPS.has(step.type))
 }
 
