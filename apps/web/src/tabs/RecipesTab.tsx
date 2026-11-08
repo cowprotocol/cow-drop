@@ -72,6 +72,13 @@ const RECIPE_KINDS: (SelectOption<RecipeKind> & { detail: string })[] = [
     detail: 'You post the order to CoW after activating. No watch tower needed.',
   },
   {
+    value: 'payment',
+    label: 'Payment request',
+    description: 'Asks a fixed amount, payable in any token',
+    detail:
+      'The payer is quoted what to send; the keeper sells it for at least your price, and any surplus is yours. Reusable, so one address takes payment after payment.',
+  },
+  {
     value: 'twap',
     label: 'TWAP on arrival',
     description: 'Sells what lands here in parts, over time',
@@ -82,13 +89,6 @@ const RECIPE_KINDS: (SelectOption<RecipeKind> & { detail: string })[] = [
     label: 'Stop-loss on arrival',
     description: 'Sells when a price feed crosses your strike',
     detail: 'Self-driving: the watch tower polls the condition, so nobody has to watch.',
-  },
-  {
-    value: 'payment',
-    label: 'Payment request',
-    description: 'Asks a fixed amount, payable in any token',
-    detail:
-      'The payer is quoted what to send; the keeper sells it for at least your price, and any surplus is yours. Reusable, so one address takes payment after payment.',
   },
 ]
 
