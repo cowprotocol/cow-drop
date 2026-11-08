@@ -564,8 +564,25 @@ function matchingForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | 
   const candidate = toForm(recipe, tokens)
   if (!candidate) return null
   try {
-    const rebuilt = compileRecipe(toRecipe(candidate, tokens))
-    return rebuilt.address === compileRecipe(recipe).address ? candidate : null
+    const address = compileRecipe(recipe).address
+    if (compileRecipe(toRecipe(candidate, tokens)).address !== address) return null
+
+    /*
+     * Prefer an empty name when emptying it changes nothing.
+     *
+     * Every template fills a default label, so a recipe always carries one and `toForm` would put it
+     * in the field — leaving a name the user never typed. That is not cosmetic: the field then holds
+     * a value, so switching recipe afterwards keeps the old recipe's default and commits it into the
+     * new address. Blank means "whatever the template calls it", which is what an untouched form
+     * means, and the placeholder then follows the recipe.
+     *
+     * Decided by deriving it rather than by comparing strings against each template's default: if
+     * the address is the same either way, the two forms are the same drop and the blank one is the
+     * honest description of it. A name the user really did type derives differently and is kept.
+     */
+    const blank = { ...candidate, label: '' }
+    if (compileRecipe(toRecipe(blank, tokens)).address === address) return blank
+    return candidate
   } catch {
     return null
   }
