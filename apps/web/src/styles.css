@@ -890,6 +890,18 @@ details.terminal > summary {
   font-family: ui-monospace, Menlo, monospace;
 }
 
+/* The typed discount beside the preset ones: an input and its button read as one control. */
+.quote-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.quote-custom input {
+  width: 4.5rem;
+  text-align: right;
+}
+
 /* Token logos: the cascade means some will fail, so a lettered circle stands in. */
 .token-logo {
   border-radius: 50%;

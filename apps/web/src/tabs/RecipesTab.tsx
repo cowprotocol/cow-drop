@@ -654,6 +654,8 @@ export function RecipesTab({
   const [referenceAmount, setReferenceAmount] = useState('100')
   const [quote, setQuote] = useState<MarketQuote | null>(null)
   const [quoting, setQuoting] = useState(false)
+  /** The fourth discount button's amount, typed rather than preset. Kept as a string so it can be half-typed. */
+  const [customDiscount, setCustomDiscount] = useState('')
   /**
    * Beside the button rather than in the top banner. The banner is a screen away from the market-price
    * box on a filled-in form, so a failed quote looked like a button that did nothing at all.
@@ -1199,6 +1201,19 @@ export function RecipesTab({
   const isConvert = convertStepOf(recipe) !== undefined
   const reusable: ReusableKind = isPayment ? 'payment' : isConvert ? 'convert' : null
 
+  /**
+   * The typed discount, and whether it is usable.
+   *
+   * Bounded below by zero — a negative would put the limit *above* market, which is a different
+   * intent and not what this control is for — and below 100, since a full discount is a price of
+   * nothing, which `limitPriceToFraction` refuses anyway.
+   */
+  const customDiscountValid =
+    customDiscount.trim() !== '' &&
+    Number.isFinite(Number(customDiscount)) &&
+    Number(customDiscount) > 0 &&
+    Number(customDiscount) < 100
+
   const onQuote = async () => {
     setQuoting(true)
     setQuoteError(null)
@@ -1515,6 +1530,35 @@ export function RecipesTab({
                       −{slippage}%
                     </button>
                   ))}
+                  {/*
+                    * A fourth, open-ended option.
+                    *
+                    * The presets stop at 5%, which is nowhere near enough for a schedule that has to
+                    * stay fillable while the market moves under it — a TWAP wants to sit well below
+                    * market, and picking that number is the user's call rather than ours.
+                    */}
+                  <span className="quote-custom">
+                    <input
+                      inputMode="decimal"
+                      aria-label="Discount below market, in percent"
+                      placeholder="10"
+                      value={customDiscount}
+                      onChange={(event) => setCustomDiscount(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && customDiscountValid) {
+                          event.preventDefault()
+                          set('limitPrice', applySlippage(quote.price, Number(customDiscount)))
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => set('limitPrice', applySlippage(quote.price, Number(customDiscount)))}
+                      disabled={!customDiscountValid}
+                      title="Set the limit this far below the market price"
+                    >
+                      −{customDiscountValid ? customDiscount : '…'}%
+                    </button>
+                  </span>
                 </>
               )}
             </div>
