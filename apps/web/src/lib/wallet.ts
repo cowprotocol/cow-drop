@@ -33,7 +33,7 @@ interface AppKitLike {
   getProvider: <T>(namespace: string) => T | undefined
   getIsConnectedState: () => boolean
   subscribeAccount: (callback: (state: { address?: string; isConnected?: boolean }) => void) => () => void
-  subscribeState: (callback: (state: { open: boolean }) => void) => () => void
+  subscribeState: (callback: (state: { open: boolean; initialized?: boolean }) => void) => () => void
 }
 
 /** Whether this deployment has AppKit configured at all. Cheap, and safe to call during render. */
@@ -129,7 +129,7 @@ export async function openWalletModal(): Promise<Address | null> {
     connectedProvider = null
   }
 
-  return new Promise<Address | null>((resolve) => {
+  return new Promise<Address | null>((resolve, reject) => {
     let settled = false
     const stop: (() => void)[] = []
     const finish = (address: Address | null) => {
@@ -157,15 +157,34 @@ export async function openWalletModal(): Promise<Address | null> {
      * Guarded on having seen it open first, because the subscription fires immediately with the
      * current state, which is `open: false` until the modal mounts.
      */
-    let opened = false
+    /*
+     * Armed only once the modal is both open and initialised.
+     *
+     * `open` goes true the moment `open()` is called, while AppKit is still loading its UI and
+     * fetching the wallet list — and it passes back through false on the way to being ready. Treating
+     * the first false as a dismissal closed the connection attempt about 400ms after the click,
+     * every time, before the modal had drawn anything: the button returned to "Connect wallet" and
+     * it looked as though nothing had happened at all.
+     */
+    let armed = false
     stop.push(
       kit.subscribeState((state) => {
-        if (state.open) opened = true
-        else if (opened) finish(null)
+        if (state.open && state.initialized) armed = true
+        else if (armed && !state.open) finish(null)
       }),
     )
 
-    void kit.open().catch(() => finish(null))
+    /*
+     * A failure to open is not a dismissal, and must not be reported as one. Swallowing it here is
+     * what made this undiagnosable: the button returned to its resting state in under half a second
+     * with no modal, no error and nothing in the console.
+     */
+    void kit.open().catch((cause: unknown) => {
+      if (settled) return
+      settled = true
+      for (const off of stop) off()
+      reject(cause instanceof Error ? cause : new Error(String(cause)))
+    })
   })
 }
 
