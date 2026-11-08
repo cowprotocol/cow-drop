@@ -50,7 +50,6 @@ import { TokenPicker } from '../components/TokenPicker.js'
 import { DropAddress } from '../components/DropAddress.js'
 import { RecipeJson } from '../components/RecipeJson.js'
 import { StepBuilder } from '../components/StepBuilder.js'
-import { RescuePanel } from '../components/RescuePanel.js'
 import { TerminalPanel } from '../components/TerminalPanel.js'
 import { StepTable } from '../components/StepTable.js'
 import { ConvertPanel, convertStepOf } from '../components/ConvertPanel.js'
@@ -1959,19 +1958,23 @@ export function RecipesTab({
               </Section>
 
               {/*
-                * Collapsed behind its heading, like the panels around it: the rescue paths are the
-                * wrong answer to almost every question, and the panel used to fold itself away
-                * *inside* this already titled section — two things to click, and two names for one
-                * panel.
+                * A pointer rather than the panel itself.
+                *
+                * As a step it could only ever recover the drop this form derives, which is the one
+                * case where recovery is least likely to be needed — and left a drop built by an
+                * older recipe, whose address the form cannot reproduce, with no way to reach its
+                * funds. The Recover tab takes an address instead.
                 */}
               <Section title={<>6 &middot; Recover your funds</>} open={false} optional className="rescue">
-                <RescuePanel
-                  compiled={compiled.value}
-                  account={account}
-                  deployed={status?.deployed ?? false}
-                  sellToken={form.sellToken}
-                  tokens={tokens}
-                />
+                <p className="hint">
+                  Recovery lives in its own tab now, so it can act on any drop you own rather than
+                  only the one on screen.
+                </p>
+                <div className="actions">
+                  <a className="button" href={routeHash({ tab: 'recover' })}>
+                    Open Recover
+                  </a>
+                </div>
               </Section>
 
               <Section title={<>7 &middot; Manage the recipe</>} open={false} optional>

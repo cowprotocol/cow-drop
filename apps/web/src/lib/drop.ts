@@ -21,6 +21,10 @@ import {
   sendTransaction,
 } from './chain.js'
 
+const COW_SHED_PROXY_ABI = [
+  { type: 'function', name: 'admin', stateMutability: 'nonpayable', inputs: [], outputs: [{ type: 'address' }] },
+] as const
+
 const ERC20_ABI = [
   { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'uint256' }] },
   {
@@ -308,6 +312,32 @@ export async function readTokenBalance(chainId: number, token: Address, holder: 
   return getPublicClient(chainId)
     .readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [holder] })
     .catch(() => 0n)
+}
+
+/**
+ * Who owns a deployed drop, read from the chain rather than derived from a recipe.
+ *
+ * Recovery needs this for an address someone pasted, where there is no recipe to read the owner off.
+ * `COWShedProxy.admin()` answers only when the caller is the proxy itself — it proxies transparently
+ * for everyone else — so the call is made *as* the drop. That costs nothing in an `eth_call`, which
+ * never checks who the sender claims to be.
+ *
+ * `null` when the address has no code or answers with something that is not an address: an
+ * undeployed drop, or not a drop at all.
+ */
+export async function readDropOwner(chainId: number, drop: Address): Promise<Address | null> {
+  try {
+    const result = await getPublicClient(chainId).call({
+      account: drop,
+      to: drop,
+      data: encodeFunctionData({ abi: COW_SHED_PROXY_ABI, functionName: 'admin' }),
+    })
+    if (!result.data || result.data.length !== 66) return null
+    const owner = `0x${result.data.slice(26)}` as Address
+    return owner === '0x0000000000000000000000000000000000000000' ? null : owner
+  } catch {
+    return null
+  }
 }
 
 /**

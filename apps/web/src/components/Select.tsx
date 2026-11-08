@@ -30,6 +30,7 @@ export function Select<T extends string | number>({
   options,
   onChange,
   searchable = false,
+  customOption,
   filterPlaceholder = 'Search',
   placeholder = 'Select',
   emptyText = 'Nothing matches',
@@ -42,6 +43,14 @@ export function Select<T extends string | number>({
   options: SelectOption<T>[]
   onChange: (value: T) => void
   searchable?: boolean
+  /**
+   * Turn what was typed into a selectable row, for a value the list does not contain.
+   *
+   * The dropdown stops being a list of what exists and becomes "pick one of these, or name your own"
+   * — a drop you saved, or any address you paste. Returning `null` means the text is not a usable
+   * value yet, so nothing is offered and the empty state stands.
+   */
+  customOption?: (query: string) => SelectOption<T> | null
   filterPlaceholder?: string
   placeholder?: string
   emptyText?: string
@@ -73,14 +82,19 @@ export function Select<T extends string | number>({
   valueRef.current = value
 
   const matches = useMemo(() => {
-    const needle = filter.trim().toLowerCase()
+    const typed = filter.trim()
+    const needle = typed.toLowerCase()
     if (!needle) return options
-    return options.filter((option) =>
+    const found = options.filter((option) =>
       [option.label, option.description, option.keywords]
         .filter(Boolean)
         .some((text) => text!.toLowerCase().includes(needle)),
     )
-  }, [options, filter])
+    // Appended rather than prepended: what you already have comes first, and the offer to use the
+    // typed value sits at the end where it reads as the fallback it is.
+    const custom = customOption?.(typed)
+    return custom && !found.some((option) => option.value === custom.value) ? [...found, custom] : found
+  }, [options, filter, customOption])
 
   /*
    * Open on the current selection, so Enter without arrowing is a no-op rather than a surprise.

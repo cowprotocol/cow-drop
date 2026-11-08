@@ -25,6 +25,7 @@ import { AboutTab } from './tabs/AboutTab.js'
 import { BridgeTab } from './tabs/BridgeTab.js'
 import { DropsTab } from './tabs/DropsTab.js'
 import { RecipesTab } from './tabs/RecipesTab.js'
+import { RecoverTab } from './tabs/RecoverTab.js'
 import { ShareTab } from './tabs/ShareTab.js'
 import { SdkTab } from './tabs/SdkTab.js'
 
@@ -346,6 +347,15 @@ export function App() {
         )}
         {/* Its own tab now: a feed of what happened, rather than a panel under the catalogue. */}
         {route.tab === 'activity' && <ActivityLog account={account} />}
+        {route.tab === 'recover' && (
+          <RecoverTab
+            account={account}
+            active={
+              drop ? { address: drop.address, recipe: drop.recipe, chainId: drop.recipe.chainId } : null
+            }
+            onError={setError}
+          />
+        )}
         {route.tab === 'drops' && (
           <DropsTab
             account={account}
