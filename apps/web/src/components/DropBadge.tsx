@@ -1,11 +1,26 @@
 import type { DropRecipeJson } from '@cowprotocol/cow-drop-sdk'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Address } from 'viem'
 
 import { chainLabel, explorerAddressUrl } from '../lib/chain.js'
 import { routeHash } from '../lib/route.js'
+import { listDrops } from '../lib/storage.js'
 import { ChainLogo } from './ChainLogo.js'
 import { QrZoom } from './QrZoom.js'
+import { Select, type SelectOption } from './Select.js'
+
+/**
+ * The option that leaves rather than chooses.
+ *
+ * A sentinel instead of a link below the list, because it has to be reachable the same way every
+ * other row is — arrow keys and Enter — and a link outside the listbox is not.
+ */
+const VIEW_ALL = 'view-all'
+
+/** A drop's identity: the same address on two chains is two drops. */
+function key(chainId: number, address: string): string {
+  return `${chainId}:${address.toLowerCase()}`
+}
 
 /**
  * The drop currently on the bench, in the header.
@@ -27,14 +42,69 @@ export function DropBadge({
   recipe,
   address,
   onRemember,
+  onLoad,
+  onViewAll,
+  revision,
 }: {
   recipe: DropRecipeJson
   address: Address
   /** Copying or sharing hands the address to someone else — a moment the recipe has to survive. */
   onRemember: () => void
+  /** Switch the builder to another saved drop. */
+  onLoad: (recipe: DropRecipeJson) => void
+  /** Leave for the full list, which can do things this cannot — forget, rescue, read keeper state. */
+  onViewAll: () => void
+  /** Bumped whenever a drop is written, so the list below re-reads `localStorage`. */
+  revision: number
 }) {
   const [copied, setCopied] = useState(false)
   const explorer = explorerAddressUrl(recipe.chainId, address)
+
+  /*
+   * The saved drops, which is deliberately not everything the Drops tab shows.
+   *
+   * That list also carries rows the keeper knows about and this browser does not, and those cannot
+   * be loaded — switching to one would mean switching to nothing, because the recipe is what the
+   * builder works on and only the keeper has it. So this offers what it can actually open, and
+   * "View all drops" goes where the rest live.
+   */
+  const saved = useMemo(() => listDrops(), [revision])
+
+  const current = key(recipe.chainId, address)
+
+  const options = useMemo<SelectOption<string>[]>(() => {
+    const rows = saved.map((drop) => ({
+      value: key(drop.chainId, drop.address),
+      label: drop.label,
+      description: `${chainLabel(drop.chainId)} · ${drop.address.slice(0, 10)}…${drop.address.slice(-6)}`,
+      keywords: drop.address,
+      icon: <ChainLogo chainId={drop.chainId} size={18} />,
+    }))
+
+    // The drop on the bench may not be saved yet — it is saved on copy, share or download — and a
+    // trigger with nothing selected would read as "no drop loaded" while one plainly is.
+    if (!rows.some((row) => row.value === current)) {
+      rows.unshift({
+        value: current,
+        label: recipe.label,
+        description: `${chainLabel(recipe.chainId)} · not saved yet`,
+        keywords: address,
+        icon: <ChainLogo chainId={recipe.chainId} size={18} />,
+      })
+    }
+
+    return [...rows, { value: VIEW_ALL, label: 'View all drops', description: 'Open the Drops tab' }]
+  }, [saved, current, recipe, address])
+
+  const choose = (next: string) => {
+    if (next === VIEW_ALL) {
+      onViewAll()
+      return
+    }
+    if (next === current) return
+    const picked = saved.find((drop) => key(drop.chainId, drop.address) === next)
+    if (picked) onLoad(picked.recipe)
+  }
 
   const copy = async () => {
     /*
@@ -60,7 +130,19 @@ export function DropBadge({
       <QrZoom value={address} label={recipe.label} />
 
       <div className="drop-badge-text">
-        <strong>{recipe.label}</strong>
+        {/*
+          The name is the switcher. A separate control beside it would be a second thing to find for
+          something people do constantly — come back, and work on a different drop — and the name is
+          already where the eye goes to answer "which one is this".
+        */}
+        <Select
+          className="drop-switcher"
+          value={current}
+          options={options}
+          onChange={choose}
+          searchable={saved.length > 6}
+          filterPlaceholder="Name or address"
+        />
 
         {/*
           The chain's mark sits on the address line rather than above it: which chain an address is

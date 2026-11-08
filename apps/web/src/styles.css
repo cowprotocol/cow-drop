@@ -83,6 +83,60 @@ h2 {
 }
 
 /*
+ * The drop's name, which is also the switcher.
+ *
+ * Shaped like the heading it replaces rather than like a form control: no box, no background, just
+ * the name and a caret. The popover below it is the ordinary one, so the keyboard model and the
+ * filter come for free.
+ */
+.drop-switcher {
+  gap: 0;
+}
+
+.drop-switcher .select-trigger {
+  width: auto;
+  min-height: 0;
+  padding: 0.1rem 0.3rem 0.1rem 0;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  font-weight: 700;
+  border-radius: 6px;
+}
+
+.drop-switcher .select-trigger:hover:not(:disabled) {
+  color: var(--accent);
+  border: none;
+}
+
+.drop-switcher .select-caret {
+  margin-left: 0;
+  font-size: 0.6rem;
+}
+
+/* Wide enough for a name and an address beneath it, without stretching the strip. */
+.drop-switcher .select-popover {
+  right: auto;
+  min-width: min(22rem, calc(100vw - 2.5rem));
+}
+
+/*
+ * "View all drops" is a departure, not a choice, so it is set apart from the rows above it — a rule
+ * above, and the muted weight of a link rather than the bold of a name.
+ */
+.drop-switcher .select-option:last-child {
+  margin-top: 0.3rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.drop-switcher .select-option:last-child .select-option-label {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/*
  * The address line: the chain's mark, then the address in full.
  *
  * Never truncated. This is what somebody checks against their wallet before sending, and that check

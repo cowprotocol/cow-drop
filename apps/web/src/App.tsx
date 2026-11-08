@@ -244,7 +244,21 @@ export function App() {
             <DropBadge
               recipe={drop.recipe}
               address={drop.address}
-              onRemember={() => saveDrop({ address: drop.address, recipe: drop.recipe })}
+              revision={dropsRevision}
+              onRemember={() => {
+                saveDrop({ address: drop.address, recipe: drop.recipe })
+                /*
+                 * Announce it, or nothing re-reads. Saving from here is a real save — the same one
+                 * the Drops tab lists and the switcher above offers — and without this the drop you
+                 * just copied stayed absent from both until something else happened to bump them.
+                 */
+                setDropsRevision((n) => n + 1)
+              }}
+              onLoad={(next) => {
+                setImported(next)
+                setError(null)
+              }}
+              onViewAll={() => navigate('drops')}
             />
           )}
 
