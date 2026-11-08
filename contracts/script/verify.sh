@@ -36,11 +36,15 @@ STOP_LOSS_HANDLER=${STOP_LOSS_HANDLER:-0x412c36e5011CD2517016D243a2dfB37f73A242E
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
+# Recorded for reference, but CoW's contracts rather than ours — nothing here to verify.
+EXTERNAL="settlement composableCow"
+
 ok=0; already=0; skipped=0; failed=0
 
 # verify <jsonKey> <path:Name> <constructorArgTypes> [argValues...]
 verify() {
   key=$1; target=$2; sig=$3; shift 3
+  handled="$handled $key"
 
   addr=$(jq -r --arg k "$key" '.[$k] // empty' "$FILE")
   if [ -z "$addr" ]; then
@@ -101,6 +105,7 @@ for CHAIN in $CHAINS; do
   FILE="$DEPLOY_DIR/$CHAIN.json"
   if [ ! -f "$FILE" ]; then echo "no $FILE" >&2; failed=$((failed + 1)); continue; fi
   echo "chain $CHAIN (generation $GEN)"
+  handled=""
 
   SETTLEMENT=$(jq -r '.settlement' "$FILE")
   COMPOSABLE_COW=$(jq -r '.composableCow' "$FILE")
@@ -120,6 +125,16 @@ for CHAIN in $CHAINS; do
   verify convertSteps       src/steps/ConvertSteps.sol:ConvertSteps     "address,address,address"    "$SETTLEMENT" "$VAULT_RELAYER" "$EXECUTOR"
   verify cowOrderPoster     src/CowOrderPoster.sol:CowOrderPoster       "address"                    "$SETTLEMENT"
   verify bungeeReceiver     src/bridge/DropBungeeReceiver.sol:DropBungeeReceiver "address"           "$EXECUTOR"
+
+  # The list above is written by hand, so a contract added to Deploy.s.sol and not to it would be
+  # skipped in silence — which is how convertSteps went unverified. Say so instead.
+  for key in $(jq -r 'to_entries[] | select(.value | type == "string" and startswith("0x")) | .key' "$FILE"); do
+    case " $handled $EXTERNAL " in
+      *" $key "*) ;;
+      *) printf '  %-18s recorded in %s but this script has no entry for it\n' "$key" "$FILE"
+         failed=$((failed + 1)) ;;
+    esac
+  done
   echo
 done
 
