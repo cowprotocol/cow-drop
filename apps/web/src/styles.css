@@ -82,16 +82,45 @@ h2 {
   flex: 1 1 12rem;
 }
 
-.drop-badge-text code {
-  font-size: 0.82rem;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
+/*
+ * The address line: the chain's mark, then the address in full.
+ *
+ * Never truncated. This is what somebody checks against their wallet before sending, and that check
+ * cannot be made against an ellipsis. It wraps instead — `anywhere`, because a hex string has no
+ * word boundaries to break on and the alternative is a line that pushes the page sideways.
+ */
+.drop-badge-address {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
 }
 
-.drop-badge .chain-tag {
-  font-size: 0.78rem;
-  font-weight: 600;
+.drop-badge-address code {
+  font-size: 0.82rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.drop-badge-address a {
+  min-width: 0;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--border);
+}
+
+.drop-badge-address a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Copy and Share, kept together at the end of the strip. */
+.drop-badge-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 /* The small QR. A white plate even at this size: a dark QR is not a QR. */
@@ -2025,13 +2054,27 @@ a.chain-tag:hover {
     flex-wrap: wrap;
   }
 
-  /* The address is the widest thing in the badge; let it take the row. */
+  /*
+   * The full address is the widest thing on the page; it takes the row and the buttons follow it.
+   * The QR stays beside the name rather than stacking, so the strip keeps its shape.
+   */
   .drop-badge {
     gap: 0.6rem;
   }
 
-  .drop-badge .button {
+  .drop-badge-text {
     flex: 1 1 100%;
+    order: 2;
+  }
+
+  .drop-badge-actions {
+    flex: 1 1 100%;
+    order: 3;
+    margin-left: 0;
+  }
+
+  .drop-badge-actions > * {
+    flex: 1 1 0;
     text-align: center;
   }
 
