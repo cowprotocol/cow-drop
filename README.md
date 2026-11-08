@@ -132,6 +132,14 @@ Regenerate the SDK's constants afterwards:
 pnpm --filter @cowprotocol/cow-drop-sdk generate
 ```
 
+To verify contracts the deploy did not submit — anything already on chain when it ran, which
+`--verify --resume` never revisits:
+
+```bash
+ETHERSCAN_API_KEY=… script/verify.sh          # every chain with a deployments file
+ETHERSCAN_API_KEY=… script/verify.sh 1 8453   # only these
+```
+
 ## Release
 
 Cut a [new release](https://github.com/cowprotocol/cow-drop/releases/new) with a semver tag —

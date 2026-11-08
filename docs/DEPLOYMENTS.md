@@ -75,6 +75,7 @@ deployed bytecode — which is why `contracts/foundry.toml` must stay byte-ident
 |---|---|
 | `script/Deploy.s.sol` | Deploys the stack. Idempotent: skips anything already at its deterministic address. Writes `deployments/gen<N>/<chainId>.json`, which the SDK generates its constants from. |
 | `script/Fixtures.s.sol` | Regenerates `deployments/derivation-fixtures.json`, the ground truth the SDK's derivation is tested against. |
+| `script/verify.sh` | Verifies every address in `deployments/gen<N>/<chainId>.json`, not just the last run's. Recomputes each CREATE2 address from the local build first and skips anything that does not match. `DRY_RUN=1` to see what it would submit. |
 | `script/DropConfig.sol` | Per-chain addresses of the CoW and composable-cow contracts we build on. |
 
 ## Verifying
