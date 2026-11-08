@@ -56,6 +56,10 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
       case 'convert':
         // Same shape as `payment`: nothing names the sell token, so the `Transfer` scan finds it.
         convert = { buyToken: lower(step.buyToken), pricer: lower(step.pricer ?? ZERO) }
+        // Unlike `payment`, native counts. `ConvertSteps` wraps whatever native the drop holds when
+        // the wrapper is the token being sold, so a plain ETH/xDAI transfer — which carries no
+        // `Transfer` log for the scan to find — is a fundable arrival and has to be polled for.
+        native = true
         break
 
       case 'wrapNative':

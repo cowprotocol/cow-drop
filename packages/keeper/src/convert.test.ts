@@ -51,7 +51,15 @@ function fixedQuoter(buyAmount: bigint | undefined) {
 }
 
 function harness(setup: {
+  /** ERC20 balances, positionally against the polled tokens. */
   balances: bigint[]
+  /**
+   * The drop's native balance.
+   *
+   * Its own field because a convert drop polls native first — `ConvertSteps` wraps it — so folding it
+   * into `balances` would silently shift every other entry.
+   */
+  native?: bigint
   transfers?: { token: Address; block: bigint }[]
   market?: bigint
   pricer?: Address
@@ -61,7 +69,8 @@ function harness(setup: {
   const drop = registered({ recipe, generation: 2 })
   const store = memoryStore([drop])
   const chain = fakeChain({
-    balances: setup.balances,
+    // Native is poll target zero for a convert drop; the rest follow in order.
+    balances: [setup.native ?? 0n, ...setup.balances],
     head: 20_000n,
     transfers: (setup.transfers ?? []).map((t) => ({ token: t.token, to: drop.address, blockNumber: t.block })),
   })
@@ -256,5 +265,44 @@ describe('the pricer gate', () => {
     const other: Address = '0x2222222222222222222222222222222222222222'
     const result = await register(convertRecipe(other))
     expect(result.ok).toBe(true)
+  })
+})
+
+describe('native arrivals', () => {
+  it('are polled for, though no Transfer ever announces them', () => {
+    const hints = deriveHints(convertRecipe())
+    // The discovery that `payment` does not need: a plain xDAI send emits no log to scan for.
+    expect(hints.native).toBe(true)
+  })
+
+  it('are converted as the wrapper, with no transfer to discover them', async () => {
+    const h = harness({ balances: [0n], native: 5n * 10n ** 18n })
+
+    await h.keeper.tick()
+
+    expect(h.quote.asked).toEqual([{ sellToken: wxdai, sellAmount: 5n * 10n ** 18n }])
+    expect(h.sellTokenOf(h.prepared[0]!)).toBe(wxdai)
+    expect(h.minBuyOf(h.prepared[0]!)).toBe(convertMinimum(MARKET, 100))
+  })
+
+  it('are quoted together with any wrapped balance already held', async () => {
+    // The step wraps and then sells the total, so a quote for either half alone would misprice it.
+    const h = harness({
+      balances: [2n * 10n ** 18n],
+      native: 3n * 10n ** 18n,
+      transfers: [{ token: wxdai, block: 19_990n }],
+    })
+
+    await h.keeper.tick()
+
+    expect(h.quote.asked).toEqual([{ sellToken: wxdai, sellAmount: 5n * 10n ** 18n }])
+  })
+
+  it('are left alone when the drop holds nothing native', async () => {
+    const h = harness({ balances: [60n * 10n ** 18n], transfers: [{ token: wxdai, block: 19_990n }] })
+
+    await h.keeper.tick()
+
+    expect(h.quote.asked).toEqual([{ sellToken: wxdai, sellAmount: 60n * 10n ** 18n }])
   })
 })

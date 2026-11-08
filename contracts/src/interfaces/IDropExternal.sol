@@ -42,6 +42,17 @@ interface IWrappedNative {
     function deposit() external payable;
 }
 
+/// @dev CoW's ETH Flow, used here only as the registry of which token wraps the native currency.
+///
+///      It sits at one address on every chain CoW serves and answers with that chain's wrapper, so a
+///      step contract can resolve WETH/WXDAI/WAVAX without a chain table of its own — and therefore
+///      without bytecode that differs per chain, which would move its CREATE2 address and every drop
+///      address derived from it. The value is a constructor immutable in ETH Flow, so nobody can
+///      repoint it.
+interface IEthFlow {
+    function wrappedNativeToken() external view returns (address);
+}
+
 /// @dev Chainlink's `AggregatorV3Interface`, narrowed to what a price-reading step needs.
 interface IPriceFeedLike {
     function decimals() external view returns (uint8);

@@ -8,7 +8,7 @@ import {
 import { formatUnits, type Address } from 'viem'
 import { useCallback, useEffect, useState } from 'react'
 
-import { activateConvertDrop, postPlacedOrders, readTokenBalance } from '../lib/drop.js'
+import { activateConvertDrop, postPlacedOrders, readNativeBalance, readTokenBalance } from '../lib/drop.js'
 import { quoteConvert, type ConvertQuote } from '../lib/quote.js'
 import { keeperConvertHaircutBps } from '../lib/keeper.js'
 import { isUserRejection, switchChain, walletChainId, wrappedNative } from '../lib/chain.js'
@@ -70,6 +70,13 @@ export function ConvertPanel({
 
   const [sellToken, setSellToken] = useState<Address>(() => defaultSellToken(tokens, chainId, step?.buyToken))
   const [balance, setBalance] = useState<bigint | null>(null)
+  /**
+   * The drop's native balance, when the wrapper is what is being sold.
+   *
+   * `ConvertSteps` wraps it as part of the activation, so to this panel it is simply part of the
+   * balance — shown separately only so the number on screen can be explained.
+   */
+  const [nativeBalance, setNativeBalance] = useState<bigint>(0n)
   const [quote, setQuote] = useState<ConvertQuote | null>(null)
   const [quoteError, setQuoteError] = useState<string | null>(null)
   /**
@@ -118,7 +125,14 @@ export function ConvertPanel({
     if (!step) return
     setRefreshing(true)
     try {
-      const held = await readTokenBalance(chainId, sellToken, address)
+      // Native counts only towards the wrapper, which is the one token the step will wrap into.
+      const isWrapper = sellToken.toLowerCase() === wrappedNative(chainId).toLowerCase()
+      const [erc20, native] = await Promise.all([
+        readTokenBalance(chainId, sellToken, address),
+        isWrapper ? readNativeBalance(chainId, address) : Promise.resolve(0n),
+      ])
+      setNativeBalance(native)
+      const held = erc20 + native
       setBalance(held)
       if (held === 0n) {
         setQuote(null)
@@ -246,6 +260,12 @@ export function ConvertPanel({
       {balance !== null && (
         <p className={balance > 0n ? 'ok' : 'hint'}>
           Holding {formatUnits(balance, sellDecimals)} {sellSymbol}
+          {nativeBalance > 0n && (
+            <span className="hint">
+              {' '}
+              — including {formatUnits(nativeBalance, 18)} native, wrapped as part of the activation
+            </span>
+          )}
           {balance === 0n && ' — nothing to convert in this token.'}
         </p>
       )}

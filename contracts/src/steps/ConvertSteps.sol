@@ -6,7 +6,7 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {DropExecutor} from "../DropExecutor.sol";
-import {IERC20Like, ISettlementLike} from "../interfaces/IDropExternal.sol";
+import {IERC20Like, IEthFlow, ISettlementLike, IWrappedNative} from "../interfaces/IDropExternal.sol";
 import {Allowance} from "../lib/Allowance.sol";
 import {CowOrder} from "../lib/CowOrder.sol";
 import {NothingToSell} from "../lib/Errors.sol";
@@ -23,6 +23,9 @@ import {Orders} from "../lib/Orders.sol";
 ///      The minimum itself cannot travel in `setupData` (that would be part of the address), so it
 ///      goes through transient storage, as `PaymentSteps` passes its sell token. `DropExecutor` is
 ///      unchanged, so no drop address moves.
+///
+///      Native arrivals are wrapped here rather than by a `wrapNative` step, so the address stays the
+///      same whether what lands is the chain's own currency or a token. See `ETH_FLOW`.
 contract ConvertSteps {
     using SafeERC20 for IERC20;
 
@@ -38,6 +41,16 @@ contract ConvertSteps {
 
     /// @notice `activateConvert` was given no sell token.
     error NoSellToken();
+
+    /// @notice CoW's ETH Flow, the registry this reads the chain's wrapped native token from.
+    ///
+    /// @dev One address on every chain CoW serves, answering with that chain's own wrapper. Hardcoded
+    ///      rather than taken as a constructor argument on purpose: an argument would differ per chain,
+    ///      which changes this contract's init code, which moves its CREATE2 address — and with it
+    ///      every convert drop address, breaking the one-address-per-recipe property. A constant keeps
+    ///      the bytecode identical everywhere and costs a single staticcall, only when there is native
+    ///      to wrap.
+    address internal constant ETH_FLOW = 0xbA3cB449bD2B4ADddBc894D8697F5170800EAdeC;
 
     /// @dev Hashed with the drop, so two drops in one transaction cannot read each other's input.
     bytes32 private constant INPUT_SLOT = keccak256("cow-drop.ConvertSteps.input");
@@ -119,6 +132,23 @@ contract ConvertSteps {
             revert NotThePricer(activator, pricer);
         }
         if (minBuyAmount == 0) revert ZeroBuyAmount();
+
+        /*
+         * Native arrivals, without a step in the recipe.
+         *
+         * A drop can be funded with plain ETH/xDAI — `COWShed` has a `receive()` — but native is not an
+         * ERC20 and `balanceOf` cannot see it. Wrapping it here rather than as a `wrapNative` step keeps
+         * it out of the address preimage: one reusable address then takes native and tokens alike,
+         * instead of every convert address committing to a step that most arrivals never need.
+         *
+         * Only when the activator is selling the wrapper, so an unrelated token's sale neither pays for
+         * the lookup nor quietly converts a native balance it was not asked to touch. `SELFBALANCE` is
+         * five gas, which is what the ordinary ERC20 path pays for this.
+         */
+        if (address(this).balance > 0) {
+            address wrapped = IEthFlow(ETH_FLOW).wrappedNativeToken();
+            if (sellToken == wrapped) IWrappedNative(wrapped).deposit{value: address(this).balance}();
+        }
 
         uint256 sellAmount = IERC20Like(sellToken).balanceOf(address(this));
         if (sellAmount == 0) revert NothingToSell();

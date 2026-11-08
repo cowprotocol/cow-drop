@@ -11,12 +11,24 @@ import {ConvertSteps} from "src/steps/ConvertSteps.sol";
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
-import {MockERC20} from "../mocks/Mocks.sol";
+import {MockEthFlow, MockERC20, MockWrappedERC20} from "../mocks/Mocks.sol";
 import {StepsBase} from "./StepsBase.sol";
 
 /// @notice A reusable address whose price comes from the activator, not the recipe. With no committed
 ///         price, who may activate is the whole security story — hence the weight on the gate.
 contract ConvertStepsTest is StepsBase {
+    /// @dev CoW's ETH Flow, at the address `ConvertSteps` hardcodes. Mocked here, real on every chain.
+    address internal constant ETH_FLOW = 0xbA3cB449bD2B4ADddBc894D8697F5170800EAdeC;
+
+    MockWrappedERC20 internal weth;
+
+    function setUp() public virtual override {
+        super.setUp();
+        weth = new MockWrappedERC20();
+        // Immutables live in runtime code, so the etched copy answers with this chain's wrapper.
+        vm.etch(ETH_FLOW, address(new MockEthFlow(address(weth))).code);
+    }
+
     /// @dev `keeper` and `owner` come from the base harness; a zero `pricer` opens the drop.
     function _convertRecipe(address pricer, address receiver_) internal view returns (bytes memory) {
         return _recipe(
@@ -279,5 +291,120 @@ contract ConvertStepsTest is StepsBase {
 
         assertEq(buyToken.balanceOf(owner), 3e18, "the receiver should simply get it");
         assertEq(buyToken.balanceOf(drop), 0, "nothing should be left behind");
+    }
+}
+
+/// @notice Native arrivals, which carry no `Transfer` and no ERC20 balance.
+///
+///         The reason this is in the contract rather than in a `wrapNative` step: the step would be
+///         part of every convert address, so one reusable address could not take both native and
+///         tokens. These tests are about that property as much as about the wrapping.
+contract ConvertStepsNativeTest is ConvertStepsTest {
+    function _wethRecipe(address pricer) internal view returns (bytes memory) {
+        return _recipe(
+            "convert",
+            address(converts),
+            abi.encodeCall(ConvertSteps.presignConvert, (address(buyToken), owner, owner, pricer, 1 hours, bytes32(0)))
+        );
+    }
+
+    function test_nativeIsWrappedAndSoldWithoutAStepInTheRecipe() external {
+        bytes memory recipe = _wethRecipe(keeper);
+        address drop = executor.dropOf(owner, recipe);
+        vm.deal(drop, 4e18);
+
+        vm.prank(keeper);
+        converts.activateConvert(owner, recipe, address(weth), 900e18);
+
+        assertEq(drop.balance, 0, "native should have been wrapped");
+        assertEq(weth.balanceOf(drop), 4e18, "the drop should hold the wrapped balance");
+        assertGt(
+            settlement.preSignature(_uid(_expected(address(weth), 4e18, 900e18), drop)),
+            0,
+            "the wrapped balance should have been sold"
+        );
+    }
+
+    /// @dev The whole point: the same address takes both, because nothing about this is in the recipe.
+    function test_theAddressIsTheSameForNativeAndForTokens() external {
+        bytes memory recipe = _wethRecipe(keeper);
+        address drop = executor.dropOf(owner, recipe);
+
+        sellToken.mint(drop, 10e18);
+        vm.prank(keeper);
+        converts.activateConvert(owner, recipe, address(sellToken), 500e18);
+
+        vm.deal(drop, 1e18);
+        vm.prank(keeper);
+        converts.activateConvert(owner, recipe, address(weth), 100e18);
+
+        assertEq(executor.dropOf(owner, recipe), drop, "the address must not depend on what arrived");
+    }
+
+    function test_nativeIsAddedToAnyWrappedBalanceAlreadyHeld() external {
+        bytes memory recipe = _wethRecipe(keeper);
+        address drop = executor.dropOf(owner, recipe);
+        weth.mint(drop, 2e18);
+        vm.deal(drop, 3e18);
+
+        vm.prank(keeper);
+        converts.activateConvert(owner, recipe, address(weth), 100e18);
+
+        assertGt(
+            settlement.preSignature(_uid(_expected(address(weth), 5e18, 100e18), drop)),
+            0,
+            "the order should sell both the wrapped arrival and what was already held"
+        );
+    }
+
+    /// @dev Selling something else must not quietly convert a native balance nobody asked about.
+    function test_sellingAnotherTokenLeavesNativeAlone() external {
+        bytes memory recipe = _wethRecipe(keeper);
+        address drop = executor.dropOf(owner, recipe);
+        sellToken.mint(drop, 10e18);
+        vm.deal(drop, 3e18);
+
+        vm.prank(keeper);
+        converts.activateConvert(owner, recipe, address(sellToken), 500e18);
+
+        assertEq(drop.balance, 3e18, "native should be untouched by an unrelated sale");
+        assertEq(weth.balanceOf(drop), 0, "nothing should have been wrapped");
+    }
+
+    /// @dev A drop holding nothing but native, activated for a token: still nothing to sell.
+    function test_nativeDoesNotCountAsAnotherTokensBalance() external {
+        bytes memory recipe = _wethRecipe(keeper);
+        vm.deal(executor.dropOf(owner, recipe), 3e18);
+
+        vm.prank(keeper);
+        vm.expectRevert(NothingToSell.selector);
+        converts.activateConvert(owner, recipe, address(sellToken), 1e18);
+    }
+
+    /// @dev No native, no lookup: the ordinary path must not depend on ETH Flow existing at all.
+    function test_aTokenSaleWorksOnAChainWithoutEthFlow() external {
+        vm.etch(ETH_FLOW, "");
+        bytes memory recipe = _wethRecipe(keeper);
+        address drop = executor.dropOf(owner, recipe);
+        sellToken.mint(drop, 10e18);
+
+        vm.prank(keeper);
+        converts.activateConvert(owner, recipe, address(sellToken), 500e18);
+
+        assertGt(
+            settlement.preSignature(_uid(_expected(address(sellToken), 10e18, 500e18), drop)),
+            0,
+            "an ERC20 sale should never reach the registry"
+        );
+    }
+
+    function test_theGateStillAppliesToNative() external {
+        bytes memory recipe = _wethRecipe(keeper);
+        vm.deal(executor.dropOf(owner, recipe), 4e18);
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(ConvertSteps.NotThePricer.selector, attacker, keeper));
+        converts.activateConvert(owner, recipe, address(weth), 1);
     }
 }

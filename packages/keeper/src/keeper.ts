@@ -9,6 +9,7 @@ import {
   type DropRecipeJson,
   type EvmCall,
 } from '@cowprotocol/cow-drop-sdk'
+import { getWrappedTokenForChain, type SupportedChainId } from '@cowprotocol/cow-sdk'
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
 import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
 import type { Address } from 'viem'
@@ -349,8 +350,21 @@ export function createKeeper(options: KeeperOptions): Keeper {
     if (!convert) return undefined
     const committedByToken = drop.payment?.committed ?? {}
 
-    for (const token of tokens) {
-      const balance = balances[token] ?? 0n
+    /*
+     * Native, folded into the wrapper.
+     *
+     * `ConvertSteps` wraps the drop's native balance when the wrapper is the token being sold, so to
+     * this keeper native *is* the wrapper: it is offered as a candidate even though no `Transfer`
+     * announced it, and quoted at the combined amount, because that is the balance the order will
+     * sell once the step has wrapped.
+     */
+    const nativeBalance = balances['native'] ?? 0n
+    const wrapper = nativeBalance > 0n ? wrappedNativeOf(chainId) : undefined
+    const candidates = wrapper && !tokens.includes(wrapper) ? [wrapper, ...tokens] : tokens
+    const heldOf = (token: Address) => (balances[token] ?? 0n) + (token === wrapper ? nativeBalance : 0n)
+
+    for (const token of candidates) {
+      const balance = heldOf(token)
       if (balance === 0n) continue
 
       // Already sold at this balance and not yet settled: see `choosePayment` for why this latches
@@ -1031,4 +1045,17 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       resolve()
     }
   })
+}
+
+/**
+ * The token that wraps this chain's native currency, lowercased.
+ *
+ * Read from cow-sdk, which is the same data `ConvertSteps` reads on-chain from CoW's ETH Flow. They
+ * agree on every chain CoW serves; if they ever did not, the keeper would name a sell token the step
+ * declines to wrap and the activation would simply find nothing to sell — a missed activation, never
+ * a wrong one.
+ */
+function wrappedNativeOf(chainId: number): Address | undefined {
+  const token = getWrappedTokenForChain(chainId as SupportedChainId)
+  return token ? (token.address.toLowerCase() as Address) : undefined
 }

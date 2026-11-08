@@ -1,8 +1,8 @@
-import type { Address, Hex } from 'viem'
+import type { Address, Hex } from "viem";
 
-import { LATEST_GENERATION } from './generated/deployments.js'
-import type { DropRecipeJson, LimitPriceJson } from './recipe.js'
-import { COW_DROP_APP_DATA } from './appData.js'
+import { LATEST_GENERATION } from "./generated/deployments.js";
+import type { DropRecipeJson, LimitPriceJson } from "./recipe.js";
+import { COW_DROP_APP_DATA } from "./appData.js";
 
 /**
  * The guards every template accepts.
@@ -18,34 +18,44 @@ export interface RecipeGuards {
    * The one to reach for. Without it, anyone may activate the moment the first wei lands and the order
    * gets sized from a part-delivered balance — exactly what happens when a bridge pays out in tranches.
    */
-  minAmount?: bigint
+  minAmount?: bigint;
   /** Refuse to activate before this absolute unix timestamp. */
-  notBefore?: bigint
+  notBefore?: bigint;
   /**
    * Refuse to activate after this absolute unix timestamp.
    *
    * Gives a one-shot recipe an expiry, so a drop funded far too late fails loudly instead of trading at
    * a price nobody still wants. The owner's rescue path is what recovers it after that.
    */
-  notAfter?: bigint
+  notAfter?: bigint;
 }
 
 /** Guards that must run before anything with a side effect. */
-function timeGuards(guards: RecipeGuards): DropRecipeJson['steps'] {
-  if (guards.notBefore === undefined && guards.notAfter === undefined) return []
+function timeGuards(guards: RecipeGuards): DropRecipeJson["steps"] {
+  if (guards.notBefore === undefined && guards.notAfter === undefined)
+    return [];
   return [
     {
-      type: 'requireTimeWindow',
+      type: "requireTimeWindow",
       notBefore: guards.notBefore?.toString(),
       notAfter: guards.notAfter?.toString(),
     },
-  ]
+  ];
 }
 
 /** The balance guard, which has to come *after* any wrap so it measures the token being sold. */
-function balanceGuard(guards: RecipeGuards, sellToken: Address): DropRecipeJson['steps'] {
-  if (guards.minAmount === undefined) return []
-  return [{ type: 'requireMinBalance', token: sellToken, minAmount: guards.minAmount.toString() }]
+function balanceGuard(
+  guards: RecipeGuards,
+  sellToken: Address,
+): DropRecipeJson["steps"] {
+  if (guards.minAmount === undefined) return [];
+  return [
+    {
+      type: "requireMinBalance",
+      token: sellToken,
+      minAmount: guards.minAmount.toString(),
+    },
+  ];
 }
 
 /**
@@ -56,12 +66,12 @@ function balanceGuard(guards: RecipeGuards, sellToken: Address): DropRecipeJson[
  */
 
 export interface SwapOnArrivalParams extends RecipeGuards {
-  chainId: number
-  owner: Address
+  chainId: number;
+  owner: Address;
   /** Optional user salt, to get more than one drop from the same parameters. */
-  salt?: Hex
-  sellToken: Address
-  buyToken: Address
+  salt?: Hex;
+  sellToken: Address;
+  buyToken: Address;
   /**
    * Where the bought tokens go. **Defaults to the owner**, which is almost always what you want:
    * otherwise the proceeds sit in the drop and need a second transaction to get out.
@@ -73,17 +83,17 @@ export interface SwapOnArrivalParams extends RecipeGuards {
    * Note this cannot default to the drop's own address: that address is derived from these very
    * parameters, so naming it here would be circular. The sentinel exists for exactly that reason.
    */
-  receiver?: Address
-  limitPrice: LimitPriceJson
+  receiver?: Address;
+  limitPrice: LimitPriceJson;
   /** Order lifetime once activated. Defaults to 30 minutes. */
-  validitySeconds?: number
-  label?: string
-  appData?: Hex
+  validitySeconds?: number;
+  label?: string;
+  appData?: Hex;
   /**
    * Wrap the drop's native balance first, for a drop funded with ETH/xDAI rather than a token.
    * Pass the wrapped-native address of the chain.
    */
-  wrapNative?: Address
+  wrapNative?: Address;
   /**
    * Improve the limit with an oracle read at activation, instead of using `limitPrice` as-is.
    *
@@ -92,14 +102,14 @@ export interface SwapOnArrivalParams extends RecipeGuards {
    * and the floor is what stops them picking a bad one.
    */
   oracle?: {
-    sellTokenPriceOracle: Address
+    sellTokenPriceOracle: Address;
     /** Must quote the same currency as the sell-token feed. */
-    buyTokenPriceOracle: Address
+    buyTokenPriceOracle: Address;
     /** How stale either feed may be. Defaults to an hour. */
-    maxAge?: number
+    maxAge?: number;
     /** How far below the oracle's number to set the limit, in basis points. Defaults to 50 (0.5%). */
-    haircutBps?: number
-  }
+    haircutBps?: number;
+  };
 }
 
 /**
@@ -110,20 +120,20 @@ export interface SwapOnArrivalParams extends RecipeGuards {
  * address keeps working for later arrivals.
  */
 export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
-  const steps: DropRecipeJson['steps'] = []
+  const steps: DropRecipeJson["steps"] = [];
 
-  steps.push(...timeGuards(params))
+  steps.push(...timeGuards(params));
 
   if (params.wrapNative) {
-    steps.push({ type: 'wrapNative', wrappedNative: params.wrapNative })
+    steps.push({ type: "wrapNative", wrappedNative: params.wrapNative });
   }
 
-  steps.push(...balanceGuard(params, params.sellToken))
+  steps.push(...balanceGuard(params, params.sellToken));
 
   steps.push(
     params.oracle
       ? {
-          type: 'presignSellAllAtOracle',
+          type: "presignSellAllAtOracle",
           sellToken: params.sellToken,
           buyToken: params.buyToken,
           receiver: params.receiver ?? params.owner,
@@ -139,7 +149,7 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
           appData: params.appData ?? COW_DROP_APP_DATA,
         }
       : {
-          type: 'presignSellAll',
+          type: "presignSellAll",
           sellToken: params.sellToken,
           buyToken: params.buyToken,
           receiver: params.receiver ?? params.owner,
@@ -147,50 +157,52 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
           validitySeconds: params.validitySeconds ?? 30 * 60,
           appData: params.appData ?? COW_DROP_APP_DATA,
         },
-  )
+  );
 
   return {
     version: 1,
     generation: LATEST_GENERATION,
-    label: params.label ?? (params.oracle ? 'swap on arrival at oracle' : 'swap on arrival'),
+    label:
+      params.label ??
+      (params.oracle ? "swap on arrival at oracle" : "swap on arrival"),
     chainId: params.chainId,
     owner: params.owner,
     salt: params.salt,
     once: false,
     steps,
-  }
+  };
 }
 
 export interface StopLossOnArrivalParams extends RecipeGuards {
-  chainId: number
-  owner: Address
-  sellToken: Address
-  buyToken: Address
+  chainId: number;
+  owner: Address;
+  sellToken: Address;
+  buyToken: Address;
   /** Where the bought tokens go. Defaults to the owner — see `SwapOnArrivalParams.receiver`. */
-  receiver?: Address
-  salt?: Hex
+  receiver?: Address;
+  salt?: Hex;
   /**
    * The minimum output, applied to whatever arrived. Distinct from `strike`: the strike decides *when*
    * to sell, this decides how bad a fill is refused. A stop-loss without a sane limit is a market order
    * into whatever liquidity happens to exist at the worst moment.
    */
-  limitPrice: LimitPriceJson
+  limitPrice: LimitPriceJson;
   /** How long the order stays live once activated. Measured from activation, not from authoring. */
-  validitySeconds: number
-  sellTokenPriceOracle: Address
+  validitySeconds: number;
+  sellTokenPriceOracle: Address;
   /** Must quote the same currency as the sell-token feed. */
-  buyTokenPriceOracle: Address
+  buyTokenPriceOracle: Address;
   /**
    * Fires when `sellTokenPrice / buyTokenPrice <= strike`, scaled to 18 decimals. "Sell my WXDAI if it
    * drops below 1.8 COW" is `1800000000000000000n`.
    */
-  strike: bigint
+  strike: bigint;
   /** How stale either feed may be. Defaults to an hour. */
-  maxTimeSinceLastOracleUpdate?: number
-  partiallyFillable?: boolean
-  label?: string
-  appData?: Hex
-  wrapNative?: Address
+  maxTimeSinceLastOracleUpdate?: number;
+  partiallyFillable?: boolean;
+  label?: string;
+  appData?: Hex;
+  wrapNative?: Address;
 }
 
 /**
@@ -202,19 +214,21 @@ export interface StopLossOnArrivalParams extends RecipeGuards {
  *
  * `once` is true: re-running would register a second overlapping stop-loss over the remaining balance.
  */
-export function stopLossOnArrival(params: StopLossOnArrivalParams): DropRecipeJson {
-  const steps: DropRecipeJson['steps'] = []
+export function stopLossOnArrival(
+  params: StopLossOnArrivalParams,
+): DropRecipeJson {
+  const steps: DropRecipeJson["steps"] = [];
 
-  steps.push(...timeGuards(params))
+  steps.push(...timeGuards(params));
 
   if (params.wrapNative) {
-    steps.push({ type: 'wrapNative', wrappedNative: params.wrapNative })
+    steps.push({ type: "wrapNative", wrappedNative: params.wrapNative });
   }
 
-  steps.push(...balanceGuard(params, params.sellToken))
+  steps.push(...balanceGuard(params, params.sellToken));
 
   steps.push({
-    type: 'stopLossFromBalance',
+    type: "stopLossFromBalance",
     sellToken: params.sellToken,
     buyToken: params.buyToken,
     receiver: params.receiver ?? params.owner,
@@ -228,38 +242,38 @@ export function stopLossOnArrival(params: StopLossOnArrivalParams): DropRecipeJs
     },
     partiallyFillable: params.partiallyFillable,
     appData: params.appData ?? COW_DROP_APP_DATA,
-  })
+  });
 
   return {
     version: 1,
     generation: LATEST_GENERATION,
-    label: params.label ?? 'stop-loss on arrival',
+    label: params.label ?? "stop-loss on arrival",
     chainId: params.chainId,
     owner: params.owner,
     salt: params.salt,
     once: true,
     steps,
-  }
+  };
 }
 
 export interface TwapOnArrivalParams extends RecipeGuards {
-  chainId: number
-  owner: Address
-  sellToken: Address
-  buyToken: Address
+  chainId: number;
+  owner: Address;
+  sellToken: Address;
+  buyToken: Address;
   /** Where the bought tokens go. Defaults to the owner — see `SwapOnArrivalParams.receiver`. */
-  receiver?: Address
+  receiver?: Address;
   /** Number of parts to split the arrived balance into. */
-  parts: number
+  parts: number;
   /** Seconds between parts. */
-  partDuration: number
+  partDuration: number;
   /** Optional user salt, to get more than one drop from the same parameters. */
-  salt?: Hex
-  span?: number
-  limitPrice: LimitPriceJson
-  label?: string
-  appData?: Hex
-  wrapNative?: Address
+  salt?: Hex;
+  span?: number;
+  limitPrice: LimitPriceJson;
+  label?: string;
+  appData?: Hex;
+  wrapNative?: Address;
   /**
    * Refuse to activate until this much has arrived, in atomic units.
    *
@@ -282,7 +296,7 @@ export interface TwapOnArrivalParams extends RecipeGuards {
    * Setting this changes the drop address, because it adds a step. A recipe written without it keeps
    * resolving exactly where it did.
    */
-  reusableAfter?: number | true
+  reusableAfter?: number | true;
 }
 
 /**
@@ -297,10 +311,11 @@ export interface TwapOnArrivalParams extends RecipeGuards {
  * while still only ever holding one live schedule.
  */
 export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
-  const steps: DropRecipeJson['steps'] = []
+  const steps: DropRecipeJson["steps"] = [];
 
-  const schedule = params.parts * params.partDuration
-  const cooldownSeconds = params.reusableAfter === true ? schedule : params.reusableAfter
+  const schedule = params.parts * params.partDuration;
+  const cooldownSeconds =
+    params.reusableAfter === true ? schedule : params.reusableAfter;
   if (cooldownSeconds !== undefined) {
     // Shorter than the schedule and the two TWAPs overlap, which is the thing the cooldown exists to
     // prevent. Hand-build the recipe if overlap is genuinely wanted.
@@ -309,36 +324,36 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
         `reusableAfter is ${cooldownSeconds}s but the schedule runs for ${schedule}s ` +
           `(${params.parts} x ${params.partDuration}s): the next activation would register a second ` +
           `TWAP while the first is still live. Use at least ${schedule}, or true for exactly that.`,
-      )
+      );
     }
     // Activation is permissionless and the claim is what paces it, so without a floor anyone can
     // re-activate on dust the moment the window opens and push the next real one out by a full
     // cooldown. The balance guard runs first and reverts, which rolls the claim back with it.
     if (params.minAmount === undefined) {
       throw new Error(
-        'a reusable TWAP needs minAmount: without it anyone can re-activate on dust the moment the ' +
-          'cooldown expires and push the next activation out by another full cooldown.',
-      )
+        "a reusable TWAP needs minAmount: without it anyone can re-activate on dust the moment the " +
+          "cooldown expires and push the next activation out by another full cooldown.",
+      );
     }
   }
 
   // Guards go first, before anything has side effects.
-  steps.push(...timeGuards(params))
+  steps.push(...timeGuards(params));
 
   if (params.wrapNative) {
-    steps.push({ type: 'wrapNative', wrappedNative: params.wrapNative })
+    steps.push({ type: "wrapNative", wrappedNative: params.wrapNative });
   }
 
   // After wrapping, so a native-funded drop is measured in the token it will actually sell.
-  steps.push(...balanceGuard(params, params.sellToken))
+  steps.push(...balanceGuard(params, params.sellToken));
 
   // After the balance guard, so a dust activation reverts before it can claim the window.
   if (cooldownSeconds !== undefined) {
-    steps.push({ type: 'claimCooldown', cooldownSeconds })
+    steps.push({ type: "claimCooldown", cooldownSeconds });
   }
 
   steps.push({
-    type: 'twapFromBalance',
+    type: "twapFromBalance",
     sellToken: params.sellToken,
     buyToken: params.buyToken,
     receiver: params.receiver ?? params.owner,
@@ -347,7 +362,7 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
     span: params.span,
     limitPrice: params.limitPrice,
     appData: params.appData ?? COW_DROP_APP_DATA,
-  })
+  });
 
   return {
     version: 1,
@@ -360,33 +375,36 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
     // single run regardless, leaving the cooldown gating nothing. `compileRecipe` refuses the pair.
     once: cooldownSeconds === undefined,
     steps,
-  }
+  };
 }
 
-export interface PaymentRequestParams extends Omit<RecipeGuards, 'minAmount'> {
-  chainId: number
-  owner: Address
+export interface PaymentRequestParams extends Omit<RecipeGuards, "minAmount"> {
+  chainId: number;
+  owner: Address;
   /** The token the receiver is paid in. */
-  buyToken: Address
+  buyToken: Address;
   /** The price, in `buyToken` atoms: the least the receiver gets per payment. */
-  buyAmount: bigint
+  buyAmount: bigint;
   /** Who is paid. Defaults to the owner. */
-  receiver?: Address
+  receiver?: Address;
   /** Lifetime of each payment's order, from its activation. Defaults to 30 minutes. */
-  validitySeconds?: number
-  appData?: Hex
-  label?: string
-  salt?: Hex
+  validitySeconds?: number;
+  appData?: Hex;
+  label?: string;
+  salt?: Hex;
 }
 
-export interface ConvertOnArrivalParams extends Omit<RecipeGuards, 'minAmount'> {
-  chainId: number
-  owner: Address
-  salt?: Hex
+export interface ConvertOnArrivalParams extends Omit<
+  RecipeGuards,
+  "minAmount"
+> {
+  chainId: number;
+  owner: Address;
+  salt?: Hex;
   /** The token everything is converted into. */
-  buyToken: Address
+  buyToken: Address;
   /** Who receives it. Defaults to the owner. */
-  receiver?: Address
+  receiver?: Address;
   /**
    * The only address allowed to activate, or zero for anyone.
    *
@@ -394,11 +412,11 @@ export interface ConvertOnArrivalParams extends Omit<RecipeGuards, 'minAmount'> 
    * is what stops a stranger naming one atom. Zero is a deliberate opt-out that leaves the price to
    * CoW's solver competition.
    */
-  pricer?: Address
+  pricer?: Address;
   /** Order lifetime from activation. Defaults to 30 minutes. */
-  validitySeconds?: number
-  label?: string
-  appData?: Hex
+  validitySeconds?: number;
+  label?: string;
+  appData?: Hex;
 }
 
 /**
@@ -412,11 +430,13 @@ export interface ConvertOnArrivalParams extends Omit<RecipeGuards, 'minAmount'> 
  * Reusable, and with no balance guard: the sell token is unknown until activation, so there is
  * nothing to measure.
  */
-export function convertOnArrival(params: ConvertOnArrivalParams): DropRecipeJson {
+export function convertOnArrival(
+  params: ConvertOnArrivalParams,
+): DropRecipeJson {
   return {
     version: 1,
     generation: LATEST_GENERATION,
-    label: params.label ?? 'convert on arrival',
+    label: params.label ?? "convert on arrival",
     chainId: params.chainId,
     owner: params.owner,
     salt: params.salt,
@@ -425,15 +445,15 @@ export function convertOnArrival(params: ConvertOnArrivalParams): DropRecipeJson
     steps: [
       ...timeGuards(params),
       {
-        type: 'convert',
+        type: "convert",
         buyToken: params.buyToken,
         receiver: params.receiver ?? params.owner,
-        pricer: params.pricer ?? '0x0000000000000000000000000000000000000000',
+        pricer: params.pricer ?? "0x0000000000000000000000000000000000000000",
         validitySeconds: params.validitySeconds ?? 30 * 60,
         appData: params.appData ?? COW_DROP_APP_DATA,
       },
     ],
-  }
+  };
 }
 
 /**
@@ -452,7 +472,7 @@ export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
   return {
     version: 1,
     generation: LATEST_GENERATION,
-    label: params.label ?? 'payment request',
+    label: params.label ?? "payment request",
     chainId: params.chainId,
     owner: params.owner,
     salt: params.salt,
@@ -460,7 +480,7 @@ export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
     steps: [
       ...timeGuards(params),
       {
-        type: 'payment',
+        type: "payment",
         buyToken: params.buyToken,
         buyAmount: params.buyAmount.toString(),
         receiver: params.receiver ?? params.owner,
@@ -468,5 +488,5 @@ export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
         appData: params.appData ?? COW_DROP_APP_DATA,
       },
     ],
-  }
+  };
 }

@@ -292,6 +292,18 @@ export async function sendPayment(params: {
 }
 
 /** One ERC20 balance of an address. A token that does not answer reads as zero. */
+/**
+ * The native balance of an address.
+ *
+ * Its own read because native is not an ERC20 and `balanceOf` cannot see it — which is exactly why a
+ * natively-funded drop looked empty before `ConvertSteps` learned to wrap.
+ */
+export async function readNativeBalance(chainId: number, holder: Address): Promise<bigint> {
+  return getPublicClient(chainId)
+    .getBalance({ address: holder })
+    .catch(() => 0n)
+}
+
 export async function readTokenBalance(chainId: number, token: Address, holder: Address): Promise<bigint> {
   return getPublicClient(chainId)
     .readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [holder] })
