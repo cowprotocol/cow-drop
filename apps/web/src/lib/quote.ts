@@ -1,4 +1,9 @@
-import { PAYMENT_SLIPPAGE_BPS, requiredPayment } from '@cowprotocol/cow-drop-sdk'
+import {
+  CONVERT_HAIRCUT_BPS,
+  convertMinimum,
+  PAYMENT_SLIPPAGE_BPS,
+  requiredPayment,
+} from '@cowprotocol/cow-drop-sdk'
 import {
   OrderQuoteSideKindBuy,
   OrderQuoteSideKindSell,
@@ -128,6 +133,83 @@ export async function quotePayment(params: {
   return {
     send: requiredPayment(amounts, PAYMENT_SLIPPAGE_BPS),
     atMarket: requiredPayment(amounts, 0),
+    quotedAt,
+    // An expiry already past (clock skew) or unreadable falls back rather than re-quoting in a loop.
+    expiresAt: Number.isFinite(expires) && expires > quotedAt ? expires : quotedAt + FALLBACK_QUOTE_LIFETIME_MS,
+  }
+}
+
+/** What a convert activation would place, from a sell quote for the drop's whole balance. */
+export interface ConvertQuote {
+  /** The balance the quote was taken for, which is the order's sell amount. */
+  sellAmount: bigint
+  /** What the market pays for it right now. */
+  atMarket: bigint
+  /** The order's minimum: `atMarket` less the haircut. What actually gets committed. */
+  minimum: bigint
+  quotedAt: number
+  /** When the order book stops standing behind this, in ms. `null` when no trade is involved. */
+  expiresAt: number | null
+}
+
+/**
+ * What a convert drop would sell its balance for, as the order it is about to place.
+ *
+ * The mirror of `quotePayment`, and deliberately the same shape: a convert recipe commits no price,
+ * so the number that protects it has to come from a live quote rather than from the recipe. Quoted as
+ * the drop, pre-signed, paying `receiver` — exactly the order `activateConvert` will place, so the
+ * fee in the quote is the fee that order pays.
+ *
+ * The amount is the balance rather than a reference, because here the balance is known: whatever has
+ * arrived is what gets sold.
+ */
+export async function quoteConvert(params: {
+  sellToken: Address
+  buyToken: Address
+  /** The drop's balance of `sellToken`. */
+  sellAmount: bigint
+  drop: Address
+  receiver: Address
+  chainId: number
+  haircutBps?: number
+}): Promise<ConvertQuote> {
+  const haircutBps = params.haircutBps ?? CONVERT_HAIRCUT_BPS
+
+  if (params.sellToken.toLowerCase() === params.buyToken.toLowerCase()) {
+    // Already in the buy token: the step forwards it untraded, so there is no price and nothing to expire.
+    return {
+      sellAmount: params.sellAmount,
+      atMarket: params.sellAmount,
+      minimum: params.sellAmount,
+      quotedAt: Date.now(),
+      expiresAt: null,
+    }
+  }
+
+  const request: OrderQuoteRequest = {
+    sellToken: params.sellToken,
+    buyToken: params.buyToken,
+    from: params.drop,
+    receiver: params.receiver,
+    kind: OrderQuoteSideKindSell.SELL,
+    sellAmountBeforeFee: params.sellAmount.toString(),
+    validFor: 30 * 60,
+    signingScheme: SigningScheme.PRESIGN,
+  }
+
+  const { quote, expiration } = await getOrderBookApi(params.chainId)
+    .getQuote(request)
+    .catch((cause: unknown) => {
+      throw new Error(describeOrderBookError(cause), { cause })
+    })
+
+  const atMarket = BigInt(quote.buyAmount)
+  const quotedAt = Date.now()
+  const expires = Date.parse(expiration)
+  return {
+    sellAmount: params.sellAmount,
+    atMarket,
+    minimum: convertMinimum(atMarket, haircutBps),
     quotedAt,
     // An expiry already past (clock skew) or unreadable falls back rather than re-quoting in a loop.
     expiresAt: Number.isFinite(expires) && expires > quotedAt ? expires : quotedAt + FALLBACK_QUOTE_LIFETIME_MS,

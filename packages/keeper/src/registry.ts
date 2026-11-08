@@ -4,6 +4,9 @@ import type { Address, Hex } from 'viem'
 import { feeFor, isProblem, matchDocuments } from './appData.js'
 import { deriveHints, HINTS_VERSION, selfDriving, tradesOf } from './hints.js'
 import { DropConflict, type DropStore } from './store.js'
+
+/** "Anyone may activate", as the convert step reads it. */
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 import type { RegisteredDrop } from './types.js'
 
 /** Why a registration was refused, in the shape the HTTP layer maps to a status code. */
@@ -18,6 +21,7 @@ export type RegistrationError =
   | { error: 'app-data-mismatch'; supplied: Hex; committed: Hex[] }
   /** `paying` mode, and the recipe promises this keeper nothing it can count on. */
   | { error: 'no-fee'; recipient: Address; detail: string }
+  | { error: 'cannot-price'; pricer: Address; keeper: Address }
 
 export type RegistrationResult =
   | { ok: true; created: boolean; drop: RegisteredDrop }
@@ -46,6 +50,13 @@ export interface RegisterInput {
   now: number
   /** `paying` mode: a drop must promise this address a volume fee, or it is refused. */
   requireFeeFor?: Address
+  /**
+   * The keeper's own payer, so a convert drop can be checked against the pricer it commits to.
+   *
+   * Optional, since a keeper that cannot name itself simply skips the check and lets the simulation
+   * refuse the drop later — later, but never wrongly.
+   */
+  keeper?: Address
   minFeeBps?: number
 }
 
@@ -179,6 +190,18 @@ export async function registerDrop(input: RegisterInput): Promise<RegistrationRe
     return { ok: false, error: 'at-capacity', maxDrops }
   }
 
+  /*
+   * A convert drop names who may price it, and that is checked here rather than left to the first
+   * simulation: `activateConvert` reverts with `NotThePricer` for anyone else, so a drop pricing
+   * someone else is one this keeper can never activate. Saying so at registration is the difference
+   * between a clear refusal and a drop that sits watched and never runs.
+   */
+  const hints = deriveHints(recipe)
+  const pricer = hints.convert?.pricer
+  if (pricer && pricer !== ZERO_ADDRESS && input.keeper && pricer !== input.keeper.toLowerCase()) {
+    return { ok: false, error: 'cannot-price', pricer: pricer as Address, keeper: input.keeper }
+  }
+
   const trades = tradesOf(recipe)
   const { matched, unmatched } = matchDocuments(
     trades.map((trade) => trade.appData),
@@ -223,7 +246,7 @@ export async function registerDrop(input: RegisterInput): Promise<RegistrationRe
     recipe,
     setupData: compiled.setupData,
     status: 'watching',
-    hints: deriveHints(recipe),
+    hints,
     hintsVersion: HINTS_VERSION,
     registeredAt: now,
     updatedAt: now,

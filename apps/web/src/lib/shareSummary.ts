@@ -109,11 +109,15 @@ const ACTION_TYPES = new Set([
 
 const isAction = (step: DropStepJson): step is ActionStep => ACTION_TYPES.has(step.type)
 
+/** "Anyone may activate", as the convert step reads it. */
+const ZERO = '0x0000000000000000000000000000000000000000'
+
 /** What each step type is called in a sentence, for the steps we do not give a bespoke row. */
 const STEP_LABELS: Record<string, string> = {
   requireCallResult: 'checks a value on another contract',
   requireMinBalance: 'waits for a minimum balance',
   requireTimeWindow: 'only runs inside a time window',
+  claimCooldown: 'waits out a cooldown between runs',
   wrapNative: 'wraps the native token',
   approveMax: 'approves a spender',
   approveBalance: 'approves what arrived',
@@ -144,6 +148,9 @@ export function summariseRecipe(
   const payment = recipe.steps.find(
     (step): step is Extract<DropStepJson, { type: 'payment' }> => step.type === 'payment',
   )
+  const convert = recipe.steps.find(
+    (step): step is Extract<DropStepJson, { type: 'convert' }> => step.type === 'convert',
+  )
   const minBalance = recipe.steps.find((step) => step.type === 'requireMinBalance')
   const timeWindow = recipe.steps.find((step) => step.type === 'requireTimeWindow')
 
@@ -166,6 +173,36 @@ export function summariseRecipe(
         { label: 'Network', value: chainLabel(recipe.chainId) },
       ],
       notes: [],
+    }
+  } else if (convert) {
+    const buy = token(convert.buyToken, symbolOf)
+    const pricer = convert.pricer && convert.pricer !== ZERO ? convert.pricer : null
+    const receiver = convert.receiver
+    const toOwner = !receiver || receiver.toLowerCase() === recipe.owner.toLowerCase()
+
+    headline = `Send any token here and it is sold for ${buy.name}.`
+    rows.push({ label: 'Send it', value: 'Any token', hint: 'whatever arrives is what gets sold' })
+    rows.push({ label: 'It buys', value: buy.name, hint: buy.hint })
+    rows.push({
+      label: 'How',
+      value: 'One swap, priced at activation',
+      hint: `no price is committed here; the order is valid for ${formatDuration(asNumber(convert.validitySeconds))} once placed`,
+    })
+    rows.push({
+      label: 'Priced by',
+      value: pricer ? short(pricer) : 'Anyone',
+      hint: pricer ?? 'nobody is named, so any activator names the minimum',
+    })
+    rows.push({
+      label: 'Proceeds to',
+      value: toOwner ? 'The owner' : short(receiver!),
+      hint: toOwner ? recipe.owner : receiver,
+    })
+
+    if (!pricer) {
+      notes.push(
+        'No pricer is committed, so whoever activates this drop also names the least it will accept — down to one atom. Only CoW\u2019s solver competition stands between that and a bad fill.',
+      )
     }
   } else if (action) {
     const sell = token(action.sellToken, symbolOf)

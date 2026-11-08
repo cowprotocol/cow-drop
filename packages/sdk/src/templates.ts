@@ -263,11 +263,26 @@ export interface TwapOnArrivalParams extends RecipeGuards {
   /**
    * Refuse to activate until this much has arrived, in atomic units.
    *
-   * Strongly recommended here. This recipe is one-shot, so without a floor anyone may activate it
-   * the moment the first wei lands and the whole schedule gets sized from a part-delivered balance —
-   * which is exactly what happens if a bridge pays out in tranches. The guard reverts, so an early
-   * activation is a no-op rather than a spent run.
+   * Strongly recommended here. This recipe is one-shot by default, so without a floor anyone may
+   * activate it the moment the first wei lands and the whole schedule gets sized from a
+   * part-delivered balance — which is exactly what happens if a bridge pays out in tranches. The
+   * guard reverts, so an early activation is a no-op rather than a spent run.
+   *
+   * Required when `reusableAfter` is set, where it stops a third party re-activating on dust.
    */
+  /**
+   * Make the address reusable, with a cooldown between activations. Omit it for the one-shot
+   * default.
+   *
+   * `true` is the setting to want: a cooldown of `parts * partDuration`, the schedule's own length.
+   * By the time the window reopens the previous TWAP has run out of parts, so the drop takes the
+   * next arrival without ever holding two live schedules over one balance. A number sets the
+   * cooldown in seconds, and cannot be shorter than the schedule.
+   *
+   * Setting this changes the drop address, because it adds a step. A recipe written without it keeps
+   * resolving exactly where it did.
+   */
+  reusableAfter?: number | true
 }
 
 /**
@@ -276,11 +291,36 @@ export interface TwapOnArrivalParams extends RecipeGuards {
  * Uses the composable path, so after a single activation the drop is self-driving — the watch tower
  * posts each part as it becomes tradeable, with nobody signing anything.
  *
- * `once` is true here: re-running would register a *second* overlapping TWAP against the remaining
- * balance, which is almost never what someone means.
+ * `once` is true by default: re-running would register a *second* overlapping TWAP against the
+ * remaining balance, which is almost never what someone means. `reusableAfter` is the other way to
+ * avoid that — a cooldown instead of a single run, so the address keeps working for the next arrival
+ * while still only ever holding one live schedule.
  */
 export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
   const steps: DropRecipeJson['steps'] = []
+
+  const schedule = params.parts * params.partDuration
+  const cooldownSeconds = params.reusableAfter === true ? schedule : params.reusableAfter
+  if (cooldownSeconds !== undefined) {
+    // Shorter than the schedule and the two TWAPs overlap, which is the thing the cooldown exists to
+    // prevent. Hand-build the recipe if overlap is genuinely wanted.
+    if (cooldownSeconds < schedule) {
+      throw new Error(
+        `reusableAfter is ${cooldownSeconds}s but the schedule runs for ${schedule}s ` +
+          `(${params.parts} x ${params.partDuration}s): the next activation would register a second ` +
+          `TWAP while the first is still live. Use at least ${schedule}, or true for exactly that.`,
+      )
+    }
+    // Activation is permissionless and the claim is what paces it, so without a floor anyone can
+    // re-activate on dust the moment the window opens and push the next real one out by a full
+    // cooldown. The balance guard runs first and reverts, which rolls the claim back with it.
+    if (params.minAmount === undefined) {
+      throw new Error(
+        'a reusable TWAP needs minAmount: without it anyone can re-activate on dust the moment the ' +
+          'cooldown expires and push the next activation out by another full cooldown.',
+      )
+    }
+  }
 
   // Guards go first, before anything has side effects.
   steps.push(...timeGuards(params))
@@ -291,6 +331,11 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
 
   // After wrapping, so a native-funded drop is measured in the token it will actually sell.
   steps.push(...balanceGuard(params, params.sellToken))
+
+  // After the balance guard, so a dust activation reverts before it can claim the window.
+  if (cooldownSeconds !== undefined) {
+    steps.push({ type: 'claimCooldown', cooldownSeconds })
+  }
 
   steps.push({
     type: 'twapFromBalance',
@@ -311,7 +356,9 @@ export function twapOnArrival(params: TwapOnArrivalParams): DropRecipeJson {
     chainId: params.chainId,
     owner: params.owner,
     salt: params.salt,
-    once: true,
+    // A cooldown replaces `once` rather than joining it: `once` is checked first and would spend the
+    // single run regardless, leaving the cooldown gating nothing. `compileRecipe` refuses the pair.
+    once: cooldownSeconds === undefined,
     steps,
   }
 }
@@ -332,19 +379,7 @@ export interface PaymentRequestParams extends Omit<RecipeGuards, 'minAmount'> {
   salt?: Hex
 }
 
-/**
- * "Pay me `buyAmount` of `buyToken`, in any token": a reusable address a payer funds with whatever they
- * hold.
- *
- * The recipe names no sell token. Whoever activates names it — `buildActivatePaymentTx` — and the drop
- * sells its whole balance of that token for at least `buyAmount`, paid to the receiver. A payer is told
- * how much to send by a buy quote for `buyAmount` (see `requiredPayment`); any surplus over the price is
- * the receiver's, because the order is a sell.
- *
- * Reusable rather than one-shot, so the same address can take one payment after another. No minimum
- * balance guard: the sell token is unknown, so there is nothing to measure — the price is the guard.
- */
-export interface ConvertOnArrivalParams extends RecipeGuards {
+export interface ConvertOnArrivalParams extends Omit<RecipeGuards, 'minAmount'> {
   chainId: number
   owner: Address
   salt?: Hex
@@ -366,7 +401,17 @@ export interface ConvertOnArrivalParams extends RecipeGuards {
   appData?: Hex
 }
 
-/** A reusable address that sells whatever arrives into one token, priced at activation. */
+/**
+ * "Whatever lands here, sell it for `buyToken`": a reusable address priced fresh at each activation.
+ *
+ * Like `paymentRequest` it names no sell token, but it commits no price either — the activator names
+ * the order's minimum (`buildActivateConvertTx`). That is what `pricer` guards: only it or the owner
+ * may activate, because `setupData` is public and a stranger would otherwise name one atom. A zero
+ * `pricer` opts out and leaves the price to CoW's solver competition alone.
+ *
+ * Reusable, and with no balance guard: the sell token is unknown until activation, so there is
+ * nothing to measure.
+ */
 export function convertOnArrival(params: ConvertOnArrivalParams): DropRecipeJson {
   return {
     version: 1,
@@ -391,6 +436,18 @@ export function convertOnArrival(params: ConvertOnArrivalParams): DropRecipeJson
   }
 }
 
+/**
+ * "Pay me `buyAmount` of `buyToken`, in any token": a reusable address a payer funds with whatever they
+ * hold.
+ *
+ * The recipe names no sell token. Whoever activates names it — `buildActivatePaymentTx` — and the drop
+ * sells its whole balance of that token for at least `buyAmount`, paid to the receiver. A payer is told
+ * how much to send by a buy quote for `buyAmount` (see `requiredPayment`); any surplus over the price is
+ * the receiver's, because the order is a sell.
+ *
+ * Reusable rather than one-shot, so the same address can take one payment after another. No minimum
+ * balance guard: the sell token is unknown, so there is nothing to measure — the price is the guard.
+ */
 export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
   return {
     version: 1,

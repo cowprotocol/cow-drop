@@ -5,6 +5,8 @@ import {
   STOP_LOSS_STEPS_ABI,
   TWAP_STEPS_ABI,
   GUARD_STEPS_ABI,
+  CONVERT_STEPS_ABI,
+  COOLDOWN_STEPS_ABI,
   PAYMENT_STEPS_ABI,
   PRESIGN_STEPS_ABI,
   TOKEN_STEPS_ABI,
@@ -25,6 +27,8 @@ export type StepContractName =
   | 'TwapSteps'
   | 'StopLossSteps'
   | 'PaymentSteps'
+  | 'ConvertSteps'
+  | 'CooldownSteps'
 
 /** One decoded argument, with the name the contract gives it. */
 export interface DescribedArg {
@@ -66,6 +70,8 @@ const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   TwapSteps: TWAP_STEPS_ABI as unknown as Abi,
   StopLossSteps: STOP_LOSS_STEPS_ABI as unknown as Abi,
   PaymentSteps: PAYMENT_STEPS_ABI as unknown as Abi,
+  ConvertSteps: CONVERT_STEPS_ABI as unknown as Abi,
+  CooldownSteps: COOLDOWN_STEPS_ABI as unknown as Abi,
 }
 
 /**
@@ -112,6 +118,8 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
     [deployment.stopLossSteps.toLowerCase(), 'StopLossSteps'],
     // Absent from generations that predate it; a step naming it there decodes as unknown, correctly.
     ...(deployment.paymentSteps ? [[deployment.paymentSteps.toLowerCase(), 'PaymentSteps'] as const] : []),
+    ...(deployment.convertSteps ? [[deployment.convertSteps.toLowerCase(), 'ConvertSteps'] as const] : []),
+    ...(deployment.cooldownSteps ? [[deployment.cooldownSteps.toLowerCase(), 'CooldownSteps'] as const] : []),
   ])
 
   /** Each call named where the SDK recognises it, and flagged where it does not. */

@@ -593,6 +593,8 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
       // payer, so an operator does not have to keep two addresses in step.
       requireFeeFor: policy.mode === 'paying' ? (policy.feeRecipient ?? (await submitter.payer())) : undefined,
       minFeeBps: policy.minFeeBps,
+      // So a convert drop that names a different pricer is refused now, not left watched forever.
+      keeper: await submitter.payer(),
     })
 
     if (result.ok) {
@@ -834,6 +836,9 @@ function statusFor(error: string): number {
     // Not 403: nothing is forbidden, the terms were simply not met. 402 says exactly that.
     case 'no-fee':
       return 402
+    // The recipe names someone else as its pricer, so this keeper could never activate it.
+    case 'cannot-price':
+      return 422
     case 'at-capacity':
       return 429
     // 401, not 403: a fresh signature is exactly what would make it work.

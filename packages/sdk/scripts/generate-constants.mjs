@@ -47,6 +47,7 @@ const twap = artifact('TwapSteps.sol/TwapSteps.json')
 const stopLoss = artifact('StopLossSteps.sol/StopLossSteps.json')
 const payment = artifact('PaymentSteps.sol/PaymentSteps.json')
 const convert = artifact('ConvertSteps.sol/ConvertSteps.json')
+const cooldown = artifact('CooldownSteps.sol/CooldownSteps.json')
 
 const proxyCreationCode = proxy.bytecode.object
 if (!proxyCreationCode || proxyCreationCode === '0x') {
@@ -91,9 +92,11 @@ const FIELDS = [
  *
  * `paymentSteps` is optional for the narrower reason that it joined generation 2 late. It *is* an
  * input to a drop address, but only to recipes that name a payment step, so adding it moved no
- * existing drop. Generation 1 never had it.
+ * existing drop. Generation 1 never had it. `convertSteps` and `cooldownSteps` joined the same way,
+ * later still — that a generation can absorb a new step contract without moving an address is the
+ * whole reason these are optional rather than a reason to cut a generation.
  */
-const OPTIONAL_FIELDS = ['bungeeReceiver', 'paymentSteps', 'convertSteps']
+const OPTIONAL_FIELDS = ['bungeeReceiver', 'paymentSteps', 'convertSteps', 'cooldownSteps']
 
 const byGeneration = new Map()
 for (const dir of readdirSync(deploymentsDir)) {
@@ -180,6 +183,8 @@ export const STOP_LOSS_STEPS_ABI = ${JSON.stringify(stopLoss.abi, null, 2)} as c
 export const PAYMENT_STEPS_ABI = ${JSON.stringify(payment.abi, null, 2)} as const
 
 export const CONVERT_STEPS_ABI = ${JSON.stringify(convert.abi, null, 2)} as const
+
+export const COOLDOWN_STEPS_ABI = ${JSON.stringify(cooldown.abi, null, 2)} as const
 
 export const DROP_EXECUTOR_ABI = ${JSON.stringify(executor.abi, null, 2)} as const
 

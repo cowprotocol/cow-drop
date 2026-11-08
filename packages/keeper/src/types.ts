@@ -81,6 +81,15 @@ export interface WatchHints {
    * `RegisteredDrop.payment`.
    */
   payment?: { buyToken: Address; buyAmount: string }
+  /**
+   * Set for a recipe with a `convert` step. Like `payment` it names no sell token — whatever arrives
+   * is what gets sold — so `tokens` cannot say what to poll, and the same `Transfer` scan feeds it.
+   *
+   * `pricer` is who may activate. The keeper can only drive this drop when it is zero (anyone) or the
+   * keeper's own payer; anything else is a drop someone else prices, and simulating it would only
+   * ever revert.
+   */
+  convert?: { buyToken: Address; pricer: Address }
   /** Everything the decoder refused to name, surfaced to the operator and the UI. */
   warnings: string[]
 }

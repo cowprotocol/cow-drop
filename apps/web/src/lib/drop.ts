@@ -1,4 +1,5 @@
 import {
+  buildActivateConvertTx,
   buildActivatePaymentTx,
   buildActivateTx,
   compileRecipe,
@@ -227,6 +228,35 @@ export async function activatePaymentDrop(params: {
     owner: params.recipe.owner,
     setupData: compiled.setupData,
     sellToken: params.sellToken,
+  })
+
+  const chainId = compiled.deployment.chainId
+  const hash = await sendTransaction({ chainId, account: params.account, ...tx })
+  const receipt = await getPublicClient(chainId).waitForTransactionReceipt({ hash })
+  return { hash, receipt }
+}
+
+/**
+ * Activate a convert drop: sell its balance of `sellToken` for at least `minBuyAmount`.
+ *
+ * A convert recipe commits to no price, so the minimum is supplied here and goes through
+ * `ConvertSteps.activateConvert` — plain `activate` records no minimum and is refused. Whether this
+ * wallet is allowed to name it is the recipe's business: the step reverts with `NotThePricer` unless
+ * the caller is the committed pricer, the owner, or the pricer is zero.
+ */
+export async function activateConvertDrop(params: {
+  account: Address
+  recipe: DropRecipeJson
+  sellToken: Address
+  minBuyAmount: bigint
+}): Promise<{ hash: Hex; receipt: TransactionReceipt }> {
+  const compiled = compileRecipe(params.recipe)
+  const tx = buildActivateConvertTx({
+    deployment: compiled.deployment,
+    owner: params.recipe.owner,
+    setupData: compiled.setupData,
+    sellToken: params.sellToken,
+    minBuyAmount: params.minBuyAmount,
   })
 
   const chainId = compiled.deployment.chainId

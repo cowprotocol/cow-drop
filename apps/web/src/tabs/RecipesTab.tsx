@@ -1,5 +1,6 @@
 import {
   compileRecipe,
+  convertOnArrival,
   getDropChain,
   paymentRequest,
   stopLossOnArrival,
@@ -35,7 +36,13 @@ import { GNOSIS_TOKENS } from '../lib/tokens.js'
 import { fetchTokenList, findToken, type TokenInfo } from '../lib/tokenList.js'
 import { NetworkPicker } from '../components/NetworkPicker.js'
 import { clearSentToKeeper, isSaved, listDrops, markSentToKeeper, saveDrop } from '../lib/storage.js'
-import { keeperUrl, readKeeperDrop, registerWithKeeper, unregisterFromKeeper } from '../lib/keeper.js'
+import {
+  keeperPayer,
+  keeperUrl,
+  readKeeperDrop,
+  registerWithKeeper,
+  unregisterFromKeeper,
+} from '../lib/keeper.js'
 import { keeperTooltip } from '../lib/dropList.js'
 import { routeHash } from '../lib/route.js'
 import { writeHash } from '../lib/useRoute.js'
@@ -46,6 +53,7 @@ import { StepBuilder } from '../components/StepBuilder.js'
 import { RescuePanel } from '../components/RescuePanel.js'
 import { TerminalPanel } from '../components/TerminalPanel.js'
 import { StepTable } from '../components/StepTable.js'
+import { ConvertPanel, convertStepOf } from '../components/ConvertPanel.js'
 import { PaymentPanel, paymentStepOf } from '../components/PaymentPanel.js'
 import { Section } from '../components/Section.js'
 import { Select, type SelectOption } from '../components/Select.js'
@@ -56,10 +64,20 @@ import { Tooltip } from '../components/Tooltip.js'
  * there a template is a function that produces a recipe — a distinction worth keeping in code and
  * not worth making a user learn.
  */
-type RecipeKind = 'swap' | 'twap' | 'stoploss' | 'payment'
+type RecipeKind = 'swap' | 'twap' | 'stoploss' | 'payment' | 'convert'
 
 /**
- * The four recipes, as the dropdown shows them.
+ * Recipes that commit to no sell token: whoever activates names it.
+ *
+ * They share a shape rather than a name — no sell-token box, nothing to wrap, no balance to guard —
+ * so the form branches on this instead of on each kind.
+ */
+function namesSellToken(kind: RecipeKind): boolean {
+  return kind !== 'payment' && kind !== 'convert'
+}
+
+/**
+ * The five recipes, as the dropdown shows them.
  *
  * `description` is the one line under the name — what it does, not how. `detail` is the rest, which
  * the tooltip beside the picker holds: whether it drives itself, and what you still have to do.
@@ -79,6 +97,13 @@ const RECIPE_KINDS: (SelectOption<RecipeKind> & { detail: string })[] = [
       'The payer is quoted what to send; the keeper sells it for at least your price, and any surplus is yours. Reusable, so one address takes payment after payment.',
   },
   {
+    value: 'convert',
+    label: 'Convert on arrival',
+    description: 'Sells whatever lands here into one token',
+    detail:
+      'No price is committed: whoever activates names the order\u2019s minimum, which is why the recipe names a pricer. Reusable, so one address converts arrival after arrival.',
+  },
+  {
     value: 'twap',
     label: 'TWAP on arrival',
     description: 'Sells what lands here in parts, over time',
@@ -93,6 +118,8 @@ const RECIPE_KINDS: (SelectOption<RecipeKind> & { detail: string })[] = [
 ]
 
 const PLACEHOLDER_OWNER: Address = '0x0000000000000000000000000000000000000001'
+/** "Anyone may activate", as the convert step reads it. */
+const ZERO_ADDRESS: Address = '0x0000000000000000000000000000000000000000'
 
 /**
  * Owners that make a drop unrecoverable, which the UI must never hand out an address for.
@@ -158,6 +185,13 @@ interface FormState {
   stopLossDays: string
   /** The payment recipe's price, in whole `buyToken` units as typed. */
   payAmount: string
+  /**
+   * Who may activate a convert drop, or blank for anyone.
+   *
+   * Blank compiles to the zero address, which the contract reads as "no gate" — so leaving it empty
+   * is a decision, not an omission, and the form says so beside the field.
+   */
+  pricer: string
 }
 
 const INITIAL: FormState = {
@@ -184,6 +218,7 @@ const INITIAL: FormState = {
   strike: '',
   stopLossDays: '7',
   payAmount: '100',
+  pricer: '',
 }
 
 /** A blank guard field means "no guard", not "zero". */
@@ -205,6 +240,9 @@ function optionalTimestamp(value: string): bigint | undefined {
   return Number.isNaN(ms) ? undefined : BigInt(Math.floor(ms / 1000))
 }
 
+/** The reusable recipes, which never read as "activated" because each arrival activates again. */
+type ReusableKind = 'payment' | 'convert' | null
+
 /**
  * Where the drop has got to, as one line.
  *
@@ -212,20 +250,24 @@ function optionalTimestamp(value: string): bigint | undefined {
  * are only the evidence for it. Ordered by what blocks what: a chain with no contracts beats a drop
  * with no funds, which beats a drop that has not been activated.
  */
-function DropState({ status, isPayment }: { status: DropStatus; isPayment: boolean }) {
+function DropState({ status, reusable }: { status: DropStatus; reusable: ReusableKind }) {
   const state = (() => {
     if (status.missing.length > 0) {
       return { tone: 'warn', label: 'Cannot activate here', detail: 'The chain is missing contracts a drop needs.' } as const
     }
     if (status.deployed) {
-      return isPayment
-        ? { tone: 'ok', label: 'Taking payments', detail: 'Deployed. Each payment is activated on its own.' } as const
-        : { tone: 'ok', label: 'Activated', detail: 'Deployed and its recipe has run.' } as const
+      if (reusable === 'payment') {
+        return { tone: 'ok', label: 'Taking payments', detail: 'Deployed. Each payment is activated on its own.' } as const
+      }
+      if (reusable === 'convert') {
+        return { tone: 'ok', label: 'Converting arrivals', detail: 'Deployed. Each arrival is activated on its own.' } as const
+      }
+      return { tone: 'ok', label: 'Activated', detail: 'Deployed and its recipe has run.' } as const
     }
     if (status.balance > 0n || status.nativeBalance > 0n) {
       return { tone: 'ok', label: 'Funded, ready to activate', detail: 'Money has arrived. Anyone can run the recipe now.' } as const
     }
-    return isPayment
+    return reusable === 'payment'
       ? { tone: 'info', label: 'Waiting for a payment', detail: 'Nothing has arrived at this address yet.' } as const
       : { tone: 'info', label: 'Waiting for funds', detail: 'Nothing has arrived at this address yet.' } as const
   })()
@@ -288,6 +330,21 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
       buyToken: form.buyToken,
       buyAmount: parsePayAmount(form.payAmount, buyDecimals),
       receiver,
+      validitySeconds: Number(form.validityMinutes) * 60,
+      notBefore: guards.notBefore,
+      notAfter: guards.notAfter,
+    })
+  }
+
+  if (form.recipeKind === 'convert') {
+    // No sell token and no price: the activator names both. Only the pricer is committed here.
+    return convertOnArrival({
+      chainId: form.chainId,
+      label,
+      owner,
+      buyToken: form.buyToken,
+      receiver,
+      pricer: (isAddress(form.pricer) ? form.pricer : ZERO_ADDRESS) as Address,
       validitySeconds: Number(form.validityMinutes) * 60,
       notBefore: guards.notBefore,
       notAfter: guards.notAfter,
@@ -402,6 +459,17 @@ function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
 
   if (rest.length !== 1) return null
   const trade = rest[0]!
+
+  if (trade.type === 'convert') {
+    if (base.wrapNative || balanceGuard) return null
+    base.recipeKind = 'convert'
+    base.buyToken = trade.buyToken
+    base.validityMinutes = String(Number(trade.validitySeconds) / 60)
+    base.pricer = trade.pricer && trade.pricer !== ZERO_ADDRESS ? trade.pricer : ''
+    base.receiver =
+      trade.receiver && trade.receiver.toLowerCase() !== recipe.owner.toLowerCase() ? trade.receiver : ''
+    return base
+  }
 
   if (trade.type === 'payment') {
     if (base.wrapNative || balanceGuard) return null
@@ -574,6 +642,13 @@ export function RecipesTab({
    */
   const [keeperWatching, setKeeperWatching] = useState<boolean | null>(null)
   /**
+   * The keeper's own address, offered as the convert recipe's pricer.
+   *
+   * Fetched while the form is still being filled in, because the pricer is part of the derivation:
+   * a drop that names the wrong one cannot be handed over later, only rebuilt at a new address.
+   */
+  const [keeperAddress, setKeeperAddress] = useState<Address | null>(null)
+  /**
    * Quote state. Deliberately *not* part of FormState: the reference amount exists only to get a
    * price out of the API and must never leak into the recipe, since a drop cannot commit to an amount.
    */
@@ -664,7 +739,11 @@ export function RecipesTab({
     form.recipeKind === 'stoploss' && !(isAddress(form.sellOracle) && isAddress(form.buyOracle))
 
   /** Counted for the collapsed summary, so a set guard is never silently folded away. */
-  const guardsSet = [form.minAmount, form.notBefore, form.notAfter].filter((value) => value !== '').length
+  const guardsSet = [
+    ...(namesSellToken(form.recipeKind) ? [form.minAmount] : []),
+    form.notBefore,
+    form.notAfter,
+  ].filter((value) => value !== '').length
 
   /**
    * What is wrong with the owner *field*, as opposed to with the recipe.
@@ -720,10 +799,12 @@ export function RecipesTab({
   const refresh = useCallback(async () => {
     if (!compiled.ok) return
     const sellStep = recipe.steps.find((step) => 'sellToken' in step)
-    // A payment recipe has no sell token; its status reads the price token instead, which is what a
-    // payment in that token would leave behind.
+    // A payment or convert recipe has no sell token; the status reads the buy token instead, which is
+    // what an arrival already in that token would leave behind.
     const sellToken =
-      sellStep && 'sellToken' in sellStep ? sellStep.sellToken : paymentStepOf(recipe)?.buyToken
+      sellStep && 'sellToken' in sellStep
+        ? sellStep.sellToken
+        : (paymentStepOf(recipe) ?? convertStepOf(recipe))?.buyToken
     if (!sellToken) return
     try {
       setStatus(await readDropStatus(compiled.value, sellToken))
@@ -1000,6 +1081,20 @@ export function RecipesTab({
    * Saved locally first, and only flagged as sent once the keeper has answered — a flag written
    * optimistically would claim the drop is watched when the POST failed.
    */
+  useEffect(() => {
+    if (form.recipeKind !== 'convert') {
+      setKeeperAddress(null)
+      return
+    }
+    let cancelled = false
+    void keeperPayer(form.chainId).then((payer) => {
+      if (!cancelled) setKeeperAddress(payer)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [form.recipeKind, form.chainId])
+
   const onRegisterKeeper = async () => {
     if (!compiled.ok) return
     setBusy(true)
@@ -1100,8 +1195,10 @@ export function RecipesTab({
 
   const sellToken = findToken(tokens, form.sellToken)
   const buyToken = findToken(tokens, form.buyToken)
-  /** Read off the recipe, so an imported payment recipe gets the payment panel too. */
+  /** Read off the recipe, so an imported one gets its panel too. */
   const isPayment = paymentStepOf(recipe) !== undefined
+  const isConvert = convertStepOf(recipe) !== undefined
+  const reusable: ReusableKind = isPayment ? 'payment' : isConvert ? 'convert' : null
 
   const onQuote = async () => {
     setQuoting(true)
@@ -1204,7 +1301,7 @@ export function RecipesTab({
               </span>
             )}
           </label>
-          {form.recipeKind !== 'payment' && (
+          {namesSellToken(form.recipeKind) && (
             <TokenPicker
               label="Sell token"
               tokens={tokens}
@@ -1214,7 +1311,13 @@ export function RecipesTab({
             />
           )}
           <TokenPicker
-            label={form.recipeKind === 'payment' ? 'Get paid in' : 'Buy token'}
+            label={
+              form.recipeKind === 'payment'
+                ? 'Get paid in'
+                : form.recipeKind === 'convert'
+                  ? 'Convert into'
+                  : 'Buy token'
+            }
             tokens={tokens}
             value={form.buyToken}
             chainId={form.chainId}
@@ -1231,6 +1334,32 @@ export function RecipesTab({
                 value={form.payAmount}
                 onChange={(event) => set('payAmount', event.target.value)}
               />
+            </label>
+          ) : form.recipeKind === 'convert' ? (
+            <label>
+              <span className="label-text">
+                Pricer
+                <Tooltip title="Pricer">
+                  <span>
+                    The only address allowed to activate. Blank means anyone can — and since nothing
+                    in the recipe fixes a price, anyone could then name one atom.
+                  </span>
+                  <span>
+                    For the keeper to run this drop unattended, name the keeper here. It is part of
+                    the address, so it cannot be changed afterwards.
+                  </span>
+                </Tooltip>
+              </span>
+              <input
+                placeholder="0x… — blank means anyone"
+                value={form.pricer}
+                onChange={(event) => set('pricer', event.target.value)}
+              />
+              {keeperAddress && form.pricer.toLowerCase() !== keeperAddress.toLowerCase() && (
+                <button type="button" className="link" onClick={() => set('pricer', keeperAddress)}>
+                  Use the keeper
+                </button>
+              )}
             </label>
           ) : (
             <label>
@@ -1249,7 +1378,9 @@ export function RecipesTab({
               onChange={(event) => set('receiver', event.target.value)}
             />
           </label>
-          {(form.recipeKind === 'swap' || form.recipeKind === 'payment') && (
+          {(form.recipeKind === 'swap' ||
+            form.recipeKind === 'payment' ||
+            form.recipeKind === 'convert') && (
             <label>
               Order validity (minutes)
               <input value={form.validityMinutes} onChange={(event) => set('validityMinutes', event.target.value)} />
@@ -1279,7 +1410,7 @@ export function RecipesTab({
               </label>
             </>
           )}
-          {form.recipeKind !== 'payment' && (
+          {namesSellToken(form.recipeKind) && (
             <label className="checkbox">
               <input
                 type="checkbox"
@@ -1361,7 +1492,7 @@ export function RecipesTab({
           * Its own box, above the guards: this is a tool for filling in the limit price, so it belongs
           * next to the parameters that set the price rather than after the optional panels.
           */}
-        {form.recipeKind !== 'payment' && (
+        {namesSellToken(form.recipeKind) && (
           <fieldset className="subsection quote">
             <legend>Market price</legend>
             <label>
@@ -1414,7 +1545,7 @@ export function RecipesTab({
             {guardsSet > 0 && <span className="guard-count"> — {guardsSet} set</span>}
           </summary>
           <div className="grid">
-            {form.recipeKind !== 'payment' && (
+            {namesSellToken(form.recipeKind) && (
               <label>
                 Minimum amount before activating
                 <input
@@ -1458,6 +1589,13 @@ export function RecipesTab({
           <p className="hint warn-note">
             One-shot recipe with no minimum: anyone can activate on the first wei, and the order is then
             sized from a part-delivered balance — which is what a bridge paying in tranches sends.
+          </p>
+        )}
+        {form.recipeKind === 'convert' && !isAddress(form.pricer) && (
+          <p className="hint warn-note">
+            No pricer: anyone can activate this drop and name the order&rsquo;s minimum, down to one atom.
+            Nothing on-chain stops them — only CoW&rsquo;s solver competition, which is protection enough
+            for amounts solvers compete over and thin cover for a large one.
           </p>
         )}
         <p className="hint">
@@ -1574,6 +1712,17 @@ export function RecipesTab({
                     onError={setError}
                   />
                 )}
+                {isConvert && (
+                  <ConvertPanel
+                    recipe={recipe}
+                    address={compiled.value.address}
+                    deployment={compiled.value.deployment}
+                    tokens={tokens}
+                    account={account}
+                    onMessage={setMessage}
+                    onError={setError}
+                  />
+                )}
                 {status ? (
                   <>
                     {/*
@@ -1583,10 +1732,10 @@ export function RecipesTab({
                       * the one thing they came for — can this run yet — from a balance and a boolean.
                       * The pill states it; the facts below are the evidence, not the answer.
                       */}
-                    <DropState status={status} isPayment={isPayment} />
+                    <DropState status={status} reusable={reusable} />
 
                     <dl className="facts">
-                      {!isPayment && (
+                      {reusable === null && (
                         <>
                           <dt>Balance</dt>
                           <dd>
@@ -1655,8 +1804,11 @@ export function RecipesTab({
                     Re-reads the balance and whether the drop is deployed, from the chain.
                   </Tooltip>
 
-                  {/* A payment drop activates *with a token*, from the panel above; plain activate reverts. */}
-                  {!isPayment && (
+                  {/*
+                    * A payment drop activates *with a token* and a convert drop *with a price*, both
+                    * from the panel above. Plain activate reverts for either.
+                    */}
+                  {reusable === null && (
                     <Tooltip
                       title="Activate drop"
                       trigger={
@@ -1723,17 +1875,19 @@ export function RecipesTab({
                           Or do it yourself, when you choose:{' '}
                           {isPayment
                             ? 'activate with a token, in the panel above.'
-                            : 'press Activate drop.'}
+                            : isConvert
+                              ? 'name a price and activate, in the panel above.'
+                              : 'press Activate drop.'}
                         </span>
                       </Tooltip>
                     ))}
 
                   {/*
-                    * Funding from another chain, as an alternative to sending to the address above. Not for a
-                    * payment request: the bridge receiver calls plain `activate`, which a payment recipe
-                    * refuses, since it cannot say which token arrived.
+                    * Funding from another chain, as an alternative to sending to the address above. Not for
+                    * a payment or convert request: the bridge receiver calls plain `activate`, which both
+                    * refuse — neither can say which token arrived, and convert has no price either.
                     */}
-                  {!isPayment && (
+                  {reusable === null && (
                     <Tooltip
                       title="Fund by bridging"
                       trigger={
