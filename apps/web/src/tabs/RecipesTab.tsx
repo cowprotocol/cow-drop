@@ -1957,7 +1957,7 @@ export function RecipesTab({
                 />
               </Section>
 
-              <Section title={<>6 &middot; Manage the recipe</>} open={false} optional>
+              <Section title={<>6 &middot; Manually edit recipe</>} open={false} optional>
                 <RecipeJson
                   recipe={recipe}
                   address={compiled.value.address}
@@ -1979,7 +1979,7 @@ export function RecipesTab({
                 * but putting an optional panel in the middle of the mandatory run made all eight look
                 * compulsory. The pointer from step 3 is what keeps the reading available.
                 */}
-              <Section title={<>7 &middot; Understand what the activation does</>} open={false} optional>
+              <Section title={<>7 &middot; Review activation call</>} open={false} optional>
                 <StepTable setupData={compiled.value.setupData} deployment={compiled.value.deployment} />
               </Section>
             </>
