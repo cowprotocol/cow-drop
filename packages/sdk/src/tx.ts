@@ -12,7 +12,12 @@ import {
   type Log,
 } from 'viem'
 
-import { DROP_EXECUTOR_ABI, ONCHAIN_ORDERS_ABI, PAYMENT_STEPS_ABI } from './generated/artifacts.js'
+import {
+  CONVERT_STEPS_ABI,
+  DROP_EXECUTOR_ABI,
+  ONCHAIN_ORDERS_ABI,
+  PAYMENT_STEPS_ABI,
+} from './generated/artifacts.js'
 import { cowDomainSeparator, orderUidFor, type CowOrderData } from './orderUid.js'
 import type { DropDeployment } from './types.js'
 
@@ -38,6 +43,39 @@ export function buildActivateTx(params: {
       abi: DROP_EXECUTOR_ABI,
       functionName: 'activate',
       args: [params.owner, params.setupData],
+    }),
+    value: 0n,
+  }
+}
+
+/**
+ * Activate a convert drop: name the token to sell and the minimum to accept.
+ *
+ * The minimum is not in the recipe — it is the whole point that it is not — so it is supplied here.
+ * Only the recipe's committed pricer or its owner gets past the step's check, unless the recipe left
+ * the pricer zero, in which case anyone may send this.
+ */
+export function buildActivateConvertTx(params: {
+  deployment: Pick<DropDeployment, 'convertSteps'>
+  owner: Address
+  setupData: Hex
+  sellToken: Address
+  /** The order's minimum output, in buy-token atoms. Must be positive. */
+  minBuyAmount: bigint
+}): EvmCall {
+  const target = params.deployment.convertSteps
+  if (!target) {
+    throw new Error('this generation has no ConvertSteps deployment, so it cannot activate a convert drop')
+  }
+  if (params.minBuyAmount <= 0n) {
+    throw new Error('a convert activation needs a positive minBuyAmount; zero is an order anyone fills for nothing')
+  }
+  return {
+    to: target,
+    data: encodeFunctionData({
+      abi: CONVERT_STEPS_ABI,
+      functionName: 'activateConvert',
+      args: [params.owner, params.setupData, params.sellToken, params.minBuyAmount],
     }),
     value: 0n,
   }

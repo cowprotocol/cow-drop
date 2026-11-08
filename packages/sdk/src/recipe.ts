@@ -79,6 +79,18 @@ export type DropStepJson =
    * `buildActivatePaymentTx`. `receiver` defaults to the recipe's owner — not to the drop, as the other
    * order steps do, because a payment that lands in the drop has paid nobody.
    */
+  /**
+   * "Sell whatever lands here for `buyToken`." No price: the activator names the minimum through
+   * `buildActivateConvertTx`, which is why `pricer` says who may activate. Zero opens it to anyone.
+   */
+  | {
+      type: 'convert'
+      buyToken: Address
+      receiver?: Address
+      pricer?: Address
+      validitySeconds: number | string
+      appData?: Hex
+    }
   | {
       type: 'payment'
       buyToken: Address
@@ -330,6 +342,16 @@ function compileStep(step: DropStepJson, deployment: DropDeployment, owner: Addr
         validitySeconds: BigInt(step.validitySeconds),
         appData: step.appData,
         allowFailure: step.allowFailure,
+      })
+    case 'convert':
+      return steps.convert(deployment, {
+        buyToken: step.buyToken,
+        receiver: step.receiver ?? owner,
+        owner,
+        // Zero means "anyone may activate" — the contract reads it that way.
+        pricer: step.pricer ?? '0x0000000000000000000000000000000000000000',
+        validitySeconds: BigInt(step.validitySeconds),
+        appData: step.appData,
       })
     case 'payment':
       return steps.payment(deployment, {

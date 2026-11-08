@@ -86,6 +86,11 @@ export interface DropAddresses {
    */
   paymentSteps?: Address
   /**
+   * Optional for the same reason as `paymentSteps`: it joined generation 2 later still, and only
+   * recipes naming a convert step reach it.
+   */
+  convertSteps?: Address
+  /**
    * `GPv2Settlement` and `ComposableCoW`. Not cow-drop's own contracts and not inputs to a drop
    * address — but they *are* constructor inputs to the step contracts, so they belong to the
    * generation. Carried so a rescue can retire live orders without an RPC round-trip.

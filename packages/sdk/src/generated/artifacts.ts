@@ -1827,6 +1827,373 @@ export const PAYMENT_STEPS_ABI = [
   }
 ] as const
 
+export const CONVERT_STEPS_ABI = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "settlement",
+        "type": "address",
+        "internalType": "contract ISettlementLike"
+      },
+      {
+        "name": "vaultRelayer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "executor",
+        "type": "address",
+        "internalType": "contract DropExecutor"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "CONVERT_STEPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "EXECUTOR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract DropExecutor"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "SETTLEMENT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ISettlementLike"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "VAULT_RELAYER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "activateConvert",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "setupData",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "sellToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "minBuyAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "drop",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "pendingInput",
+    "inputs": [
+      {
+        "name": "drop",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sellToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "minBuyAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "activator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "presignConvert",
+    "inputs": [
+      {
+        "name": "buyToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "receiver",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pricer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "validitySeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "appData",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "orderUid",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "OrderPlacement",
+    "inputs": [
+      {
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "order",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct LibCowOrder.Data",
+        "components": [
+          {
+            "name": "sellToken",
+            "type": "address",
+            "internalType": "contract IERC20"
+          },
+          {
+            "name": "buyToken",
+            "type": "address",
+            "internalType": "contract IERC20"
+          },
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sellAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "buyAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "validTo",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "appData",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "feeAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "kind",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "partiallyFillable",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "sellTokenBalance",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "buyTokenBalance",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      },
+      {
+        "name": "signature",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct ICoWSwapOnchainOrders.OnchainSignature",
+        "components": [
+          {
+            "name": "scheme",
+            "type": "uint8",
+            "internalType": "enum ICoWSwapOnchainOrders.OnchainSigningScheme"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AddressEmptyCode",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AddressInsufficientBalance",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FailedInnerCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidRecipient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoSellToken",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotThePricer",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pricer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NothingToSell",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ValidToOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroBuyAmount",
+    "inputs": []
+  }
+] as const
+
 export const DROP_EXECUTOR_ABI = [
   {
     "type": "constructor",

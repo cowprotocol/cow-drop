@@ -46,6 +46,7 @@ const presign = artifact('PresignSteps.sol/PresignSteps.json')
 const twap = artifact('TwapSteps.sol/TwapSteps.json')
 const stopLoss = artifact('StopLossSteps.sol/StopLossSteps.json')
 const payment = artifact('PaymentSteps.sol/PaymentSteps.json')
+const convert = artifact('ConvertSteps.sol/ConvertSteps.json')
 
 const proxyCreationCode = proxy.bytecode.object
 if (!proxyCreationCode || proxyCreationCode === '0x') {
@@ -92,7 +93,7 @@ const FIELDS = [
  * input to a drop address, but only to recipes that name a payment step, so adding it moved no
  * existing drop. Generation 1 never had it.
  */
-const OPTIONAL_FIELDS = ['bungeeReceiver', 'paymentSteps']
+const OPTIONAL_FIELDS = ['bungeeReceiver', 'paymentSteps', 'convertSteps']
 
 const byGeneration = new Map()
 for (const dir of readdirSync(deploymentsDir)) {
@@ -177,6 +178,8 @@ export const TWAP_STEPS_ABI = ${JSON.stringify(twap.abi, null, 2)} as const
 export const STOP_LOSS_STEPS_ABI = ${JSON.stringify(stopLoss.abi, null, 2)} as const
 
 export const PAYMENT_STEPS_ABI = ${JSON.stringify(payment.abi, null, 2)} as const
+
+export const CONVERT_STEPS_ABI = ${JSON.stringify(convert.abi, null, 2)} as const
 
 export const DROP_EXECUTOR_ABI = ${JSON.stringify(executor.abi, null, 2)} as const
 

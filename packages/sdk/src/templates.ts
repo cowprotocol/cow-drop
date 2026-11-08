@@ -344,6 +344,53 @@ export interface PaymentRequestParams extends Omit<RecipeGuards, 'minAmount'> {
  * Reusable rather than one-shot, so the same address can take one payment after another. No minimum
  * balance guard: the sell token is unknown, so there is nothing to measure — the price is the guard.
  */
+export interface ConvertOnArrivalParams extends RecipeGuards {
+  chainId: number
+  owner: Address
+  salt?: Hex
+  /** The token everything is converted into. */
+  buyToken: Address
+  /** Who receives it. Defaults to the owner. */
+  receiver?: Address
+  /**
+   * The only address allowed to activate, or zero for anyone.
+   *
+   * Nothing in the recipe fixes a price — the activator names the order's minimum each time — so this
+   * is what stops a stranger naming one atom. Zero is a deliberate opt-out that leaves the price to
+   * CoW's solver competition.
+   */
+  pricer?: Address
+  /** Order lifetime from activation. Defaults to 30 minutes. */
+  validitySeconds?: number
+  label?: string
+  appData?: Hex
+}
+
+/** A reusable address that sells whatever arrives into one token, priced at activation. */
+export function convertOnArrival(params: ConvertOnArrivalParams): DropRecipeJson {
+  return {
+    version: 1,
+    generation: LATEST_GENERATION,
+    label: params.label ?? 'convert on arrival',
+    chainId: params.chainId,
+    owner: params.owner,
+    salt: params.salt,
+    // Reusable by design: each arrival is its own activation.
+    once: false,
+    steps: [
+      ...timeGuards(params),
+      {
+        type: 'convert',
+        buyToken: params.buyToken,
+        receiver: params.receiver ?? params.owner,
+        pricer: params.pricer ?? '0x0000000000000000000000000000000000000000',
+        validitySeconds: params.validitySeconds ?? 30 * 60,
+        appData: params.appData ?? COW_DROP_APP_DATA,
+      },
+    ],
+  }
+}
+
 export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
   return {
     version: 1,
