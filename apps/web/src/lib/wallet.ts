@@ -106,10 +106,27 @@ export function modalProviderSync(): EIP1193Provider | null {
 export async function openWalletModal(): Promise<Address | null> {
   const kit = await loadAppKit()
 
-  const existing = kit.getAddress('eip155')
-  if (existing && kit.getIsConnectedState()) {
-    connectedProvider = kit.getProvider<EIP1193Provider>('eip155') ?? null
-    return existing as Address
+  /*
+   * End any session AppKit still holds before opening.
+   *
+   * This used to short-circuit instead — if AppKit reported a connection, it returned that address
+   * without opening anything. That reads as an optimisation and is a trap: the only way to reach
+   * this function is by pressing **Connect wallet**, which is only on screen when the page has *no*
+   * account. So arriving here with AppKit still connected means the two have come apart, and the
+   * one thing that must not happen is handing back the same wallet again.
+   *
+   * It is exactly what a refused chain switch produced: connect a wallet that will not move to the
+   * selected chain, and every further press re-offered that same wallet and failed the same way,
+   * with no route to a different one. `offerChain` in `chain.ts` fixes the cause; this makes the
+   * retry honest regardless — pressing Connect always ends up at the chooser.
+   */
+  if (kit.getIsConnectedState()) {
+    try {
+      await kit.disconnect('eip155')
+    } catch {
+      // Already gone, or the wallet would not say. Opening the modal is still the right next step.
+    }
+    connectedProvider = null
   }
 
   return new Promise<Address | null>((resolve) => {

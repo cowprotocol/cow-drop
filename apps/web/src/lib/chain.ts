@@ -433,14 +433,14 @@ export async function connect(chainId: number): Promise<Address> {
     const account = await openWalletModal()
     // Dismissed without choosing. Not an error: the page works without a wallet.
     if (!account) throw Object.assign(new Error('Wallet connection cancelled'), { code: USER_REJECTED })
-    await switchToChain(chainId)
+    await offerChain(chainId)
     return account
   }
 
   const provider = walletProvider()
   const [account] = (await provider.request({ method: 'eth_requestAccounts' })) as Address[]
   if (!account) throw new Error('Wallet returned no account')
-  await switchToChain(chainId)
+  await offerChain(chainId)
   return account
 }
 
@@ -499,10 +499,30 @@ function forget(value: boolean): void {
   }
 }
 
-/** Ask the wallet to move to `chainId`, but only when it is somewhere else. */
-async function switchToChain(chainId: number): Promise<void> {
-  const current = (await walletProvider().request({ method: 'eth_chainId' })) as Hex
-  if (Number.parseInt(current, 16) !== chainId) await switchChain(chainId)
+/**
+ * Ask the wallet to move to `chainId`, and carry on if it will not.
+ *
+ * The connection and the chain are two different things, and this used to treat them as one: a
+ * wallet that refused the switch took the whole `connect` down with it, so the page threw away an
+ * account it had just been given and showed **Connect wallet** again. Pressing it re-ran the same
+ * refusal, which is a dead end — and an invisible one, because the wallet *was* connected the whole
+ * time.
+ *
+ * Being on the wrong chain is a state this page already handles: `NetworkPicker` says which chain
+ * the wallet is on and what to do about it, and nothing can be activated until the two agree. So a
+ * refusal here is reported there, rather than by failing the connection.
+ *
+ * Wallets refuse for real reasons. Phantom answers `4901` for a chain it does not support at all; a
+ * chain it merely has not been told about is `4902`, which `switchChain` handles by offering to add
+ * it. Neither is a reason to be logged out.
+ */
+async function offerChain(chainId: number): Promise<void> {
+  try {
+    const current = (await walletProvider().request({ method: 'eth_chainId' })) as Hex
+    if (Number.parseInt(current, 16) !== chainId) await switchChain(chainId)
+  } catch {
+    // Left where it is. The network banner is what says so.
+  }
 }
 
 /** Send one transaction from the connected account. The caller has already built the calldata. */
