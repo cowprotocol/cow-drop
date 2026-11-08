@@ -171,6 +171,45 @@ header {
   margin-bottom: 2rem;
 }
 
+/*
+ * The wallet row: centred under the name, not parked at the right edge.
+ *
+ * Connecting is the one thing on this page a reader has to do before anything else works, and as a
+ * bare button in the corner it read as a utility control — the same weight as Refresh. It is also
+ * the only filled button in the app, which is the whole point: nothing else should compete with it.
+ */
+.wallet {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 1.4rem;
+}
+
+button.connect {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--brand-navy);
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 0.6rem 1.6rem;
+  border-radius: 999px;
+  /* A halo in the brand colour, so it lifts off the panel rather than sitting flat on it. */
+  box-shadow: 0 6px 22px -8px var(--accent);
+}
+
+button.connect:hover:not(:disabled) {
+  filter: brightness(1.08);
+  border-color: var(--accent);
+}
+
+button.connect:disabled {
+  /* Still legible while connecting: the default disabled style drops it to near-invisible. */
+  opacity: 0.75;
+  color: var(--brand-navy);
+}
+
 .brand {
   display: flex;
   /* Centred against the name + tagline block as a whole, rather than hung off the first line. */

@@ -21,6 +21,7 @@ import {
 } from 'viem'
 
 import { configuredRpcUrl } from './runtimeConfig'
+import { modalProviderSync, openWalletModal, walletModalEnabled } from './wallet.js'
 
 /**
  * CoW-facing chain metadata comes from the official SDK rather than being retyped here — it already
@@ -264,25 +265,42 @@ export function cowExplorer(chainId: number): string {
   return `https://explorer.cow.fi${COW_EXPLORER_SLUGS[chainId] ?? ''}`
 }
 
-/** The injected provider, or a message the user can act on. Every wallet call goes through here. */
-function injected(): EIP1193Provider {
-  const provider = (window as unknown as { ethereum?: EIP1193Provider }).ethereum
+/** The browser extension's provider, if there is one. */
+function injectedProvider(): EIP1193Provider | undefined {
+  return (window as unknown as { ethereum?: EIP1193Provider }).ethereum
+}
+
+/**
+ * The provider every wallet call goes through: the one AppKit connected, else the injected one.
+ *
+ * AppKit first, because it only answers once somebody has actually connected through the modal —
+ * and if they did, that is the wallet they chose, even on a machine that also has an extension.
+ *
+ * This is the single seam the whole wallet layer turns on. Signing, sending and chain switching all
+ * resolve their provider here, so adding the modal changed none of them.
+ */
+function walletProvider(): EIP1193Provider {
+  const provider = modalProviderSync() ?? injectedProvider()
   if (!provider) {
-    throw new Error('No injected wallet found. Install a browser wallet to activate a drop.')
+    throw new Error(
+      walletModalEnabled()
+        ? 'No wallet connected. Press Connect wallet and pick one.'
+        : 'No injected wallet found. Install a browser wallet to activate a drop.',
+    )
   }
   return provider
 }
 
 /** Whether there is a wallet at all, for the paths that must not throw when there is not. */
-function hasInjectedWallet(): boolean {
-  return Boolean((window as unknown as { ethereum?: EIP1193Provider }).ethereum)
+function hasWallet(): boolean {
+  return Boolean(modalProviderSync() ?? injectedProvider())
 }
 
 /** The wallet's current chain, so the page can default to whatever the user is already on. */
 export async function walletChainId(): Promise<number | null> {
-  if (!hasInjectedWallet()) return null
+  if (!hasWallet()) return null
   try {
-    const hex = (await injected().request({ method: 'eth_chainId' })) as Hex
+    const hex = (await walletProvider().request({ method: 'eth_chainId' })) as Hex
     return Number.parseInt(hex, 16)
   } catch {
     return null
@@ -314,7 +332,7 @@ export function isUserRejection(cause: unknown): boolean {
  * Throws on rejection so the caller can tell "declined" from "failed" — see `isUserRejection`.
  */
 export async function switchChain(chainId: number): Promise<void> {
-  const provider = injected()
+  const provider = walletProvider()
   const hexChainId: Hex = `0x${chainId.toString(16)}`
 
   try {
@@ -350,9 +368,9 @@ export async function switchChain(chainId: number): Promise<void> {
  * Returns an unsubscribe function, or a no-op when there is no wallet.
  */
 export function onChainChanged(listener: (chainId: number) => void): () => void {
-  if (!hasInjectedWallet()) return () => {}
+  if (!hasWallet()) return () => {}
 
-  const provider = injected() as EIP1193Provider & {
+  const provider = walletProvider() as EIP1193Provider & {
     on?: (event: string, handler: (value: unknown) => void) => void
     removeListener?: (event: string, handler: (value: unknown) => void) => void
   }
@@ -376,16 +394,16 @@ export function onChainChanged(listener: (chainId: number) => void): () => void 
  * disabled.
  */
 export async function readAccount(): Promise<Address | null> {
-  if (!hasInjectedWallet()) return null
-  const [account] = (await injected().request({ method: 'eth_accounts' })) as Address[]
+  if (!hasWallet()) return null
+  const [account] = (await walletProvider().request({ method: 'eth_accounts' })) as Address[]
   return account ?? null
 }
 
 /** Follow the wallet's account, so locking it or switching accounts moves the page too. */
 export function onAccountsChanged(listener: (account: Address | null) => void): () => void {
-  if (!hasInjectedWallet()) return () => {}
+  if (!hasWallet()) return () => {}
 
-  const provider = injected() as EIP1193Provider & {
+  const provider = walletProvider() as EIP1193Provider & {
     on?: (event: string, handler: (value: unknown) => void) => void
     removeListener?: (event: string, handler: (value: unknown) => void) => void
   }
@@ -401,20 +419,32 @@ export function onAccountsChanged(listener: (account: Address | null) => void): 
 }
 
 /**
- * Connect an injected wallet. Deliberately minimal: activating a drop is a single unprivileged
- * transaction that anyone can send, so there is nothing here worth a connector framework.
+ * Connect a wallet: AppKit's modal where it is configured, the injected provider otherwise.
+ *
+ * Still deliberately minimal. Activating a drop is a single unprivileged transaction that anyone can
+ * send, so a wallet here is paying gas and nothing else — which is why the modal is a convenience
+ * rather than a dependency, and why declining it leaves the page fully usable.
  */
 export async function connect(chainId: number): Promise<Address> {
-  const provider = injected()
-  const [account] = (await provider.request({ method: 'eth_requestAccounts' })) as Address[]
-  if (!account) throw new Error('Wallet returned no account')
-
-  const current = (await provider.request({ method: 'eth_chainId' })) as Hex
-  if (Number.parseInt(current, 16) !== chainId) {
-    await switchChain(chainId)
+  if (walletModalEnabled()) {
+    const account = await openWalletModal()
+    // Dismissed without choosing. Not an error: the page works without a wallet.
+    if (!account) throw Object.assign(new Error('Wallet connection cancelled'), { code: USER_REJECTED })
+    await switchToChain(chainId)
+    return account
   }
 
+  const provider = walletProvider()
+  const [account] = (await provider.request({ method: 'eth_requestAccounts' })) as Address[]
+  if (!account) throw new Error('Wallet returned no account')
+  await switchToChain(chainId)
   return account
+}
+
+/** Ask the wallet to move to `chainId`, but only when it is somewhere else. */
+async function switchToChain(chainId: number): Promise<void> {
+  const current = (await walletProvider().request({ method: 'eth_chainId' })) as Hex
+  if (Number.parseInt(current, 16) !== chainId) await switchChain(chainId)
 }
 
 /** Send one transaction from the connected account. The caller has already built the calldata. */
@@ -431,7 +461,7 @@ export async function signTypedDataWith<const T extends Parameters<ReturnType<ty
   const wallet = createWalletClient({
     account,
     chain: viemChain(chainId),
-    transport: custom(injected()),
+    transport: custom(walletProvider()),
   })
   return wallet.signTypedData(typedData as T)
 }
@@ -446,7 +476,7 @@ export async function sendTransaction(params: {
   const wallet = createWalletClient({
     account: params.account,
     chain: viemChain(params.chainId),
-    transport: custom(injected()),
+    transport: custom(walletProvider()),
   })
   return wallet.sendTransaction({ to: params.to, data: params.data, value: params.value })
 }

@@ -8,6 +8,10 @@
 # nginx's entrypoint runs this via `sh`, so keep it POSIX. `set -u` is deliberately not used: these
 # variables are expected to be absent.
 #
+# REOWN_PROJECT_ID turns the connect button into Reown AppKit's wallet modal; without it the page
+# connects to an injected wallet directly. It is not a secret — AppKit sends it from the browser, so
+# it is in the bundle of every site that uses one.
+#
 # KEEPER_BASE_URL is a multi-chain keeper's root (https://…/keeper): each chain is <base>/<network>,
 # e.g. …/keeper/xdai. KEEPER_URLS (`100=https://…,1=https://…`) overrides it per chain, and KEEPER_URL
 # stays the single-chain shorthand and the last fallback.
@@ -24,9 +28,10 @@ window.__COW_DROP_CONFIG__ = {
   keeperBaseUrl: "$(escape "${KEEPER_BASE_URL:-}")",
   keeperUrls: "$(escape "${KEEPER_URLS:-}")",
   rpcUrl: "$(escape "${RPC_URL:-}")",
+  reownProjectId: "$(escape "${REOWN_PROJECT_ID:-}")",
 }
 CONFIG
 
 # The RPC URL routinely carries an API key in its path, so log only whether one was given.
 if [ -n "${RPC_URL:-}" ]; then rpc_state="<set>"; else rpc_state="<unset>"; fi
-echo "cow-drop: runtime config written (keeperUrl=${KEEPER_URL:-<unset>}, keeperBaseUrl=${KEEPER_BASE_URL:-<unset>}, keeperUrls=${KEEPER_URLS:-<unset>}, rpcUrl=$rpc_state)"
+echo "cow-drop: runtime config written (keeperUrl=${KEEPER_URL:-<unset>}, keeperBaseUrl=${KEEPER_BASE_URL:-<unset>}, keeperUrls=${KEEPER_URLS:-<unset>}, rpcUrl=$rpc_state, reownProjectId=${REOWN_PROJECT_ID:-<unset>})"

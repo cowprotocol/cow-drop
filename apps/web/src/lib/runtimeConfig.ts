@@ -28,8 +28,27 @@ declare global {
        */
       keeperUrls?: Record<string, string> | string
       rpcUrl?: string
+      /** Reown AppKit project id, from dashboard.reown.com. Public: it ships in every bundle. */
+      reownProjectId?: string
     }
   }
+}
+
+/**
+ * The Reown project id, which turns the connect button into AppKit's wallet modal.
+ *
+ * Optional, like everything else here. Without one the page connects to an injected wallet directly,
+ * exactly as it did before — a project id is an account someone has to create, and the app has to
+ * work for whoever cloned the repo five minutes ago.
+ *
+ * Not a secret. AppKit sends it from the browser on every connection, so it is in the bundle of every
+ * site that uses one; the dashboard restricts it by origin instead.
+ */
+export function configuredReownProjectId(): string | undefined {
+  return (
+    clean(globalThis.window?.__COW_DROP_CONFIG__?.reownProjectId) ??
+    clean(import.meta.env.VITE_REOWN_PROJECT_ID)
+  )
 }
 
 /** A configured string, or undefined. Blank is "unset": the entrypoint emits "" for absent vars. */

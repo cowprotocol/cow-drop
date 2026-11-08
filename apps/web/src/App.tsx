@@ -9,7 +9,8 @@ import { BuildInfo } from './components/BuildInfo.js'
 import { TOAST_MS, Toasts } from './components/Toasts.js'
 import type { ActivityEntry } from './lib/activity.js'
 import { useFillTracker, useKeeperActivity } from './lib/keeperStream.js'
-import { DEFAULT_CHAIN_ID, connect, onAccountsChanged, readAccount } from './lib/chain.js'
+import { DEFAULT_CHAIN_ID, connect, isUserRejection, onAccountsChanged, readAccount } from './lib/chain.js'
+import { disconnectWallet, walletModalEnabled, watchModalAccount } from './lib/wallet.js'
 import { TABS, parseRoute, routeHash } from './lib/route.js'
 import { saveDrop } from './lib/storage.js'
 import { useExternalRoute, useRoute, writeHash } from './lib/useRoute.js'
@@ -88,8 +89,15 @@ export function App() {
    */
   const [drop, setDrop] = useState<{ address: Address; recipe: DropRecipeJson } | null>(null)
 
-  /** Follow the wallet's account, so locking it does not leave a stale one on screen. */
+  /**
+   * Follow the wallet's account, so locking it does not leave a stale one on screen.
+   *
+   * Two sources, because there are two kinds of session. The injected provider announces its own
+   * `accountsChanged`; a wallet connected through AppKit's modal is a different provider that this
+   * one never hears from, and disconnecting from inside the modal has to reach the page too.
+   */
   useEffect(() => onAccountsChanged(setAccount), [])
+  useEffect(() => watchModalAccount(setAccount), [])
 
   /**
    * Restore an already-authorised account on load, without prompting.
@@ -132,15 +140,28 @@ export function App() {
     writeHash(routeHash({ tab: 'bridge', recipe: bridgeRecipe }), 'replace')
   }, [route.tab, bridgeRecipe])
 
+  const [connecting, setConnecting] = useState(false)
+
   const onConnect = async () => {
     setError(null)
+    setConnecting(true)
     try {
       // The chain the user is looking at, not the default: connecting on the default and then letting
       // the wallet's `chainChanged` drag the page back would silently discard their network choice.
       setAccount(await connect(connectChainId))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      // Closing the modal is a decision, not a failure. Reporting it as an error banner would put a
+      // red box on the page for choosing not to connect.
+      if (!isUserRejection(cause)) setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setConnecting(false)
     }
+  }
+
+  const onDisconnect = async () => {
+    setError(null)
+    await disconnectWallet()
+    setAccount(null)
   }
 
   /*
@@ -208,7 +229,7 @@ export function App() {
           </div>
           {/*
             The drop on the bench, kept in reach.
-            
+
             Only on the builder's own tab: on Drops or Bridge it would be describing something the
             page in front of you is not about, and the Drops list already carries a Share per row.
           */}
@@ -220,11 +241,25 @@ export function App() {
             />
           )}
 
+          {/*
+            Centred under the name rather than parked at the edge, and the one filled button on the
+            page. It is the only thing here anybody has to do before a drop can be activated, and it
+            used to read as a utility control in the corner.
+          */}
           <div className="wallet">
             {account ? (
-              <span className="pill">{account}</span>
+              <>
+                <span className="pill">{account}</span>
+                {walletModalEnabled() && (
+                  <button className="link" onClick={() => void onDisconnect()}>
+                    Disconnect
+                  </button>
+                )}
+              </>
             ) : (
-              <button onClick={onConnect}>Connect wallet</button>
+              <button className="connect" onClick={() => void onConnect()} disabled={connecting}>
+                {connecting ? 'Connecting…' : 'Connect wallet'}
+              </button>
             )}
           </div>
         </header>
