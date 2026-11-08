@@ -13,7 +13,7 @@ import { recipeFromHash, recipeToHash } from './storage.js'
  * without a browser; `useRoute.ts` owns the reading and writing.
  */
 
-export type Tab = 'recipes' | 'activity' | 'bridge' | 'drops' | 'about' | 'sdk' | 'share'
+export type Tab = 'recipes' | 'activity' | 'bridge' | 'drops' | 'recover' | 'about' | 'sdk' | 'share'
 
 /**
  * Screen order in the tab bar.
@@ -35,6 +35,13 @@ export const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
   { id: 'drops', label: 'Drops' },
   { id: 'bridge', label: 'Bridge to Drop' },
+  /*
+   * Its own tab rather than a step inside the builder, because it is not part of building anything.
+   * As a step it could only ever act on the drop the form currently derives — so a drop built by an
+   * older version of a recipe, whose address the form can no longer reproduce, had no way to reach
+   * its own funds. Here it takes an address instead, and any drop you own is reachable.
+   */
+  { id: 'recover', label: 'Recover' },
   { id: 'about', label: 'About' },
   { id: 'sdk', label: 'SDK' },
 ]
@@ -63,6 +70,7 @@ const TABS_BY_ID: Record<string, Tab> = {
   activity: 'activity',
   bridge: 'bridge',
   drops: 'drops',
+  recover: 'recover',
   about: 'about',
   sdk: 'sdk',
   share: 'share',
