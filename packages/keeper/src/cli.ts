@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
+import { CONVERT_HAIRCUT_BPS } from '@cowprotocol/cow-drop-sdk'
 import { formatEther, parseEther } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
@@ -43,6 +44,9 @@ Options:
   --allow-origin <origins>   CORS origins, comma separated. Default *.
   --poll <seconds>           Seconds between passes. Default 12.
   --min-balance <native>     Warn at boot below this balance. Defaults to $KEEPER_MIN_BALANCE, else 0.1.
+  --convert-haircut-bps <n>  How far under the market a convert drop's order minimum sits. Defaults to
+                             $KEEPER_CONVERT_HAIRCUT_BPS, else 100 (1%). A convert recipe commits no
+                             price, so this is the only thing deciding what the keeper accepts for it.
   --dry-run                  Decide and simulate everything, broadcast nothing.
   --quiet                    Errors only.
   --help                     This.
@@ -212,6 +216,7 @@ async function main(): Promise<void> {
   const pollSeconds = num(args, 'poll') ?? 12
   const dryRun = args['dry-run'] === true
   const minBalanceWarnWei = parseEther(str(args, 'min-balance') ?? process.env['KEEPER_MIN_BALANCE'] ?? '0.1')
+  const convertHaircutBps = resolveConvertHaircutBps(args)
   const generation = num(args, 'generation')
 
   // The whole configuration, at boot, before the first RPC call that can hang.
@@ -221,6 +226,9 @@ async function main(): Promise<void> {
   // rather than from whichever shell invocation someone has since scrolled past.
   logger.info(`starting — generation ${generation ?? 'latest'}, paying from payer ${account.address}`)
   logger.info(`polling every ${pollSeconds}s, warning below ${formatEther(minBalanceWarnWei)} native`)
+  // Printed with the rest of the money-spending configuration: for a convert drop this number is the
+  // whole of what the keeper will accept, and nothing on-chain checks it.
+  logger.info(`convert drops priced at ${convertHaircutBps} bps under the market`)
   if (dryRun) logger.warn('dry run: everything is decided and simulated, nothing is broadcast')
 
   const chains = []
@@ -241,6 +249,7 @@ async function main(): Promise<void> {
       pollIntervalMs: pollSeconds * 1000,
       dryRun,
       minBalanceWarnWei,
+      convertHaircutBps,
     })),
   })
 
@@ -251,6 +260,33 @@ async function main(): Promise<void> {
 
   await service.run(stop.signal)
   await service.close()
+}
+
+/**
+ * How far under the market a convert activation sets its minimum.
+ *
+ * Validated here rather than left to `convertMinimum`, which throws: a bad value in the environment
+ * should stop the process at boot with the name of the setting, not surface as a swallowed failure
+ * the first time a convert drop is funded.
+ */
+export function resolveConvertHaircutBps(
+  args: Args,
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const configured = num(args, 'convert-haircut-bps') ?? numeric(env['KEEPER_CONVERT_HAIRCUT_BPS'])
+  if (configured === undefined) return CONVERT_HAIRCUT_BPS
+  if (!Number.isInteger(configured) || configured < 0 || configured >= 10_000) {
+    throw new Error(
+      `--convert-haircut-bps (or $KEEPER_CONVERT_HAIRCUT_BPS) must be a whole number of bps under 10000, got: ${configured}`,
+    )
+  }
+  return configured
+}
+
+/** An environment value as a number, or undefined when it is unset or blank. */
+function numeric(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined
+  return Number(value)
 }
 
 /**

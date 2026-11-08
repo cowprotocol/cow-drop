@@ -130,6 +130,28 @@ export async function keeperPayer(chainId?: number): Promise<Address | null> {
 }
 
 /**
+ * How far under the market this keeper prices a convert activation, in bps.
+ *
+ * Asked rather than configured separately: the keeper is what actually names the minimum when it
+ * activates, so a second setting here could only ever disagree with it. `null` when there is no
+ * keeper for the chain, or it is too old to report one — the caller then falls back to the SDK
+ * default, which is what such a keeper is using anyway.
+ */
+export async function keeperConvertHaircutBps(chainId?: number): Promise<number | null> {
+  const base = keeperUrl(chainId)
+  if (!base) return null
+  try {
+    const about = (await parse(await fetch(`${base}/v1/about`))) as
+      | { convertHaircutBps?: number }
+      | undefined
+    const bps = about?.convertHaircutBps
+    return typeof bps === 'number' && Number.isInteger(bps) && bps >= 0 && bps < 10_000 ? bps : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Hand a recipe to the keeper.
  *
  * Idempotent at the server, which is why this does not try to detect an existing registration first:

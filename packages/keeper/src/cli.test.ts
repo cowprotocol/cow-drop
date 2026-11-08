@@ -3,7 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { loadPrivateKey, parseArgs, policyFor, resolveChains, resolvePaths } from './cli.js'
+import { CONVERT_HAIRCUT_BPS } from '@cowprotocol/cow-drop-sdk'
+
+import {
+  loadPrivateKey,
+  parseArgs,
+  policyFor,
+  resolveChains,
+  resolveConvertHaircutBps,
+  resolvePaths,
+} from './cli.js'
 
 const KEY = `0x${'11'.repeat(32)}`
 
@@ -119,5 +128,39 @@ describe('policyFor', () => {
 
   it('refuses a keyed file with no entry for the chain, rather than silently using defaults', () => {
     expect(() => policyFor({ '100': { mode: 'all' } }, 8453)).toThrow(/none for 8453/)
+  })
+})
+
+describe('resolveConvertHaircutBps', () => {
+  it('defaults to the SDK constant, so the keeper and the panel agree out of the box', () => {
+    expect(resolveConvertHaircutBps({}, {})).toBe(CONVERT_HAIRCUT_BPS)
+    expect(CONVERT_HAIRCUT_BPS).toBe(100)
+  })
+
+  it('reads the environment', () => {
+    expect(resolveConvertHaircutBps({}, { KEEPER_CONVERT_HAIRCUT_BPS: '250' })).toBe(250)
+  })
+
+  it('lets the flag win over the environment', () => {
+    expect(
+      resolveConvertHaircutBps({ 'convert-haircut-bps': '25' }, { KEEPER_CONVERT_HAIRCUT_BPS: '250' }),
+    ).toBe(25)
+  })
+
+  it('treats a blank or absent variable as unset rather than as zero', () => {
+    expect(resolveConvertHaircutBps({}, { KEEPER_CONVERT_HAIRCUT_BPS: '' })).toBe(CONVERT_HAIRCUT_BPS)
+    expect(resolveConvertHaircutBps({}, { KEEPER_CONVERT_HAIRCUT_BPS: '   ' })).toBe(CONVERT_HAIRCUT_BPS)
+  })
+
+  it('accepts an explicit zero, which is "take whatever the market pays"', () => {
+    expect(resolveConvertHaircutBps({}, { KEEPER_CONVERT_HAIRCUT_BPS: '0' })).toBe(0)
+  })
+
+  it('refuses a value that is not a whole number of bps under 10000', () => {
+    for (const bad of ['-1', '1.5', '10000', 'abc']) {
+      expect(() => resolveConvertHaircutBps({}, { KEEPER_CONVERT_HAIRCUT_BPS: bad })).toThrow(
+        /convert-haircut-bps/,
+      )
+    }
   })
 })

@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { activateConvertDrop, postPlacedOrders, readTokenBalance } from '../lib/drop.js'
 import { quoteConvert, type ConvertQuote } from '../lib/quote.js'
+import { keeperConvertHaircutBps } from '../lib/keeper.js'
 import { isUserRejection, switchChain, walletChainId, wrappedNative } from '../lib/chain.js'
 import { findToken, type TokenInfo } from '../lib/tokenList.js'
 import { TokenPicker } from './TokenPicker.js'
@@ -71,7 +72,16 @@ export function ConvertPanel({
   const [balance, setBalance] = useState<bigint | null>(null)
   const [quote, setQuote] = useState<ConvertQuote | null>(null)
   const [quoteError, setQuoteError] = useState<string | null>(null)
+  /**
+   * Starts at the SDK default and moves to the keeper's, once it says what that is.
+   *
+   * Not a second setting: the keeper is what names the minimum when it activates, so showing anything
+   * else here would be showing a price nobody will use. Still editable — this activation is the one
+   * being priced, and the operator's number is a starting point, not a rule.
+   */
   const [haircut, setHaircut] = useState(String(CONVERT_HAIRCUT_BPS))
+  /** Cleared when the user types, so a late answer never overwrites what they just set. */
+  const [haircutTouched, setHaircutTouched] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -82,6 +92,18 @@ export function ConvertPanel({
       setSellToken(defaultSellToken(tokens, chainId, step?.buyToken))
     }
   }, [tokens, chainId, sellToken, step?.buyToken])
+
+  useEffect(() => {
+    let cancelled = false
+    void keeperConvertHaircutBps(chainId).then((bps) => {
+      if (!cancelled && bps !== null && !haircutTouched) setHaircut(String(bps))
+    })
+    return () => {
+      cancelled = true
+    }
+    // `haircutTouched` is read, not depended on: re-running when it flips would re-fetch for nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainId])
 
   // One clock for the countdown. A second is the finest grain it shows.
   useEffect(() => {
@@ -243,7 +265,10 @@ export function ConvertPanel({
             <input
               inputMode="numeric"
               value={haircut}
-              onChange={(event) => setHaircut(event.target.value)}
+              onChange={(event) => {
+                setHaircutTouched(true)
+                setHaircut(event.target.value)
+              }}
               aria-invalid={!bpsValid}
             />
           </label>
