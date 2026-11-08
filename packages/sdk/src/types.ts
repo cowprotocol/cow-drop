@@ -91,15 +91,6 @@ export interface DropAddresses {
    */
   convertSteps?: Address
   /**
-   * `CooldownSteps` — hosts `claimCooldown`, which records a deadline in the drop's own storage and
-   * refuses to run again before it.
-   *
-   * Optional for the same reason again: it joined generation 2 last, and only recipes naming a
-   * cooldown step reach it. It is what lets a recipe be reusable *and* hold at most one live
-   * conditional order — `once` offers only the two extremes.
-   */
-  cooldownSteps?: Address
-  /**
    * `GPv2Settlement` and `ComposableCoW`. Not cow-drop's own contracts and not inputs to a drop
    * address — but they *are* constructor inputs to the step contracts, so they belong to the
    * generation. Carried so a rescue can retire live orders without an RPC round-trip.

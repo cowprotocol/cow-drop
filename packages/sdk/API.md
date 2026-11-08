@@ -39,7 +39,7 @@ await walletClient.sendTransaction(tx)
 | `twapOnArrival(params)` | Template: split whatever lands here into parts and sell over time. One-shot. |
 | `stopLossOnArrival(params)` | Template: sell whatever lands here once a feed pair crosses a strike. One-shot, and self-driving — the watch tower polls the condition. |
 | `paymentRequest(params)` | Template: "pay me `buyAmount` of `buyToken`, in any token". Reusable. The recipe names no sell token; activate it with `buildActivatePaymentTx`. Takes the time guards only. |
-| `steps.*` | Build individual steps by hand: `presignSellAll`, `presignSellAllAtOracle`, `twapFromBalance`, `stopLossFromBalance`, `payment`, `requireCallResult`, `requireMinBalance`, `requireTimeWindow`, `claimCooldown`, `wrapNative`, `approveMax`, `approveBalance`, `sweep`, and `raw` for anything else. |
+| `steps.*` | Build individual steps by hand: `presignSellAll`, `presignSellAllAtOracle`, `twapFromBalance`, `stopLossFromBalance`, `payment`, `requireCallResult`, `requireMinBalance`, `requireTimeWindow`, `wrapNative`, `approveMax`, `approveBalance`, `sweep`, and `raw` for anything else. |
 | `describeRecipe(setupData, deployment)` | The inverse: committed bytes → named steps, decoded arguments, and warnings. See below. |
 
 All three templates take the same optional guards (`minAmount`, `notBefore`, `notAfter`), and
@@ -141,13 +141,6 @@ your code and the SDK would produce a *different address*, not a slightly differ
 > might fund in tranches; without it, the first tranche sizes the whole schedule. Ordering affects what a
 > guard measures, not whether it binds — the recipe is atomic, so a guard anywhere unwinds the whole
 > activation.
-
-> **A cooldown is the third setting between `once` and reusable.** `once: true` spends the address on
-> one arrival; `once: false` lets a second activation register a second order over the balance the
-> first is still working through. `claimCooldown` records a deadline in the drop and refuses to run
-> again before it, so the address keeps taking arrivals while only ever holding one live order. Size
-> it to the schedule — `twapOnArrival({ reusableAfter: true })` uses `parts * partDuration` — and put
-> it *after* the balance guard, or anyone can re-activate on dust the moment the window opens.
 
 **`salt` and `orderSalt` are different things.** The recipe's `salt` is the factory's user salt: it moves
 the drop address, so the same parameters can yield more than one drop (or grind a vanity address without

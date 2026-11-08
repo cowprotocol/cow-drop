@@ -116,7 +116,6 @@ export type DropStepJson =
    * `once` recipe and a freely reusable one. Belongs after the balance guard and before the order
    * step it paces.
    */
-  | { type: 'claimCooldown'; cooldownSeconds: number | string }
   | { type: 'wrapNative'; wrappedNative: Address; allowFailure?: boolean }
   | { type: 'approveMax'; token: Address; spender: Address; allowFailure?: boolean }
   /**
@@ -238,30 +237,16 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
     calls: json.steps.map((step) => compileStep(step, deployment, json.owner)),
   }
 
-  const cooldown = json.steps.some((step) => step.type === 'claimCooldown')
-
-  // Alternatives, not layers. `once` is checked first and wins outright, so the cooldown would be
-  // claimed on the single run and then never consulted — a recipe that looks paced and is not.
-  if (recipe.once && cooldown) {
-    throw new Error(
-      'a "once" recipe cannot also claim a cooldown: the single run is spent either way, so the ' +
-        'cooldown never gates anything. Pick one.',
-    )
-  }
-
-  // `allowFailure` is fine alone and dangerous next to anything that rations activation: a step that
-  // fails without reverting lets an activation succeed having done nothing, having consumed the
-  // ration anyway. For `once` that leaves the drop permanently inert; for a cooldown it burns the
-  // window until the next one opens. Because activation is permissionless, anyone could do that to
+  // `once` and `allowFailure` are each fine alone and dangerous together: a step that fails without
+  // reverting lets an activation succeed having done nothing, which spends the single run and leaves
+  // the drop permanently inert. Because activation is permissionless, anyone could do that to
   // anyone, at no cost beyond gas. Refused rather than warned about.
-  if (recipe.once || cooldown) {
+  if (recipe.once) {
     const index = recipe.calls.findIndex((call) => call.allowFailure)
     if (index !== -1) {
-      const kind = recipe.once ? 'a "once" recipe' : 'a recipe with a cooldown'
-      const spent = recipe.once ? 'the run' : 'the window'
       throw new Error(
-        `step ${index + 1} sets allowFailure in ${kind}: ${spent} could be spent by anyone ` +
-          `without the step taking effect. Drop allowFailure, or remove what rations the activation.`,
+        `step ${index + 1} sets allowFailure in a "once" recipe: the run could be spent by anyone ` +
+          `without the step taking effect. Drop allowFailure, or make the recipe reusable.`,
       )
     }
   }
@@ -394,8 +379,6 @@ function compileStep(step: DropStepJson, deployment: DropDeployment, owner: Addr
         token: step.token,
         minAmount: BigInt(step.minAmount),
       })
-    case 'claimCooldown':
-      return steps.claimCooldown(deployment, { cooldownSeconds: BigInt(step.cooldownSeconds) })
     case 'requireTimeWindow':
       return steps.requireTimeWindow(deployment, {
         notBefore: step.notBefore === undefined ? undefined : BigInt(step.notBefore),

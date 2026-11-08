@@ -9,7 +9,6 @@ import {DropExecutor} from "src/DropExecutor.sol";
 import {DropBungeeReceiver} from "src/bridge/DropBungeeReceiver.sol";
 import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 import {ConvertSteps} from "src/steps/ConvertSteps.sol";
-import {CooldownSteps} from "src/steps/CooldownSteps.sol";
 import {GuardSteps} from "src/steps/GuardSteps.sol";
 import {PaymentSteps} from "src/steps/PaymentSteps.sol";
 import {PresignSteps} from "src/steps/PresignSteps.sol";
@@ -72,7 +71,6 @@ contract DeployScript is Script {
         address stopLossSteps;
         address paymentSteps;
         address convertSteps;
-        address cooldownSteps;
         address cowOrderPoster;
         address bungeeReceiver;
         address composableCow;
@@ -205,15 +203,6 @@ contract DeployScript is Script {
             );
         }
 
-        // Takes no constructor arguments, like `GuardSteps`: a cooldown depends on no protocol
-        // contract, so this address tracks nothing but its own code. Only recipes naming a cooldown
-        // step reach it, so joining the generation moves no existing drop.
-        address cooldownSteps = _create2(type(CooldownSteps).creationCode);
-        if (cooldownSteps.code.length == 0) {
-            vm.broadcast();
-            new CooldownSteps{salt: SALT}();
-        }
-
         // Not part of any drop address: nothing in a recipe reaches it, because the steps inline the
         // `CowOrder` library instead. It ships with the generation because it is the address a
         // third-party contract integrates against, and that address has to be stable and recorded.
@@ -246,7 +235,6 @@ contract DeployScript is Script {
             stopLossSteps: stopLossSteps,
             paymentSteps: paymentSteps,
             convertSteps: convertSteps,
-            cooldownSteps: cooldownSteps,
             cowOrderPoster: cowOrderPoster,
             bungeeReceiver: bungeeReceiver,
             composableCow: composableCow,
@@ -275,7 +263,6 @@ contract DeployScript is Script {
         console.log("stopLossSteps      ", d.stopLossSteps);
         console.log("paymentSteps       ", d.paymentSteps);
         console.log("convertSteps       ", d.convertSteps);
-        console.log("cooldownSteps      ", d.cooldownSteps);
         console.log("cowOrderPoster     ", d.cowOrderPoster);
         console.log("bungeeReceiver     ", d.bungeeReceiver);
         console.log("executor           ", d.executor);
@@ -307,7 +294,6 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "stopLossSteps", d.stopLossSteps);
         vm.serializeAddress(obj, "paymentSteps", d.paymentSteps);
         vm.serializeAddress(obj, "convertSteps", d.convertSteps);
-        vm.serializeAddress(obj, "cooldownSteps", d.cooldownSteps);
         vm.serializeAddress(obj, "cowOrderPoster", d.cowOrderPoster);
         vm.serializeAddress(obj, "bungeeReceiver", d.bungeeReceiver);
         string memory json = vm.serializeAddress(obj, "executor", d.executor);

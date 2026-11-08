@@ -3,7 +3,6 @@ import { encodeFunctionData, type Address, type Hex } from 'viem'
 import {
   GUARD_STEPS_ABI,
   CONVERT_STEPS_ABI,
-  COOLDOWN_STEPS_ABI,
   PAYMENT_STEPS_ABI,
   PRESIGN_STEPS_ABI,
   STOP_LOSS_STEPS_ABI,
@@ -471,45 +470,6 @@ export const steps = {
     )
   },
 
-  /**
-   * Record a deadline in the drop's storage and refuse to run again before it.
-   *
-   * The third setting between a `once` recipe and a plain reusable one. For a recipe that registers a
-   * conditional order neither extreme fits: reusable means a second activation registers a *second*
-   * order over the balance the first is still working through, and one-shot throws the address away
-   * after a single arrival. Size the cooldown to the length of the schedule it guards —
-   * `parts * partDuration` for a TWAP — and the drop keeps taking new arrivals while never holding
-   * two live orders at once.
-   *
-   * **Put it after the recipe's balance guard.** Activation is permissionless, so with no floor on
-   * the balance anyone can re-activate on dust the moment the window opens, place a negligible order
-   * and push the next honest activation out by another full cooldown. A guard that reverts first
-   * takes the claim down with it.
-   *
-   * Unlike every other step, this one *writes* to the drop. That is why it is its own contract rather
-   * than a function on `GuardSteps`, which is deliberately read-only.
-   */
-  claimCooldown(
-    deployment: Pick<DropDeployment, 'cooldownSteps'>,
-    params: { cooldownSeconds: bigint },
-  ): DropCall {
-    if (!deployment.cooldownSteps) {
-      throw new Error('this generation has no CooldownSteps deployment; compile against a generation that has one')
-    }
-    if (params.cooldownSeconds <= 0n) {
-      throw new Error('claimCooldown needs a positive cooldownSeconds; zero would gate nothing')
-    }
-    return stepCall(
-      deployment.cooldownSteps,
-      encodeFunctionData({
-        abi: COOLDOWN_STEPS_ABI,
-        functionName: 'claimCooldown',
-        args: [params.cooldownSeconds],
-      }),
-      // Never failable: a swallowed claim lets the recipe run without the gate it was given.
-      false,
-    )
-  },
 
   /**
    * Refuse to proceed outside an absolute time window. Either bound may be omitted.
