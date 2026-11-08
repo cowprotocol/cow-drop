@@ -1,4 +1,10 @@
-import { buildOwnerSweepTx, buildRescueForState, compileRecipe, getDeployment } from '@cowprotocol/cow-drop-sdk'
+import {
+  buildDeployOnlyTx,
+  buildOwnerSweepTx,
+  buildRescueForState,
+  compileRecipe,
+  getDeployment,
+} from '@cowprotocol/cow-drop-sdk'
 import { formatUnits, isAddress, type Address } from 'viem'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -44,7 +50,7 @@ function short(address: string): string {
  * happened to derive. That is the wrong shape: a drop built against an older version of a step
  * contract has an address the current form cannot reproduce, so its owner could see the funds and
  * not reach them. Here the drop is an input — picked from what this browser saved, or pasted — and
- * anything you own is reachable.
+ * any drop the connected account owns is reachable.
  *
  * The two paths are the SDK's. A deployed drop is swept directly by its admin, which needs no recipe
  * at all; an undeployed one has to be deployed first, which does, so that path is only offered for a
@@ -238,6 +244,12 @@ export function RecoverTab({
     }
   }
 
+  /** Take a token off the list. Only affects what is shown — nothing on chain moves. */
+  const remove = (token: Address) => {
+    setHoldings((current) => current.filter((row) => row.token !== token))
+    setSelected((current) => current.filter((t) => t !== token))
+  }
+
   const toggle = (token: Address) =>
     setSelected((current) =>
       current.includes(token) ? current.filter((t) => t !== token) : [...current, token],
@@ -287,6 +299,37 @@ export function RecoverTab({
     }
   }
 
+  /**
+   * Deploy the drop without running its recipe, leaving an ordinary cow-shed at the same address.
+   *
+   * Needs the recipe, because the address is derived from it — which is why this is offered only for
+   * an undeployed drop this browser still holds. After it the recipe never runs, so a drop whose
+   * conditions can no longer be met stops being a committed promise and becomes an account.
+   */
+  const deployOnly = async () => {
+    if (!chosen?.saved || !account) return
+    setBusy(true)
+    setResult(null)
+    try {
+      if ((await walletChainId()) !== chosen.chainId) await switchChain(chosen.chainId)
+      const compiled = compileRecipe(chosen.saved.recipe)
+      const tx = buildDeployOnlyTx({
+        deployment: compiled.deployment,
+        owner: compiled.owner,
+        setupData: compiled.setupData,
+      })
+      const hash = await sendTransaction({ chainId: chosen.chainId, account, ...tx })
+      await getPublicClient(chosen.chainId).waitForTransactionReceipt({ hash })
+      setResult({ ok: true, text: `Deployed in ${hash}` })
+      await load()
+    } catch (cause) {
+      if (isUserRejection(cause)) return
+      setResult({ ok: false, text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const explorer = chosen ? blockExplorer(chosen.chainId) : null
 
   return (
@@ -297,7 +340,7 @@ export function RecoverTab({
             label={
               <span className="label-text">
                 Drop
-                <Tooltip title="Any drop you own">
+                <Tooltip title="Any drop, not just this one">
                   The list is what this browser saved. Paste any other address to act on it instead —
                   a drop built by an older recipe, or one saved in another browser. Ownership is read
                   from the chain, not from the recipe.
@@ -393,6 +436,23 @@ export function RecoverTab({
                           ? 'reading…'
                           : `${formatUnits(row.balance, row.decimals)}${empty ? ' — empty' : ''}`}
                       </td>
+                      <td>
+                        {/*
+                          * Native is not removable: it is read separately and is the one balance a
+                          * drop can hold without any token ever moving, so hiding it would hide the
+                          * thing most likely to have been missed.
+                          */}
+                        {row.token !== NATIVE && (
+                          <button
+                            type="button"
+                            className="link"
+                            aria-label={`Remove ${row.symbol} from the list`}
+                            onClick={() => remove(row.token)}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   )
                 })}
@@ -412,7 +472,7 @@ export function RecoverTab({
                   Send to
                   <Tooltip title="Recipient">Blank means the connected account.</Tooltip>
                 </span>
-                <input placeholder="0x… — blank means you" value={to} onChange={(e) => setTo(e.target.value)} />
+                <input placeholder="0x… — blank means the connected account" value={to} onChange={(e) => setTo(e.target.value)} />
               </label>
             </div>
 
@@ -423,6 +483,26 @@ export function RecoverTab({
               >
                 {busy ? 'Recovering…' : 'Recover funds'}
               </button>
+              {deployed === false && chosen.saved && (
+                <Tooltip
+                  title="Deploy shed only"
+                  trigger={
+                    <button onClick={() => void deployOnly()} disabled={busy || loading || !isOwner}>
+                      Deploy shed only
+                    </button>
+                  }
+                >
+                  <span>
+                    Deploys the drop at its committed address and skips the recipe, leaving an
+                    ordinary cow-shed the owner drives directly.
+                  </span>
+                  <span>
+                    For a drop whose recipe can no longer succeed and which is worth keeping as an
+                    account rather than emptying — the recipe never runs afterwards. Recovering
+                    funds does not need this first: that path deploys and sweeps in one transaction.
+                  </span>
+                </Tooltip>
+              )}
               <button onClick={() => void load()} disabled={loading}>
                 {loading ? 'Reading…' : 'Refresh balances'}
               </button>
