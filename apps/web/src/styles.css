@@ -891,6 +891,88 @@ details.terminal > summary {
 }
 
 /*
+ * A choice between a handful of named options, shown as joined buttons rather than radios.
+ *
+ * For a decision that shapes the rest of the form — not a field to fill in, a mode to pick. The
+ * radios are still radios underneath, so keyboard and screen readers get a real radiogroup; only
+ * their appearance is borrowed from the buttons.
+ */
+.choice-field {
+  /* Across the whole grid, because the choice governs the fields under it. */
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.choice-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.choice {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex: none;
+}
+
+.choice label {
+  /* `label` is a column by default, which is right for a field and wrong for a button. */
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+  padding: 0.45rem 0.9rem;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-weight: normal;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.choice label + label {
+  border-left: 1px solid var(--border);
+}
+
+.choice label:hover {
+  color: var(--text);
+}
+
+.choice label.selected {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* The control is the label; the input is there for semantics and keyboard focus only. */
+.choice input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+/*
+ * The focused option, not just the focused group.
+ *
+ * The input is visually hidden, so without this a keyboard user can see that the control has focus
+ * and not which half of it does.
+ */
+.choice label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The one-liner beside the choice: what the selected option actually means. */
+.choice-explainer {
+  margin: 0;
+  flex: 1 1 18ch;
+}
+
+/*
  * The typed discount, beside the preset ones.
  *
  * Shaped like the buttons it sits with — same padding, border and radius — because it does the same

@@ -169,6 +169,14 @@ interface FormState {
   validityMinutes: string
   parts: string
   partMinutes: string
+  /**
+   * Make a TWAP address reusable, pacing it with a cooldown the length of the schedule.
+   *
+   * Off by default, and that default is load-bearing: the cooldown is a step, so it is part of the
+   * address. A recipe written without it keeps deriving exactly where it always did, which is why
+   * this is opt-in rather than something to turn off.
+   */
+  reusableTwap: boolean
   wrapNative: boolean
   /** Guards. Blank means "no guard", which is why they are strings rather than numbers. */
   minAmount: string
@@ -205,6 +213,7 @@ const INITIAL: FormState = {
   validityMinutes: '30',
   parts: '12',
   partMinutes: '60',
+  reusableTwap: false,
   wrapNative: false,
   minAmount: '',
   notBefore: '',
@@ -397,6 +406,15 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
       limitPrice,
       wrapNative,
       ...guards,
+      /*
+       * `true` means "the schedule's own length", which is the only sensible cooldown here: by the
+       * time the window reopens the previous TWAP has run out of parts.
+       *
+       * Withheld until there is a minimum, because `twapOnArrival` throws without one — and this runs
+       * inside a render-time `useMemo`, so the throw would blank the page rather than surface as a
+       * message. The form says what is missing; here we just build something that compiles.
+       */
+      ...(form.reusableTwap && guards.minAmount !== undefined ? { reusableAfter: true as const } : {}),
     })
   }
 
@@ -470,6 +488,9 @@ function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
   }
 
   const balanceGuard = rest[0]?.type === 'requireMinBalance' ? rest.shift() : undefined
+  // After the balance guard, which is where `twapOnArrival` puts it — and why the trade is no longer
+  // the only step left. Without this a reusable TWAP fails the count below and never loads.
+  const cooldown = rest[0]?.type === 'claimCooldown' ? rest.shift() : undefined
 
   if (rest.length !== 1) return null
   const trade = rest[0]!
@@ -537,6 +558,7 @@ function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
       base.limitPrice = price
       base.parts = String(trade.parts)
       base.partMinutes = String(Number(trade.partDuration) / 60)
+      base.reusableTwap = cooldown !== undefined
       break
     }
 
@@ -792,6 +814,14 @@ export function RecipesTab({
    * takes the whole address section down with a stack trace instead of saying which field is wrong.
    */
   const labelTooLong = labelBytes(form.label.trim()) > LABEL_MAX_BYTES
+  /**
+   * A reusable TWAP without a minimum, which `twapOnArrival` refuses.
+   *
+   * Checked here rather than left to the template, which throws — and a throw inside `toRecipe` runs
+   * on every keystroke and takes the address section down with a stack trace. Same treatment as an
+   * over-long name: withhold the address and say which field is wrong.
+   */
+  const reusableNeedsMinimum = form.recipeKind === 'twap' && form.reusableTwap && !form.minAmount.trim()
 
   const ownerError = imported
     ? null
@@ -1083,6 +1113,7 @@ export function RecipesTab({
     !feedsMissing &&
     !ownerUnusable &&
     !labelTooLong &&
+    !reusableNeedsMinimum &&
     probeError === null &&
     chainMissing?.length === 0
 
@@ -1290,6 +1321,56 @@ export function RecipesTab({
           onChange={(chainId) => void onNetworkChange(chainId)}
         />
         <div className="grid">
+          {/*
+            * First, and across the whole row, because it is not a parameter like the others: it
+            * decides whether the address is spent on one arrival or keeps working, and it changes
+            * which other fields matter. A checkbox buried among the inputs read as an afterthought.
+            */}
+          {form.recipeKind === 'twap' && (
+            <div className="choice-field">
+              <span className="label-text">
+                Address reuse
+                <Tooltip title="Address reuse">
+                  <span>
+                    Reusable is paced by a cooldown as long as the schedule itself, so the next TWAP
+                    starts only once the previous one has run out of parts — never two running over
+                    one balance.
+                  </span>
+                  <span>
+                    It needs a minimum amount, or anyone can restart it on dust the moment the
+                    cooldown expires. And the cooldown is a step, so it changes the address: a recipe
+                    left one-shot keeps deriving exactly where it did.
+                  </span>
+                </Tooltip>
+              </span>
+              <div className="choice-row">
+                <div className="choice" role="radiogroup" aria-label="Address reuse">
+                  {[
+                    { value: false, label: 'One-shot' },
+                    { value: true, label: 'Reusable' },
+                  ].map((option) => (
+                    <label
+                      key={String(option.value)}
+                      className={form.reusableTwap === option.value ? 'selected' : undefined}
+                    >
+                      <input
+                        type="radio"
+                        name="twap-schedule"
+                        checked={form.reusableTwap === option.value}
+                        onChange={() => set('reusableTwap', option.value)}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+                <p className="hint choice-explainer">
+                  {form.reusableTwap
+                    ? 'A new TWAP for each arrival, once the previous one finishes.'
+                    : 'Runs one TWAP. Funds arriving later sit untouched.'}
+                </p>
+              </div>
+            </div>
+          )}
           <label>
             <span className="label-text">
               Name
@@ -1640,12 +1721,15 @@ export function RecipesTab({
           * Outside the collapsed panel on purpose: a warning nobody can see is not a warning, and this
           * one is about the guard the user has *not* set.
           */}
-        {(form.recipeKind === 'twap' || form.recipeKind === 'stoploss') && !form.minAmount && (
-          <p className="hint warn-note">
-            One-shot recipe with no minimum: anyone can activate on the first wei, and the order is then
-            sized from a part-delivered balance — which is what a bridge paying in tranches sends.
-          </p>
-        )}
+        {(form.recipeKind === 'twap' || form.recipeKind === 'stoploss') &&
+          !form.minAmount &&
+          !form.reusableTwap && (
+            <p className="hint warn-note">
+              One-shot recipe with no minimum: anyone can activate on the first wei, and the order is
+              then sized from a part-delivered balance — which is what a bridge paying in tranches
+              sends.
+            </p>
+          )}
         {form.recipeKind === 'convert' && !isAddress(form.pricer) && (
           <p className="hint warn-note">
             No pricer: anyone can activate this drop and name the order&rsquo;s minimum, down to one atom.
@@ -1706,6 +1790,17 @@ export function RecipesTab({
                   <code>COWShedExecutorFactory</code>. With those missing there is no path out, not even
                   for you.
                 </Tooltip>
+              </p>
+            </Section>
+          ) : reusableNeedsMinimum ? (
+            <Section title={<>3 &middot; Set a minimum first</>}>
+              <p className="warn">
+                A reusable TWAP needs a minimum amount, so the address is withheld until there is one.
+              </p>
+              <p className="hint">
+                Activation is permissionless and the cooldown is what paces it, so without a floor
+                anyone can re-activate on dust the moment the window opens — and push the next real
+                activation out by another full cooldown. Set it under Guards.
               </p>
             </Section>
           ) : labelTooLong ? (
