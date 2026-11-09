@@ -24,7 +24,24 @@ export interface ActivationRevert {
   class: RevertClass
   /** Something printable for a log line or the UI. */
   detail: string
+  /**
+   * When the contract says it will be runnable, as a unix timestamp in seconds.
+   *
+   * Only for an error that carries its own deadline. `waiting` otherwise means "try again later and
+   * find out", and later is a guess; here the revert is telling us the answer, so there is no reason
+   * to keep asking until then.
+   */
+  readyAt?: number
 }
+
+/**
+ * Errors whose first argument is the moment the drop becomes runnable.
+ *
+ * A list rather than "any uint256 first argument", because that is not a convention any contract
+ * promised to follow: `BalanceTooLow(have, want)` would be read as a date in 1970 and park the drop
+ * until the heat death of the sun.
+ */
+const DEADLINE_ERRORS = new Set(['CooldownNotElapsed'])
 
 /**
  * The errors that mean this drop is finished.
@@ -88,10 +105,13 @@ export function classifyRevert(data: Hex | undefined, message: string): Activati
   for (const abi of ABIS) {
     try {
       const decoded = decodeErrorResult({ abi, data })
+      const deadline = DEADLINE_ERRORS.has(decoded.errorName) ? Number(decoded.args?.[0]) : undefined
       return {
         name: decoded.errorName,
         class: TERMINAL.has(decoded.errorName) ? 'terminal' : BLOCKED.has(decoded.errorName) ? 'blocked' : 'waiting',
         detail: formatArgs(decoded.errorName, decoded.args),
+        // A deadline that does not parse is no deadline: fall back to polling rather than to NaN.
+        ...(deadline !== undefined && Number.isFinite(deadline) && deadline > 0 ? { readyAt: deadline } : {}),
       }
     } catch {
       // Not this ABI's error. Try the next.

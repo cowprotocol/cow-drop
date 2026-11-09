@@ -1,4 +1,5 @@
-import { compileRecipe } from '@cowprotocol/cow-drop-sdk'
+import { compileRecipe, COOLDOWN_STEPS_ABI } from '@cowprotocol/cow-drop-sdk'
+import { encodeErrorResult } from 'viem'
 import { describe, expect, it } from 'vitest'
 
 import { createEventBus, type KeeperEvent } from './events.js'
@@ -372,6 +373,37 @@ describe('createKeeper', () => {
     const stored = await h.store.get(CHAIN_ID, h.drop.address)
     expect(stored?.status).toBe('watching')
     expect((await h.store.spendOn(utcDay(h.clock.now()))).totalWei).toBe(999n)
+  })
+
+  it('waits for the exact moment a cooldown revert names', async () => {
+    /*
+     * The lag this removes. `resimulateIntervalMs` is restarted by every simulation, so a drop whose
+     * balance moved while it waited was pushed further back each time — a 240s cooldown took nearly
+     * eight minutes to re-arm in practice. The revert carries the deadline, so there is nothing to
+     * guess at.
+     */
+    const readyAt = 1794169925
+    const chain = fakeChain({
+      balances: FUNDED,
+      simulate: {
+        ok: false,
+        revertData: encodeErrorResult({
+          abi: COOLDOWN_STEPS_ABI,
+          errorName: 'CooldownNotElapsed',
+          args: [BigInt(readyAt)],
+        }),
+        message: 'reverted',
+      },
+    })
+    const h = harness({ chain })
+
+    await h.keeper.tick()
+
+    const stored = await h.store.get(CHAIN_ID, h.drop.address)
+    expect(stored?.backoff.nextAttemptAt).toBe(readyAt * 1000)
+    // Not a failure to back off from: the contract answered, and the answer was "come back then".
+    expect(stored?.backoff.failures).toBe(0)
+    expect(stored?.status).toBe('watching')
   })
 
   it('retires on a terminal revert and never on an unrecognised one', async () => {

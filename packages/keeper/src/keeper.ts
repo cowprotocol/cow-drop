@@ -600,6 +600,20 @@ export function createKeeper(options: KeeperOptions): Keeper {
       await store.update(chainId, drop.address, (current) => ({
         ...current,
         lastSimulation: { at: now(), ok: false, balancesDigest: digest, revert: revert.detail },
+        /*
+         * A revert that names its own deadline is waited out exactly, not polled around.
+         *
+         * `resimulateIntervalMs` is the fallback for a condition nothing off-chain can read, and it
+         * is a poor fit for a cooldown: every simulation before the deadline restarts the interval,
+         * so a drop whose balance moves while it waits is pushed further back each time — which is
+         * how a 240s cooldown came to take nearly eight minutes to re-arm.
+         *
+         * `failures` is deliberately untouched. This is not a failure to back off from; the contract
+         * answered the question, and the answer was "not yet, come back at this time".
+         */
+        ...(revert.readyAt
+          ? { backoff: { ...current.backoff, nextAttemptAt: revert.readyAt * 1000 } }
+          : {}),
         updatedAt: now(),
       }))
 
