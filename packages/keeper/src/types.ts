@@ -190,6 +190,8 @@ export interface RegisteredDrop {
     /** Unchanged balances mean no reason to re-run. This is the whole cost control. */
     balancesDigest: string
     revert?: string
+    /** The deadline this revert named, if it named one. A unix timestamp in seconds. */
+    readyAt?: number
   }
   /**
    * The balances that produced the last confirmed activation, while they are still committed to the
