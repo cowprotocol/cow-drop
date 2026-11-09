@@ -1,4 +1,4 @@
-import { GUARD_STEPS_ABI } from '@cowprotocol/cow-drop-sdk'
+import { COOLDOWN_STEPS_ABI, GUARD_STEPS_ABI } from '@cowprotocol/cow-drop-sdk'
 import { encodeErrorResult, toFunctionSelector, type Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 
@@ -75,5 +75,36 @@ describe('classifyRevert', () => {
     })
 
     expect(classifyRevert(data, '').detail).toBe('BalanceTooLow(1, 1000)')
+  })
+})
+
+describe('a revert that names its own deadline', () => {
+  const cooldownRevert = (notBefore: bigint) =>
+    encodeErrorResult({ abi: COOLDOWN_STEPS_ABI, errorName: 'CooldownNotElapsed', args: [notBefore] })
+
+  it('reports when the contract says it will be runnable', () => {
+    // The timestamp from a real cooldown revert, which is the whole point: the keeper polled blindly
+    // around a deadline the revert had already told it.
+    expect(classifyRevert(cooldownRevert(1794169925n), '')).toMatchObject({
+      name: 'CooldownNotElapsed',
+      class: 'waiting',
+      readyAt: 1794169925,
+    })
+  })
+
+  it('leaves readyAt off an error whose numbers are not a time', () => {
+    // `BalanceTooLow(have, want)` leads with an amount. Read as a date it is 1970, which would park a
+    // live drop for good — so the deadline is read from a named list, never from "the first number".
+    const data = encodeErrorResult({
+      abi: GUARD_STEPS_ABI,
+      errorName: 'BalanceTooLow',
+      args: [10n ** 18n, 2n * 10n ** 18n],
+    })
+
+    expect(classifyRevert(data, '')).not.toHaveProperty('readyAt')
+  })
+
+  it('leaves readyAt off an error with no arguments at all', () => {
+    expect(classifyRevert(guardRevert('TooLate', 1n), '')).not.toHaveProperty('readyAt')
   })
 })

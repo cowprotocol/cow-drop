@@ -495,6 +495,20 @@ export function createKeeper(options: KeeperOptions): Keeper {
     // or a `requireCallResult` — costs an `eth_call` every tick, forever.
     if (!last) return true
     if (last.balancesDigest !== digest) return true
+
+    /*
+     * A deadline the chain should have reached by now. The revert named the moment, so the moment is
+     * a trigger and not only a gate: `nextAttemptAt` alone only holds the drop back, leaving the next
+     * simulation `resimulateIntervalMs` after the last one — a 240s cooldown waited 300s.
+     *
+     * It triggers for one interval rather than forever. `eth_call` runs against the head block, whose
+     * timestamp trails this clock by up to a block time, so the same revert can repeat once or twice
+     * and has to be retried on the tick. A head still behind five minutes later is a stuck node, and
+     * calling it every tick would not unstick it, so the ordinary interval takes over.
+     */
+    const past = last.readyAt === undefined ? -1 : now() - last.readyAt * 1000
+    if (past >= 0 && past < resimulateIntervalMs) return true
+
     return now() - last.at >= resimulateIntervalMs
   }
 
@@ -599,7 +613,27 @@ export function createKeeper(options: KeeperOptions): Keeper {
 
       await store.update(chainId, drop.address, (current) => ({
         ...current,
-        lastSimulation: { at: now(), ok: false, balancesDigest: digest, revert: revert.detail },
+        lastSimulation: {
+          at: now(),
+          ok: false,
+          balancesDigest: digest,
+          revert: revert.detail,
+          ...(revert.readyAt ? { readyAt: revert.readyAt } : {}),
+        },
+        /*
+         * A revert that names its own deadline is waited out exactly, not polled around.
+         *
+         * `resimulateIntervalMs` is the fallback for a condition nothing off-chain can read, and it
+         * is a poor fit for a cooldown: every simulation before the deadline restarts the interval,
+         * so a drop whose balance moves while it waits is pushed further back each time — which is
+         * how a 240s cooldown came to take nearly eight minutes to re-arm.
+         *
+         * `failures` is deliberately untouched. This is not a failure to back off from; the contract
+         * answered the question, and the answer was "not yet, come back at this time".
+         */
+        ...(revert.readyAt
+          ? { backoff: { ...current.backoff, nextAttemptAt: revert.readyAt * 1000 } }
+          : {}),
         updatedAt: now(),
       }))
 
