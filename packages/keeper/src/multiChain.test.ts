@@ -2,6 +2,7 @@ import type { AddressInfo } from 'node:net'
 import type { RequestListener } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { createLoopMonitor } from './liveness.js'
 import { createMultiChainServer, type ChainMount } from './multiChain.js'
 
 /** A chain handler that answers with what it was asked, so the test sees the rewritten path. */
@@ -53,7 +54,31 @@ describe('createMultiChainServer', () => {
   it('answers process liveness at /v1/health with several chains', async () => {
     const get = await start([XDAI, BASE])
 
-    expect(await get('/v1/health')).toEqual({ status: 200, body: { ok: true, networks: ['xdai', 'base'] } })
+    expect(await get('/v1/health')).toEqual({
+      status: 200,
+      body: { ok: true, networks: ['xdai', 'base'], degraded: {} },
+    })
+  })
+
+  it('stays live with a stalled chain, but names it and exports it for an alert', async () => {
+    // Restarting would not unstick one chain and would stop the others, so this is not a 503.
+    let at = 0
+    const keeper = createLoopMonitor({ now: () => at, stallAfterMs: 60_000 })
+    const server = createMultiChainServer({ mounts: [{ ...XDAI, loops: { keeper } }, BASE] })
+    servers.push(server)
+    await new Promise<void>((resolve) => server.listen(0, resolve))
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+
+    at = 61_000
+    keeper.record(new Error('boom'))
+
+    const health = await fetch(`${base}/v1/health`)
+    expect(health.status).toBe(200)
+    expect(((await health.json()) as { degraded: unknown }).degraded).toEqual({ xdai: ['keeper-stalled'] })
+
+    const text = await (await fetch(`${base}/metrics`)).text()
+    expect(text).toContain('cow_drop_loop_stalled{network="xdai",chain_id="100",loop="keeper"} 1')
+    expect(text).toContain('cow_drop_loop_consecutive_failures{network="xdai",chain_id="100",loop="keeper"} 1')
   })
 
   it('names the networks when the path has none of them', async () => {

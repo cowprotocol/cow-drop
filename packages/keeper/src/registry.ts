@@ -91,6 +91,12 @@ export interface RegisterInput {
 export async function registerDrop(input: RegisterInput): Promise<RegistrationResult> {
   const { recipe, store, deployment, maxDrops, now } = input
 
+  // Checked here and not in `compileRecipe`, which coerces it: a file that compiled yesterday must
+  // compile today, but the keeper stores the recipe as sent and has no reason to hold arbitrary JSON.
+  if (typeof recipe.label !== 'string') {
+    return { ok: false, error: 'invalid-recipe', message: 'the recipe label must be a string' }
+  }
+
   let compiled
   try {
     compiled = compileRecipe(recipe)

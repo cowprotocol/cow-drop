@@ -7,6 +7,7 @@ import { keccak256 } from 'viem'
 
 import { createEventBus } from './events.js'
 import { CHAIN_ID, OWNER, deployment, fakeSubmitter, recipeJson, registered } from './fixtures.js'
+import { createLoopMonitor } from './liveness.js'
 import { DEFAULT_POLICY } from './policy.js'
 import { createKeeperServer, openApiDocument, ROUTES, type ServerOptions } from './server.js'
 import { memoryStore } from './store.js'
@@ -88,6 +89,22 @@ describe('POST /v1/drops', () => {
 
     expect(response.status).toBe(400)
     expect((await json(response)).error).toBe('invalid-recipe')
+  })
+
+  it('400s a label that is not a string, and a body nested too deep to store', async () => {
+    // Both reached the state file once, where a 4000-deep label stopped every later write.
+    const { base, store } = await serve()
+    let nested: unknown = {}
+    for (let depth = 0; depth < 4000; depth++) nested = { a: nested }
+
+    const label = await post(base, '/v1/drops', { recipe: { ...recipeJson(), label: { a: 1 } } })
+    const deep = await post(base, '/v1/drops', { recipe: { ...recipeJson(), extra: nested } })
+
+    expect(label.status).toBe(400)
+    expect((await json(label)).error).toBe('invalid-recipe')
+    expect(deep.status).toBe(400)
+    expect((await json(deep)).error).toBe('invalid-json')
+    expect(await store.count(CHAIN_ID)).toBe(0)
   })
 
   it('422s a recipe for a chain this keeper does not serve', async () => {
@@ -392,7 +409,31 @@ describe('GET /v1/health and /v1/policy', () => {
   it('is unhealthy when the payer cannot cover its floor', async () => {
     // So a keeper that has run out of gas is noticed by a monitor, not by a user.
     const { base } = await serve({ submitter: { ...fakeSubmitter([]).submitter, balance: async () => 0n } })
-    expect((await fetch(`${base}/v1/health`)).status).toBe(503)
+    const response = await fetch(`${base}/v1/health`)
+    expect(response.status).toBe(503)
+    expect((await json(response)).problems).toEqual(['payer-below-floor'])
+  })
+
+  it('is unhealthy when a loop has stopped getting anywhere, though the process still answers', async () => {
+    // The keeper that failed every tick for two days answered `ok: true` throughout.
+    let at = 0
+    const keeper = createLoopMonitor({ now: () => at, stallAfterMs: 60_000 })
+    const { base } = await serve({ loops: { keeper } })
+
+    keeper.record()
+    expect((await fetch(`${base}/v1/health`)).status).toBe(200)
+
+    at = 61_000
+    keeper.record(new Error('Maximum call stack size exceeded'))
+    const stalled = await fetch(`${base}/v1/health`)
+    const body = await json(stalled)
+
+    expect(stalled.status).toBe(503)
+    expect(body.problems).toEqual(['keeper-stalled'])
+    expect(body.loops.keeper).toEqual({ stalled: true, lastSuccessAt: 0, consecutiveFailures: 1 })
+
+    keeper.record()
+    expect((await fetch(`${base}/v1/health`)).status).toBe(200)
   })
 
   it('says whether it is subsidising before anyone commits to registering', async () => {

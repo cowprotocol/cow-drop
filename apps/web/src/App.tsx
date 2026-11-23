@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ActivityLog } from './components/ActivityLog.js'
 import { BetaNotice } from './components/BetaNotice.js'
 import { DropBadge } from './components/DropBadge.js'
+import { KeeperNotice } from './components/KeeperNotice.js'
 import { BuildInfo } from './components/BuildInfo.js'
 import { TOAST_MS, Toasts } from './components/Toasts.js'
 import type { ActivityEntry } from './lib/activity.js'
@@ -196,6 +197,8 @@ export function App() {
             <img src="/logo.png" alt="" width={44} height={44} />
             <span>cow-drop</span>
           </a>
+          {/* The page a payer funds from, so the one that most needs to say nothing will activate. */}
+          <KeeperNotice chainId={route.recipe?.chainId ?? connectChainId} />
           <ShareTab recipe={route.recipe} />
           <BuildInfo />
         </main>
@@ -223,6 +226,9 @@ export function App() {
             {error}
           </p>
         )}
+
+        {/* For the chain on the bench, since that is the keeper a drop built here is handed to. */}
+        <KeeperNotice chainId={drop?.recipe.chainId ?? connectChainId} />
 
         <header>
           <div className="brand">

@@ -14,6 +14,7 @@ import type { Submitter } from './chain.js'
 import { matches, type EventBus } from './events.js'
 import { registerDrop, unregisterDrop } from './registry.js'
 import { createNonceLog, exportRecipes, type SignatureVerifier } from './export.js'
+import { stalledLoops, type ChainLoops } from './liveness.js'
 import { frame, keepalive, retryAfter, SSE_HEADERS, writeEvent } from './sse.js'
 import type { KeeperStore } from './store.js'
 import { utcDay } from './store.js'
@@ -46,6 +47,8 @@ export interface ServerOptions {
   convertHaircutBps?: number
   /** Injected so the server tests without a chain. Omitted, the endpoint answers 501. */
   verifySignature?: SignatureVerifier
+  /** This chain's polling loops, so `/v1/health` can say when one has stopped getting anywhere. */
+  loops?: Partial<ChainLoops>
 }
 
 /** Everything the UI needs about one drop, with every bigint already a string. */
@@ -156,7 +159,7 @@ const ADDRESS_PATTERN = '^0x[0-9a-fA-F]{40}$'
 const ADDRESS = new RegExp(ADDRESS_PATTERN)
 
 export const ROUTES: readonly RouteDoc[] = [
-  { method: 'GET', path: '/v1/health', summary: 'Liveness, payer balance, today\'s spend. 503 when the payer is below its floor.' },
+  { method: 'GET', path: '/v1/health', summary: 'Liveness, payer balance, today\'s spend. 503 when the payer is below its floor or a loop has stalled.' },
   { method: 'GET', path: '/v1/policy', summary: 'The subsidy policy in force.' },
   {
     method: 'GET',
@@ -325,6 +328,19 @@ export function applyCors(allowOrigin: string, request: IncomingMessage, respons
   // Never `allow-credentials`: there is no auth on these routes, and it is invalid with `*`.
 }
 
+/** Far more than any recipe needs — a step with a limit price is four levels down. */
+const MAX_JSON_DEPTH = 32
+
+/** Whether parsed JSON nests deeper than `limit`. Iterative, since the input is what is not trusted. */
+export function deeperThan(value: unknown, limit: number): boolean {
+  let level: unknown[] = [value]
+  for (let depth = 0; level.length > 0; depth++) {
+    if (depth > limit) return true
+    level = level.flatMap((item) => (item !== null && typeof item === 'object' ? Object.values(item) : []))
+  }
+  return false
+}
+
 /**
  * One chain's HTTP surface as a request listener, so a server can mount it — alone at `/`, or under
  * `/<network>` beside other chains' (see `./multiChain.ts`). It answers paths relative to its mount:
@@ -346,6 +362,7 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
     logger = silentLogger,
     convertHaircutBps = CONVERT_HAIRCUT_BPS,
     verifySignature,
+    loops,
   } = options
 
   const started = now()
@@ -422,16 +439,23 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
 
   /**
    * Liveness plus the two numbers an operator actually watches: what the payer holds and what today
-   * has cost. 503 once the payer is below its floor, so a load balancer can act on it.
+   * has cost. 503 once the payer is below its floor or a loop has stalled, and `problems` says which
+   * — the process answering is not the same as drops being activated.
    */
   async function health(response: ServerResponse): Promise<void> {
     const all = await store.all(deployment.chainId)
     const balance = await submitter.balance()
     const spend = await store.spendOn(utcDay(now()))
-    const healthy = balance >= policy.minPayerBalanceWei
+    const problems = [
+      ...(balance >= policy.minPayerBalanceWei ? [] : ['payer-below-floor']),
+      ...stalledLoops(loops),
+    ]
+    const healthy = problems.length === 0
 
     send(response, healthy ? 200 : 503, {
       ok: healthy,
+      problems,
+      loops: Object.fromEntries(Object.entries(loops ?? {}).map(([name, monitor]) => [name, monitor.status()])),
       chainId: deployment.chainId,
       generation: deployment.generation,
       payer: await submitter.payer(),
@@ -827,12 +851,21 @@ export function createKeeperHandler(options: ServerOptions): RequestListener {
       return { ok: false }
     }
 
+    let value: unknown
     try {
-      return { ok: true, value: JSON.parse(Buffer.concat(chunks).toString('utf8')) }
+      value = JSON.parse(Buffer.concat(chunks).toString('utf8'))
     } catch {
       send(response, 400, { error: 'invalid-json' })
       return { ok: false }
     }
+
+    // A recipe is stored as sent, unknown fields included, and a document nested thousands of levels
+    // deep parses fine but overflows the stack when the state file is next serialised.
+    if (deeperThan(value, MAX_JSON_DEPTH)) {
+      send(response, 400, { error: 'invalid-json', message: `nested deeper than ${MAX_JSON_DEPTH} levels` })
+      return { ok: false }
+    }
+    return { ok: true, value }
   }
 }
 

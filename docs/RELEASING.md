@@ -128,8 +128,13 @@ docker run -d --name cow-drop-keeper \
   registry of watched drops and the spend ledger, neither reconstructible from the chain. Lose it and the keeper forgets which drops it agreed to watch and how much of today's budget it
   already spent. Back it with real disk.
 - `GET /<network>/v1/health` reports that chain's payer, its balance and the budget left, with a 503
-  below the floor. `GET /v1/health` is process liveness — use it for probes, so one empty payer does not
-  restart every chain. Browsable API docs are at `/<network>/v1/docs`.
+  and a `problems` list when the payer is below its floor or a loop has had no successful pass for
+  three minutes (`keeper-stalled`, `watch-tower-stalled`). `GET /v1/health` is process liveness — use
+  it for probes, so one chain in trouble does not restart every chain; it names those chains in
+  `degraded`. Browsable API docs are at `/<network>/v1/docs`.
+- `GET /metrics` exports every chain's loops for Prometheus. Alert on
+  `cow_drop_loop_stalled == 1`: a loop that fails every pass keeps the process up and the probe green,
+  so the probe alone will not notice it.
 - **Moving from one container per chain:** copy each old volume's `state.json` and `cursor.json` into the
   shared volume as `state-<chainId>.json` and `cursor-<chainId>.json` before starting. The state files hold
   the only server-side copy of each registered recipe.

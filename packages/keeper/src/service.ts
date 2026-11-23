@@ -15,6 +15,7 @@ import type { PrivateKeyAccount } from 'viem/accounts'
 import { keeperClient, viemKeeperChain, viemSubmitter } from './chain.js'
 import { createEventBus } from './events.js'
 import { createKeeper } from './keeper.js'
+import { createLoopMonitor, type ChainLoops } from './liveness.js'
 import { forwardOrderResults } from './orders.js'
 import { DEFAULT_POLICY } from './policy.js'
 import { orderBookPaymentQuoter, orderBookPrices } from './revenue.js'
@@ -156,6 +157,7 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
   // arrives and never fills. Serving barn would take a drop generation deployed against barn's
   // settlement, not a flag.
   const orderBook = new OrderBookApi({ chainId: chainId as SupportedChainId, env: 'prod' })
+  const loops: ChainLoops = { keeper: createLoopMonitor(), 'watch-tower': createLoopMonitor() }
 
   const keeper = createKeeper({
     chain: viemKeeperChain(client),
@@ -172,6 +174,7 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
     pollIntervalMs,
     dryRun,
     logger,
+    onTick: loops.keeper.record,
     ...(convertHaircutBps === undefined ? {} : { convertHaircutBps }),
   })
 
@@ -198,6 +201,7 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
     dryRun,
     logger,
     onResult: (result) => void forwardOrderResults({ store, events, chainId })(result),
+    onTick: loops['watch-tower'].record,
   })
 
   /**
@@ -222,10 +226,11 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
     allowOrigin,
     logger,
     verifySignature,
+    loops,
   })
 
   return {
-    mount: { chainId, network, handler } satisfies ChainMount,
+    mount: { chainId, network, handler, loops } satisfies ChainMount,
     run: (signal: AbortSignal) =>
       Promise.all([keeper.run(signal), watchTower.run(signal)]).then(() => undefined),
     report: async () => {

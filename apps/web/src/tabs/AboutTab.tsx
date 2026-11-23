@@ -33,6 +33,8 @@ interface Policy {
 
 interface Health {
   ok: boolean
+  /** Absent from a keeper older than the field, whose only way to be unhealthy was the payer. */
+  problems?: string[]
   payer: string
   payerBalanceWei: string
   counts: { total: number; watching: number; activating: number; retired: number }
@@ -162,7 +164,7 @@ export function AboutTab() {
                   <li>
                     Status:{' '}
                     <strong className={health.ok ? '' : 'warn'}>
-                      {health.ok ? 'ok' : 'payer below its floor'}
+                      {health.ok ? 'ok' : (health.problems ?? ['payer below its floor']).join(', ').replace(/-/g, ' ')}
                     </strong>
                   </li>
                   <li>

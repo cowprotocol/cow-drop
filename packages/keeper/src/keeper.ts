@@ -68,6 +68,8 @@ export interface KeeperOptions {
   /** Prepare everything, broadcast nothing. Exercises the whole pipeline for free. */
   dryRun?: boolean
   logger?: Logger
+  /** Called after every pass of `run`: with nothing when it worked, with the error when it threw. */
+  onTick?: (error?: unknown) => void
 }
 
 export interface KeeperTickResult {
@@ -127,6 +129,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     receiptTimeoutMs = 3 * 60_000,
     dryRun = false,
     logger = silentLogger,
+    onTick,
   } = options
 
   const chainId = deployment.chainId
@@ -1021,13 +1024,19 @@ export function createKeeper(options: KeeperOptions): Keeper {
     async run(signal) {
       logger.info(`watching for drops ready to activate${dryRun ? ' (dry run)' : ''}`)
 
+      let failures = 0
       while (!signal?.aborted) {
         try {
           await tick()
+          failures = 0
+          onTick?.()
         } catch (error) {
           // Kept alive on purpose: an RPC outage should cost a tick, not the process. Nothing was
           // persisted, so the next pass redoes the same work.
           logger.error(`tick failed, retrying: ${error instanceof Error ? error.message : String(error)}`)
+          // Once per streak: the message alone does not say where a failure that repeats comes from.
+          if (++failures === 1 && error instanceof Error && error.stack) logger.error(error.stack)
+          onTick?.(error)
         }
         await sleep(pollIntervalMs, signal)
       }
