@@ -37,5 +37,5 @@ deployed and `--verify --resume` therefore skips. `DRY_RUN=1` shows what it woul
 | | |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | What each contract does, why the split is what it is, the build settings, and the test map |
-| [docs/DEPLOYMENTS.md](../docs/DEPLOYMENTS.md) | Addresses, generations, scripts and verification |
+| [docs/DEPLOYMENTS.md](../docs/DEPLOYMENTS.md) | Generations, the deployment records, scripts and verification |
 | [docs/DESIGN.md](../docs/DESIGN.md) | The commitment scheme the contracts implement |
