@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type RequestListener, type Server, 
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
 import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
 
+import { stalledLoops, type ChainLoops } from './liveness.js'
 import { applyCors } from './server.js'
 
 /** One chain's HTTP surface, and the network name it is mounted under. */
@@ -10,6 +11,8 @@ export interface ChainMount {
   /** CoW's name for the chain — `xdai`, `mainnet`, `base` — and its path prefix here. */
   network: string
   handler: RequestListener
+  /** The chain's polling loops, for `/metrics` and the `degraded` list on `/v1/health`. */
+  loops?: Partial<ChainLoops>
 }
 
 /**
@@ -24,8 +27,9 @@ export interface ChainMount {
  * single-chain keeper always served, so nothing pointed at one breaks.
  *
  * `GET /v1/networks` lists what is mounted where, and with several chains `GET /v1/health` is process
- * liveness. Anything else outside a mount is a 404 naming the networks, so a typo in a base URL says
- * what would have worked.
+ * liveness. `GET /metrics` is every chain's loops in Prometheus' text format, which is what to alert
+ * on. Anything else outside a mount is a 404 naming the networks, so a typo in a base URL says what
+ * would have worked.
  */
 export function createMultiChainServer(options: {
   mounts: readonly ChainMount[]
@@ -63,13 +67,24 @@ export function createMultiChainServer(options: {
       })
     }
 
+    if (request.method === 'GET' && url.pathname === '/metrics') {
+      applyCors(allowOrigin, request, response)
+      response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' })
+      response.end(metrics(mounts))
+      return
+    }
+
     if (only) return only.handler(request, response)
 
     // Process liveness, for a probe that cannot name a network. Deliberately not the per-chain health,
-    // which answers 503 when a payer runs low: restarting the process would not fund it, and would stop
-    // every other chain with it. Each chain's own is at `/<network>/v1/health`.
+    // which answers 503 when a payer runs low or a loop stalls: restarting the process would not fund
+    // the payer, rarely unsticks a loop, and stops every other chain with it. So this stays 200 and
+    // names the chains in trouble in `degraded`; each chain's own is at `/<network>/v1/health`.
     if (request.method === 'GET' && url.pathname.replace(/\/+$/, '') === '/v1/health') {
-      return send(request, response, 200, { ok: true, networks: mounts.map((mount) => mount.network) })
+      const degraded = Object.fromEntries(
+        mounts.map((mount) => [mount.network, stalledLoops(mount.loops)] as const).filter(([, stalled]) => stalled.length > 0),
+      )
+      return send(request, response, 200, { ok: true, networks: mounts.map((mount) => mount.network), degraded })
     }
 
     if (request.method === 'OPTIONS') {
@@ -91,4 +106,39 @@ export function createMultiChainServer(options: {
     response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
     response.end(JSON.stringify(body))
   }
+}
+
+/**
+ * Every chain's loops in Prometheus' text exposition format.
+ *
+ * Written by hand because it is three gauges. `last_success` is absent until a loop has succeeded
+ * once, so alert on `stalled`, which covers a loop that never has.
+ */
+export function metrics(mounts: readonly ChainMount[]): string {
+  const series: Record<string, { help: string; lines: string[] }> = {
+    cow_drop_loop_stalled: { help: '1 when the loop has had no successful pass for too long.', lines: [] },
+    cow_drop_loop_consecutive_failures: { help: 'Passes that have failed since the last success.', lines: [] },
+    cow_drop_loop_last_success_timestamp_seconds: { help: 'When the loop last completed a pass.', lines: [] },
+  }
+
+  for (const mount of mounts) {
+    for (const [loop, monitor] of Object.entries(mount.loops ?? {})) {
+      const labels = `{network="${mount.network}",chain_id="${mount.chainId}",loop="${loop}"}`
+      const status = monitor.status()
+      series.cow_drop_loop_stalled!.lines.push(`cow_drop_loop_stalled${labels} ${status.stalled ? 1 : 0}`)
+      series.cow_drop_loop_consecutive_failures!.lines.push(
+        `cow_drop_loop_consecutive_failures${labels} ${status.consecutiveFailures}`,
+      )
+      if (status.lastSuccessAt !== undefined) {
+        series.cow_drop_loop_last_success_timestamp_seconds!.lines.push(
+          `cow_drop_loop_last_success_timestamp_seconds${labels} ${Math.floor(status.lastSuccessAt / 1000)}`,
+        )
+      }
+    }
+  }
+
+  return Object.entries(series)
+    .flatMap(([name, { help, lines }]) => [`# HELP ${name} ${help}`, `# TYPE ${name} gauge`, ...lines])
+    .join('\n')
+    .concat('\n')
 }

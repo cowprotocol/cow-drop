@@ -243,6 +243,39 @@ describe('fileStore', () => {
 
     expect(await fileStore(path, CHAIN_ID).count(CHAIN_ID)).toBe(2)
   })
+
+  it('flattens a label an older build stored as nested JSON, to what the address committed', async () => {
+    // Registration took any JSON as a label. One nested 4000 deep made `JSON.stringify` overflow the
+    // stack on every later write, so the keeper could read its state and never save it again.
+    const path = await tempPath()
+    const drop = registered()
+    let nested: unknown = {}
+    for (let depth = 0; depth < 4000; depth++) nested = { a: nested }
+    const poisoned = { ...drop, label: nested, recipe: { ...drop.recipe, label: nested } }
+    await writeFile(path, JSON.stringify({ chainId: CHAIN_ID, drops: [poisoned], spend: {} }))
+
+    const store = fileStore(path, CHAIN_ID)
+    const revived = await store.get(CHAIN_ID, drop.address)
+    await store.update(CHAIN_ID, drop.address, (current) => ({ ...current, everFunded: true }))
+
+    expect(revived?.label).toBe('[object Object]')
+    expect(revived?.recipe.label).toBe('[object Object]')
+    expect((await fileStore(path, CHAIN_ID).get(CHAIN_ID, drop.address))?.everFunded).toBe(true)
+  })
+
+  it('keeps a record it could not write out of memory too', async () => {
+    const store = fileStore(await tempPath(), CHAIN_ID)
+    const drop = registered()
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+
+    await expect(store.put({ ...drop, label: cyclic as unknown as string })).rejects.toThrow()
+
+    // The failed write must not be what the next one trips over.
+    expect(await store.count(CHAIN_ID)).toBe(0)
+    await store.put(drop)
+    expect(await store.count(CHAIN_ID)).toBe(1)
+  })
 })
 
 function recipeWithLabel(label: string) {

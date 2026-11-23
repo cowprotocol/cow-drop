@@ -628,6 +628,23 @@ input[aria-invalid='true'] {
 }
 
 /* The page-level error. Lives outside every collapsible section so nothing can hide it. */
+/* The keeper is not doing its job. Error-toned: money sent now will sit where nothing collects it. */
+.keeper-notice {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--error);
+  color: var(--error);
+  border-radius: 8px;
+}
+
+.keeper-notice p {
+  margin: 0;
+}
+
+.keeper-notice p + p {
+  margin-top: 0.5rem;
+}
+
 .error.banner {
   border: 1px solid var(--error);
   border-radius: 8px;

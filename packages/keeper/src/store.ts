@@ -161,10 +161,31 @@ interface StoredFile {
  * status, because for those `activated` still means what it says.
  *
  * No `committedDigest` is restored, which is right: whatever order parked the record has long expired.
+ *
+ * A label that is not a string is flattened to one. Registration used to accept any JSON there, and an
+ * object nested a few thousand levels deep cannot be serialised again — see `write`.
  */
 function revive(drop: RegisteredDrop): RegisteredDrop {
-  const parked = drop.status === 'activated'
-  return parked && !selfDriving(drop.recipe) ? { ...drop, status: 'watching' } : drop
+  const label = committedLabel(drop.label)
+  const plain = label === drop.label ? drop : { ...drop, label, recipe: { ...drop.recipe, label } }
+  const parked = plain.status === 'activated'
+  return parked && !selfDriving(plain.recipe) ? { ...plain, status: 'watching' } : plain
+}
+
+/**
+ * The string a non-string label was committed as.
+ *
+ * `encodeLabel` hands the value to `TextEncoder`, which coerces it, so `String` reproduces the bytes
+ * in `setupData` and the flattened recipe still compiles to the same address.
+ */
+function committedLabel(label: unknown): string {
+  if (typeof label === 'string') return label
+  if (label === undefined) return ''
+  try {
+    return String(label)
+  } catch {
+    return ''
+  }
 }
 
 /**
@@ -209,15 +230,22 @@ export function fileStore(path: string, chainId: number): KeeperStore {
     return cache
   }
 
-  /** Replace the document on disk, and the cache with it. */
+  /**
+   * Replace the document on disk, and then the cache with it.
+   *
+   * In that order, so the cache never holds what the disk refused. A record that cannot be serialised
+   * used to enter the cache first, and from then on every write — every tick, every registration —
+   * failed on it while reads kept answering as if nothing was wrong.
+   */
   async function write(next: StoredFile): Promise<void> {
-    cache = next
+    const body = `${JSON.stringify(next, null, 2)}\n`
     await mkdir(dirname(path), { recursive: true })
     // Temp-then-rename: a crash mid-write leaves the previous file intact rather than a truncated
     // one. This file is the only server-side copy of recipes, so a torn write is lost money.
     const temp = `${path}.tmp`
-    await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`)
+    await writeFile(temp, body)
     await rename(temp, path)
+    cache = next
   }
 
   /** Every mutation runs through here, one at a time. */

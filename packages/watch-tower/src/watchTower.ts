@@ -44,6 +44,8 @@ export interface WatchTowerOptions {
   logger?: Logger
   onResult?: (result: PostResult) => void
   onSkip?: (skipped: SkippedLog) => void
+  /** Called after every pass of `run`: with nothing when it worked, with the error when it threw. */
+  onTick?: (error?: unknown) => void
 }
 
 export interface TickResult {
@@ -98,6 +100,7 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
     logger = silentLogger,
     onResult,
     onSkip,
+    onTick,
   } = options
 
   if (maxBlockRange < 1n) throw new Error('maxBlockRange must be at least 1')
@@ -170,10 +173,12 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
       try {
         const result = await tick()
         caughtUp = !result?.moreToScan
+        onTick?.()
       } catch (error) {
         // Kept alive on purpose: an RPC or order-book outage should cost a tick, not the process. The
         // cursor did not advance, so the next pass re-scans the same range.
         logger.error(`tick failed, retrying: ${describe(error)}`)
+        onTick?.(error)
       }
 
       // Only sleep once the chain has been caught up to; a backlog is drained at full speed.

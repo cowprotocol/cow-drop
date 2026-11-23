@@ -129,6 +129,32 @@ export async function keeperPayer(chainId?: number): Promise<Address | null> {
   }
 }
 
+/** What is wrong with a keeper, as `/v1/health` names it, plus `unreachable` when it did not answer. */
+export interface KeeperHealth {
+  problems: string[]
+}
+
+/**
+ * Whether the keeper for a chain is doing its job, or null when none is configured.
+ *
+ * Never throws: not answering is itself the finding. A keeper older than `problems` only knew one
+ * way to be unhealthy, so its `ok: false` is read as the payer being below its floor.
+ */
+export async function readKeeperHealth(chainId?: number): Promise<KeeperHealth | null> {
+  const base = keeperUrl(chainId)
+  if (!base) return null
+  try {
+    // 503 still carries the body, and the body is the point.
+    const reported = (await parse(await fetch(`${base}/v1/health`))) as
+      | { ok?: boolean; problems?: string[] }
+      | undefined
+    if (typeof reported?.ok !== 'boolean') return { problems: ['unreachable'] }
+    return { problems: reported.problems ?? (reported.ok ? [] : ['payer-below-floor']) }
+  } catch {
+    return { problems: ['unreachable'] }
+  }
+}
+
 /**
  * How far under the market this keeper prices a convert activation, in bps.
  *

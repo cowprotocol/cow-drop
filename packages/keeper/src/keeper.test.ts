@@ -539,6 +539,22 @@ describe('createKeeper', () => {
     await expect(h.keeper.run(stop.signal)).resolves.toBeUndefined()
   })
 
+  it('reports each pass of the loop, so a tick that fails forever can be told from one that works', async () => {
+    const outcomes: unknown[] = []
+    const stop = new AbortController()
+    const h = harness({ options: { pollIntervalMs: 0, onTick: (error) => outcomes.push(error) } })
+    let pass = 0
+    h.chain.chain.getBalances = async () => {
+      if (++pass === 2) stop.abort()
+      if (pass === 1) throw new Error('rpc down')
+      return [0n]
+    }
+
+    await h.keeper.run(stop.signal)
+
+    expect(outcomes).toEqual([new Error('rpc down'), undefined])
+  })
+
   it('reports the oldest in-flight block, so the watch tower can be rewound to it', async () => {
     // Without the rewind, a restart between broadcast and scan skips the block the activation landed
     // in and its orders are never posted.
