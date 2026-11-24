@@ -81,6 +81,12 @@ settlement and takes the gas out of the surplus.
 - **A refusal is retried.** The order book rejecting the order usually means the market is under the
   limit; the drop backs off and the next attempt re-prices nothing but the deadline.
 
+A `paymentViaHook` recipe is the same with the sell token left open. It is found and priced exactly
+as a payment drop is (`Transfer` logs, then a buy quote per token), and the token that clears becomes
+the order, built with `buildHookPaymentOrder`. The latch is per token, as for a payment. One case
+still takes a transaction: a payment made in `buyToken` itself has no order to carry the activation,
+so it is forwarded by activating, under the ordinary policy.
+
 ## Payment drops
 
 A `payment` recipe — "pay me `buyAmount` of `buyToken`, in any token" — names no sell token, so the

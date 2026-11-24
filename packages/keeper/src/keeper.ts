@@ -5,7 +5,9 @@ import {
   buildActivatePaymentTx,
   buildActivateTx,
   buildHookOrder,
+  buildHookPaymentOrder,
   findSellBalanceOrders,
+  type HookOrder,
   requiredPayment,
   type DropDeployment,
   type DropRecipeJson,
@@ -670,8 +672,11 @@ export function createKeeper(options: KeeperOptions): Keeper {
     result.ready++
 
     // Posted, not sent: the order carries the activation, so there is no gas to price or budget.
-    if (hookPosted(drop.recipe)) {
-      await postHookOrders(drop, digest, balances, result)
+    // Except a payment made in the token asked for: there is no order to carry anything, so
+    // forwarding it takes the transaction below, under the same policy as any other.
+    const forwarded = paying !== undefined && paying.sellToken === drop.hints.payment?.buyToken
+    if (hookPosted(drop.recipe) && !forwarded) {
+      await postHookOrders(drop, digest, balances, result, paying)
       return
     }
 
@@ -724,21 +729,22 @@ export function createKeeper(options: KeeperOptions): Keeper {
     digest: string,
     balances: Record<string, bigint>,
     result: KeeperTickResult,
+    /** For a payment drop, the token this tick chose to pay with. */
+    paying?: { sellToken: Address; balance: bigint },
   ): Promise<void> {
     const orderUids: Hex[] = []
+    const base = { deployment, owner: drop.recipe.owner, setupData: drop.setupData, now: Math.floor(now() / 1000) }
 
-    for (const { data } of findSellBalanceOrders(deployment, drop.setupData)) {
-      const balance = balances[data.sellToken.toLowerCase()] ?? 0n
-      if (balance === 0n) continue
+    // A payment recipe names no token, so the one this tick priced is the order. A swap recipe names
+    // its own, one per registration.
+    const orders: HookOrder[] = paying
+      ? [buildHookPaymentOrder({ ...base, ...paying })]
+      : findSellBalanceOrders(deployment, drop.setupData)
+          .map(({ data }) => ({ sellToken: data.sellToken, balance: balances[data.sellToken.toLowerCase()] ?? 0n }))
+          .filter(({ balance }) => balance > 0n)
+          .map((selling) => buildHookOrder({ ...base, ...selling }))
 
-      const built = buildHookOrder({
-        deployment,
-        owner: drop.recipe.owner,
-        setupData: drop.setupData,
-        balance,
-        now: Math.floor(now() / 1000),
-        sellToken: data.sellToken,
-      })
+    for (const built of orders) {
 
       if (dryRun || !orderBook) {
         logger.info(
@@ -798,7 +804,20 @@ export function createKeeper(options: KeeperOptions): Keeper {
       ...current,
       blockedReason: undefined,
       blockedUntil: undefined,
-      committedDigest: digest,
+      // Per token for a payment, as a confirmed payment activation latches: a second token arriving
+      // must not release this one's order, nor be held back by it.
+      ...(paying
+        ? {
+            payment: {
+              tokens: [],
+              ...current.payment,
+              committed: {
+                ...current.payment?.committed,
+                [paying.sellToken]: { balance: String(paying.balance), until: orders[0]!.order.validTo * 1000 },
+              },
+            },
+          }
+        : { committedDigest: digest }),
       backoff: { failures: 0, nextAttemptAt: 0 },
       activations: [...current.activations, { ref: first, status: 'posted', at: now(), orderUids }],
       updatedAt: now(),
