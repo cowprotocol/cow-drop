@@ -34,15 +34,15 @@ generate` pick the new directory up — it reads every `gen*/` and emits them al
 |---|---|---|---|
 | `COWShedWithExecutorSigner` | `0x1c4b988481d945c98a21446AB2960000d290aB22` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) | same |
 | `COWShedExecutorFactory` | `0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) | same |
-| `GuardSteps` | `0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7` | **not yet broadcast** | same |
-| `TokenSteps` | `0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c` | **not yet broadcast** | same |
-| `PresignSteps` | `0xd00cae373DE3a738D13ab7E1203a8d4662D4f1e0` | **not yet broadcast** | **moved** |
-| `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | **not yet broadcast** | same |
-| `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | **not yet broadcast** | same |
+| `GuardSteps` | `0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7` | live on Gnosis | same |
+| `TokenSteps` | `0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c` | live on Gnosis | same |
+| `PresignSteps` | `0xd00cae373DE3a738D13ab7E1203a8d4662D4f1e0` | live on Gnosis | **moved** |
+| `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | live on Gnosis | same |
+| `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | live on Gnosis | same |
 | `PaymentSteps` | `0x8BA52FAcbeFCC97CB93ccfCB53e3f2204543EEe8` | live on Gnosis | new |
-| `SellBalanceHandler` | `0x33da3b784F6d4D9065377b6aDC4690Ba50f2C185` | **not yet broadcast** | new |
-| `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | **not yet broadcast** | **moved** |
-| `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | **not yet broadcast** | new |
+| `SellBalanceHandler` | `0x33da3b784F6d4D9065377b6aDC4690Ba50f2C185` | live on Gnosis | new |
+| `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | live on Gnosis | **moved** |
+| `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | live on Gnosis | new |
 | `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis | same |
 
 Generation 2 exists because `PresignSteps` and `CowOrderPoster` changed bytecode, and therefore addresses.
@@ -61,9 +61,9 @@ but only to recipes that name a payment step, and none existed before it. Adding
 and generation 2 had not been broadcast. `DropAddresses.paymentSteps` is optional because generation 1
 has none.
 
-**Generation 2 has not been broadcast.** `pnpm generate` has already pointed the SDK at it, so a recipe
-compiled today resolves against the new `PresignSteps`. Until the deploy runs, activating a path-P drop
-reverts with `NoCodeAtDelegateTarget`, which the UI's `getCode` check surfaces before anyone funds anything.
+**Generation 2 is live on Gnosis**, every contract in the table. On a chain where the deploy has not
+run, activating a drop reverts with `NoCodeAtDelegateTarget`, which the UI's `getCode` check surfaces
+before anyone funds anything.
 
 Both cow-shed contracts are the canonical ones already live on Gnosis, so **the only things this project
 deploys are its own nine contracts** and a drop address derives entirely from official cow-shed code.
