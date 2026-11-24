@@ -49,6 +49,8 @@ const payment = artifact('PaymentSteps.sol/PaymentSteps.json')
 const convert = artifact('ConvertSteps.sol/ConvertSteps.json')
 const cooldown = artifact('CooldownSteps.sol/CooldownSteps.json')
 const sellBalance = artifact('SellBalanceHandler.sol/SellBalanceHandler.json')
+const paymentHandler = artifact('PaymentHandler.sol/PaymentHandler.json')
+const hookPayment = artifact('HookPaymentSteps.sol/HookPaymentSteps.json')
 
 const proxyCreationCode = proxy.bytecode.object
 if (!proxyCreationCode || proxyCreationCode === '0x') {
@@ -97,7 +99,7 @@ const FIELDS = [
  * later still — that a generation can absorb a new step contract without moving an address is the
  * whole reason these are optional rather than a reason to cut a generation.
  */
-const OPTIONAL_FIELDS = ['bungeeReceiver', 'paymentSteps', 'convertSteps', 'cooldownSteps', 'sellBalanceHandler']
+const OPTIONAL_FIELDS = ['bungeeReceiver', 'paymentSteps', 'convertSteps', 'cooldownSteps', 'sellBalanceHandler', 'paymentHandler', 'hookPaymentSteps']
 
 const byGeneration = new Map()
 for (const dir of readdirSync(deploymentsDir)) {
@@ -189,6 +191,11 @@ export const COOLDOWN_STEPS_ABI = ${JSON.stringify(cooldown.abi, null, 2)} as co
 
 /** The ComposableCoW handler behind an order posted before its drop is activated. */
 export const SELL_BALANCE_HANDLER_ABI = ${JSON.stringify(sellBalance.abi, null, 2)} as const
+
+/** \`SellBalanceHandler\` with the sell token left open. */
+export const PAYMENT_HANDLER_ABI = ${JSON.stringify(paymentHandler.abi, null, 2)} as const
+
+export const HOOK_PAYMENT_STEPS_ABI = ${JSON.stringify(hookPayment.abi, null, 2)} as const
 
 export const DROP_EXECUTOR_ABI = ${JSON.stringify(executor.abi, null, 2)} as const
 

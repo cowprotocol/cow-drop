@@ -406,6 +406,12 @@ export interface PaymentRequestParams extends Omit<RecipeGuards, 'minAmount'> {
   appData?: Hex
   label?: string
   salt?: Hex
+  /**
+   * `'hook'` posts each payment's order before the drop is activated, so nobody sends an activation
+   * transaction: build it with `buildHookPaymentOrder`. `appData` is then ignored, since the
+   * document is built around the hook.
+   */
+  activation?: 'transaction' | 'hook'
 }
 
 export interface ConvertOnArrivalParams extends Omit<RecipeGuards, 'minAmount'> {
@@ -488,14 +494,22 @@ export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
     once: false,
     steps: [
       ...timeGuards(params),
-      {
-        type: 'payment',
-        buyToken: params.buyToken,
-        buyAmount: params.buyAmount.toString(),
-        receiver: params.receiver ?? params.owner,
-        validitySeconds: params.validitySeconds ?? 30 * 60,
-        appData: params.appData ?? COW_DROP_APP_DATA,
-      },
+      params.activation === 'hook'
+        ? {
+            type: 'paymentViaHook',
+            buyToken: params.buyToken,
+            buyAmount: params.buyAmount.toString(),
+            receiver: params.receiver ?? params.owner,
+            validitySeconds: params.validitySeconds ?? 30 * 60,
+          }
+        : {
+            type: 'payment',
+            buyToken: params.buyToken,
+            buyAmount: params.buyAmount.toString(),
+            receiver: params.receiver ?? params.owner,
+            validitySeconds: params.validitySeconds ?? 30 * 60,
+            appData: params.appData ?? COW_DROP_APP_DATA,
+          },
     ],
   }
 }

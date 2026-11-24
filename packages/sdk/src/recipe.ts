@@ -113,6 +113,18 @@ export type DropStepJson =
       appData?: Hex
     }
   | {
+      /** `payment`, posted before activation; the order's own pre-hook activates the drop. Two calls. */
+      type: 'paymentViaHook'
+      buyToken: Address
+      /** In `buyToken` atoms. */
+      buyAmount: number | string
+      receiver?: Address
+      validitySeconds: number | string
+      hookGasLimit?: number | string
+      appDataTemplate?: { prefix: string; suffix: string }
+      orderSalt?: Hex
+    }
+  | {
       type: 'requireCallResult'
       target: Address
       callData: Hex
@@ -295,6 +307,7 @@ const ORDER_STEPS = new Set<DropStepJson['type']>([
   'twapFromBalance',
   'stopLossFromBalance',
   'payment',
+  'paymentViaHook',
 ])
 
 /**
@@ -303,12 +316,13 @@ const ORDER_STEPS = new Set<DropStepJson['type']>([
  * order step would race the payment for the payer's money. Both are refused rather than warned about.
  */
 function assertPaymentStandsAlone(steps: DropStepJson[]): void {
-  const payments = steps.filter((step) => step.type === 'payment').length
+  const isPayment = (step: DropStepJson) => step.type === 'payment' || step.type === 'paymentViaHook'
+  const payments = steps.filter(isPayment).length
   if (payments === 0) return
   if (payments > 1) {
     throw new Error('a recipe can hold at most one payment step')
   }
-  if (steps.some((step) => step.type !== 'payment' && ORDER_STEPS.has(step.type))) {
+  if (steps.some((step) => !isPayment(step) && ORDER_STEPS.has(step.type))) {
     throw new Error('a payment step cannot share a recipe with another order step')
   }
 }
@@ -404,6 +418,16 @@ function compileStep(step: DropStepJson, deployment: DropDeployment, owner: Addr
         receiver: step.receiver ?? owner,
         validitySeconds: BigInt(step.validitySeconds),
         appData: step.appData,
+      })
+    case 'paymentViaHook':
+      return steps.paymentViaHook(deployment, {
+        buyToken: step.buyToken,
+        buyAmount: BigInt(step.buyAmount),
+        receiver: step.receiver ?? owner,
+        validitySeconds: BigInt(step.validitySeconds),
+        hookGasLimit: step.hookGasLimit === undefined ? undefined : BigInt(step.hookGasLimit),
+        appDataTemplate: step.appDataTemplate,
+        orderSalt: step.orderSalt,
       })
     case 'requireCallResult':
       return steps.requireCallResult(deployment, {

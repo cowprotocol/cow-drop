@@ -3,6 +3,7 @@ import { encodeFunctionData, type Address, type Hex } from 'viem'
 import {
   GUARD_STEPS_ABI,
   CONVERT_STEPS_ABI,
+  HOOK_PAYMENT_STEPS_ABI,
   COOLDOWN_STEPS_ABI,
   PAYMENT_STEPS_ABI,
   PRESIGN_STEPS_ABI,
@@ -13,6 +14,7 @@ import {
 import {
   COMPOSABLE_COW_CREATE_ABI,
   COW_VAULT_RELAYER,
+  encodeHookPaymentData,
   encodeSellBalanceData,
   hookAppDataTemplate,
   type AppDataTemplate,
@@ -65,6 +67,20 @@ export interface SellBalanceViaHookParams {
   /** Gas forwarded to the activation hook. Ignored when `appDataTemplate` is given. */
   hookGasLimit?: bigint
   /** The JSON around the hook's calldata. Defaults to a document holding only the hook. */
+  appDataTemplate?: AppDataTemplate
+  orderSalt?: Hex
+}
+
+export interface PaymentViaHookParams {
+  /** The token the receiver is paid in. */
+  buyToken: Address
+  /** The price, in `buyToken` atoms: the least the receiver gets, whatever is sold. */
+  buyAmount: bigint
+  receiver: Address
+  /** The furthest an order's deadline may sit from the block it settles in. */
+  validitySeconds: bigint
+  /** Gas forwarded to the activation hook. Ignored when `appDataTemplate` is given. */
+  hookGasLimit?: bigint
   appDataTemplate?: AppDataTemplate
   orderSalt?: Hex
 }
@@ -279,6 +295,64 @@ export const steps = {
             },
             true,
           ],
+        }),
+      }),
+    ]
+  },
+
+  /**
+   * `payment`, with the order posted before activation: "pay me `buyAmount` of `buyToken`, in any
+   * token", and nobody sends an activation transaction.
+   *
+   * Two calls: approve the relayer for whichever token the order's hook names, then register
+   * `PaymentHandler`. Build the order to post with `buildHookPaymentOrder`.
+   */
+  paymentViaHook(
+    deployment: Pick<DropDeployment, 'hookPaymentSteps' | 'paymentHandler' | 'paymentSteps' | 'composableCow' | 'executor'>,
+    params: PaymentViaHookParams,
+  ): DropCall[] {
+    const { hookPaymentSteps, paymentHandler, paymentSteps } = deployment
+    if (!hookPaymentSteps || !paymentHandler || !paymentSteps) {
+      throw new Error('this generation has no PaymentHandler; paymentViaHook needs generation 2 or later')
+    }
+    if (params.buyAmount <= 0n) throw new Error('a payment needs a positive buyAmount')
+    if (params.validitySeconds <= 0n) throw new Error('validitySeconds must be greater than zero')
+    if (params.receiver.toLowerCase() === ZERO_ADDRESS) {
+      throw new Error('a payment needs a receiver; the zero address would leave the money in the drop')
+    }
+
+    // The hook goes through `PaymentSteps.activatePayment`, which is what carries the sell token.
+    const appDataTemplate =
+      params.appDataTemplate ??
+      hookAppDataTemplate({ deployment, gasLimit: params.hookGasLimit, target: paymentSteps })
+    if (!appDataTemplate.prefix.endsWith('0x')) {
+      throw new Error('the appData template prefix must end in "0x", where the hook calldata begins')
+    }
+
+    const staticInput = encodeHookPaymentData({
+      buyToken: params.buyToken,
+      buyAmount: params.buyAmount,
+      receiver: params.receiver,
+      validitySeconds: params.validitySeconds,
+      appData: ZERO_BYTES32,
+      appDataTemplate,
+    })
+
+    return [
+      stepCall(
+        hookPaymentSteps,
+        encodeFunctionData({
+          abi: HOOK_PAYMENT_STEPS_ABI,
+          functionName: 'approvePayment',
+          args: [params.buyToken, params.receiver],
+        }),
+      ),
+      steps.raw({
+        target: deployment.composableCow,
+        callData: encodeFunctionData({
+          abi: COMPOSABLE_COW_CREATE_ABI,
+          functionName: 'create',
+          args: [{ handler: paymentHandler, salt: params.orderSalt ?? ZERO_BYTES32, staticInput }, true],
         }),
       }),
     ]

@@ -11,6 +11,9 @@ import { getDeployment } from './generated/deployments.js'
 import {
   COW_VAULT_RELAYER,
   buildHookOrder,
+  buildHookPaymentOrder,
+  encodeHookPaymentData,
+  findHookPayment,
   decodeSellBalanceData,
   encodeHookSignature,
   encodeSellBalanceData,
@@ -20,8 +23,8 @@ import {
 } from './hookOrder.js'
 import { cowDomainSeparator, orderUidFor } from './orderUid.js'
 import { compileRecipe } from './recipe.js'
-import { swapOnArrival } from './templates.js'
-import { buildActivateTx } from './tx.js'
+import { paymentRequest, swapOnArrival } from './templates.js'
+import { buildActivatePaymentTx, buildActivateTx } from './tx.js'
 
 interface HookFixture {
   name: string
@@ -39,7 +42,10 @@ interface HookFixture {
 }
 
 const here = dirname(fileURLToPath(import.meta.url))
-const fixtures: { hookOrders: HookFixture[] } = JSON.parse(
+const fixtures: {
+  hookOrders: HookFixture[]
+  hookPayments: (HookFixture & { hookTarget: Address })[]
+} = JSON.parse(
   readFileSync(resolve(here, '../../../contracts/deployments/derivation-fixtures.json'), 'utf8'),
 )
 
@@ -252,5 +258,113 @@ describe('buildHookOrder', () => {
 
   it('uses the latest generation, which is the one with the handler', () => {
     expect(getDeployment(100).sellBalanceHandler).toBe(deployment.sellBalanceHandler)
+  })
+})
+
+/** The any-token handler: same three encodings, with the sell token inside the hook as well. */
+describe('hook payments match the contract', () => {
+  for (const fixture of fixtures.hookPayments) {
+    const template = { prefix: fixture.appDataPrefix, suffix: fixture.appDataSuffix }
+
+    it(`${fixture.name}: encodes the static input the handler decodes`, () => {
+      expect(
+        encodeHookPaymentData({
+          buyToken: getAddress('0x000000000000000000000000000000000000b111'),
+          buyAmount: 100n * 10n ** 18n,
+          receiver: getAddress('0x000000000000000000000000000000000000beef'),
+          validitySeconds: 1800n,
+          appData: `0x${'00'.repeat(32)}`,
+          appDataTemplate: template,
+        }),
+      ).toBe(fixture.staticInput)
+    })
+
+    it(`${fixture.name}: builds the document the handler accepted`, () => {
+      const document = hookAppDataDocument(template, {
+        deployment: { executor: fixture.executor, paymentSteps: fixture.hookTarget },
+        owner: fixture.owner,
+        setupData: fixture.setupData,
+        sellToken: getAddress(fixture.order.sellToken as string),
+      })
+      expect(keccak256(toBytes(document))).toBe(fixture.order.appData)
+    })
+  }
+})
+
+describe('paymentViaHook', () => {
+  const compiled = compileRecipe(
+    paymentRequest({ chainId: 100, owner: OWNER, buyToken: COW, buyAmount: 100n * 10n ** 18n, activation: 'hook' }),
+  )
+  const { deployment, setupData } = compiled
+
+  it('compiles to an approval step and a plain registration, naming no sell token', () => {
+    const [approve, register] = compiled.recipe.calls
+    expect(approve!.target).toBe(deployment.hookPaymentSteps)
+    expect(approve!.isDelegateCall).toBe(true)
+    expect(register!.target).toBe(deployment.composableCow)
+
+    const found = findHookPayment(deployment, setupData)!
+    expect(found.params.handler).toBe(deployment.paymentHandler)
+    expect(found.data).toMatchObject({ buyToken: COW, buyAmount: 100n * 10n ** 18n, receiver: OWNER })
+    expect(setupData.toLowerCase()).not.toContain(WXDAI.slice(2).toLowerCase())
+  })
+
+  it('reads as a recipe with nothing to warn about', () => {
+    const described = describeRecipe(setupData, deployment)
+    expect(described.steps.map((step) => step.known?.contract)).toEqual(['HookPaymentSteps', 'ComposableCoW'])
+    expect(hasWarnings(described)).toBe(false)
+  })
+
+  it('builds an order in whichever token paid, with a hook that names it', () => {
+    const built = buildHookPaymentOrder({
+      deployment,
+      owner: OWNER,
+      setupData,
+      sellToken: WXDAI,
+      balance: 10n ** 21n,
+      now: NOW,
+    })
+
+    expect(built.payload).toMatchObject({
+      sellToken: WXDAI,
+      buyToken: COW,
+      receiver: OWNER,
+      sellAmount: (10n ** 21n).toString(),
+      buyAmount: (100n * 10n ** 18n).toString(),
+      signingScheme: 'eip1271',
+      from: compiled.address,
+    })
+    expect(JSON.parse(built.appDataDocument!).metadata.hooks.pre).toEqual([
+      {
+        callData: buildActivatePaymentTx({ deployment, owner: OWNER, setupData, sellToken: WXDAI }).data,
+        gasLimit: '800000',
+        target: deployment.paymentSteps,
+      },
+    ])
+  })
+
+  it('refuses an order for a payment already in the buy token', () => {
+    expect(() =>
+      buildHookPaymentOrder({ deployment, owner: OWNER, setupData, sellToken: COW, balance: 1n, now: NOW }),
+    ).toThrow(/needs no order/)
+  })
+
+  it('cannot share a recipe with another order step', () => {
+    const json = paymentRequest({ chainId: 100, owner: OWNER, buyToken: COW, buyAmount: 1n, activation: 'hook' })
+    expect(() =>
+      compileRecipe({
+        ...json,
+        steps: [
+          ...json.steps,
+          {
+            type: 'sellBalanceViaHook',
+            sellToken: WXDAI,
+            buyToken: COW,
+            limitPrice: { numerator: '1', denominator: '1' },
+            validitySeconds: 1800,
+          },
+        ],
+      }),
+    ).toThrow(/cannot share a recipe/)
   })
 })

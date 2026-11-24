@@ -8,6 +8,7 @@ import {
   GUARD_STEPS_ABI,
   CONVERT_STEPS_ABI,
   COOLDOWN_STEPS_ABI,
+  HOOK_PAYMENT_STEPS_ABI,
   PAYMENT_STEPS_ABI,
   PRESIGN_STEPS_ABI,
   TOKEN_STEPS_ABI,
@@ -30,6 +31,7 @@ export type StepContractName =
   | 'PaymentSteps'
   | 'ConvertSteps'
   | 'CooldownSteps'
+  | 'HookPaymentSteps'
   /** Not a step contract: named only for a plain `create` registering this generation's handler. */
   | 'ComposableCoW'
 
@@ -75,6 +77,7 @@ const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   PaymentSteps: PAYMENT_STEPS_ABI as unknown as Abi,
   ConvertSteps: CONVERT_STEPS_ABI as unknown as Abi,
   CooldownSteps: COOLDOWN_STEPS_ABI as unknown as Abi,
+  HookPaymentSteps: HOOK_PAYMENT_STEPS_ABI as unknown as Abi,
   ComposableCoW: COMPOSABLE_COW_CREATE_ABI as unknown as Abi,
 }
 
@@ -124,6 +127,9 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
     ...(deployment.paymentSteps ? [[deployment.paymentSteps.toLowerCase(), 'PaymentSteps'] as const] : []),
     ...(deployment.convertSteps ? [[deployment.convertSteps.toLowerCase(), 'ConvertSteps'] as const] : []),
     ...(deployment.cooldownSteps ? [[deployment.cooldownSteps.toLowerCase(), 'CooldownSteps'] as const] : []),
+    ...(deployment.hookPaymentSteps
+      ? [[deployment.hookPaymentSteps.toLowerCase(), 'HookPaymentSteps'] as const]
+      : []),
   ])
 
   /** Each call named where the SDK recognises it, and flagged where it does not. */
@@ -190,18 +196,21 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
 }
 
 /**
- * A plain call registering this generation's `SellBalanceHandler` with ComposableCoW. Any other call
- * to ComposableCoW stays unnamed: what a foreign handler does cannot be shown here.
+ * A plain call registering one of this generation's handlers with ComposableCoW. Any other call to
+ * ComposableCoW stays unnamed: what a foreign handler does cannot be shown here.
  */
 function registersSellBalance(
   call: { target: Address; callData: Hex; isDelegateCall: boolean },
   deployment: DropDeployment,
 ): StepContractName | undefined {
-  if (call.isDelegateCall || !deployment.sellBalanceHandler) return undefined
+  const handlers = [deployment.sellBalanceHandler, deployment.paymentHandler]
+    .filter((handler) => handler !== undefined)
+    .map((handler) => handler.toLowerCase())
+  if (call.isDelegateCall || handlers.length === 0) return undefined
   if (call.target.toLowerCase() !== deployment.composableCow.toLowerCase()) return undefined
   try {
     const { args } = decodeFunctionData({ abi: COMPOSABLE_COW_CREATE_ABI, data: call.callData })
-    return args[0].handler.toLowerCase() === deployment.sellBalanceHandler.toLowerCase() ? 'ComposableCoW' : undefined
+    return handlers.includes(args[0].handler.toLowerCase()) ? 'ComposableCoW' : undefined
   } catch {
     return undefined
   }
