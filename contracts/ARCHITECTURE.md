@@ -13,6 +13,7 @@ that reaches it:
 src/DropExecutor.sol   has an address, and is not a step: every drop names it as both
                        trustedExecutor and setupTarget
 src/steps/             each has an address, named by a recipe as a step's target
+src/handlers/          each has an address, named inside the ComposableCoW params a recipe registers
 src/lib/               no address of its own: inlined libraries, and the abstract base the
                        ComposableCoW steps inherit. Never deployed, so nothing here can move
                        a drop address
@@ -236,6 +237,37 @@ For TWAP params to be committable they must not mention the owner: `receiver = a
 (ComposableCoW's "pay the owner" sentinel) and `t0 = 0`, with `createWithContext` seeding the start time
 from a value factory at activation.
 
+## `SellBalanceHandler` — an order posted before the drop exists
+
+Both paths above need an activation transaction before any order exists. `SellBalanceHandler` removes
+it: a ComposableCoW handler for "sell my whole balance of X for Y at no worse than this price", checked
+when the order settles rather than fixed at activation. So the order can be built off-chain from the
+recipe and the balance, posted for a drop with no code, and carry the activation as a **pre-hook** in
+its appData. The order book and the solver both run pre-hooks before asking the owner whether it signed.
+
+The recipe needs no step contract of its own, since the handler's `staticInput` carries no amount:
+`TokenSteps.approveMax(sellToken, vaultRelayer)`, then a plain call to `ComposableCoW.create`.
+
+`verify` accepts a fill-or-kill, fee-less sell of exactly `balanceOf(drop)`, at or above the committed
+limit, with `validTo` no further than `validitySeconds` from the block it settles in.
+
+**The appData is rebuilt, not committed.** The hook's calldata is `activate(owner, setupData)`, so the
+appData contains the recipe and the recipe cannot contain its hash. The recipe commits to the JSON
+around the calldata instead (`appDataPrefix`, `appDataSuffix`), the signature carries `(owner,
+setupData)` as offchain input, and the handler checks that pair derives the drop it is asked about and
+that `order.appData == keccak256(prefix ++ hex(calldata) ++ suffix)`. Posting the same order under
+another appData, say one naming a different fee recipient, fails. An empty prefix means a fixed
+`appData` instead, for an order that reaches the chain without the recipe in a hook.
+
+Three things to know:
+
+- **Guards gate the first activation only.** The registration outlives it, and a later arrival is sold
+  under the same rule without the recipe running again.
+- **The solver pays for the activation and takes it from the surplus**, so the limit needs that much
+  room below the market.
+- **A watch tower cannot drive it.** `getTradeableOrder` answers `PollNever` when the appData needs a
+  recipe it was not given.
+
 ## Build settings are load-bearing
 
 `foundry.toml` must stay byte-identical to cow-shed's (`solc 0.8.30`, `via_ir`,
@@ -262,12 +294,17 @@ addresses cow-shed#79 records as live on Gnosis is proof it reproduces the canon
 | `steps/PaymentSteps.t.sol` | Activating with a token the recipe never named, the committed price and receiver holding whatever token is chosen, payment in the buy token forwarded without an order, plain `activate` refused, and the transient input scoped to one drop and cleared after the call. |
 | `steps/StopLossSteps.t.sol` | The stop-loss step, the deadline running from activation, and the thirteen-word `StopLossData` layout. |
 | `steps/ComposableBase.t.sol` | The half `TwapSteps` does not reach: `divisor == 1`, and a zero value factory routing to plain `create`. Uses a throwaway handler so the branch a future step will take does not ship unexercised. |
+| `handlers/SellBalanceHandler.t.sol` | Every refusal, both appData modes, a recipe that is not the drop's, and the recipe surviving a second run. |
 | `DropGnosisFork.t.sol` | Against the real Gnosis deployments. Skipped unless `GNOSIS_RPC_URL` is set. |
 
 The load-bearing fork test is `test_fork_twapIsTradeableAndTheDropValidatesTheSignature`: it does exactly
 what the watch tower does — `getTradeableOrderWithSignature`, then hand the signature back to the owner's
 `isValidSignature` — for a non-Safe owner. If a cow-shed drop could not own a conditional order, that is
 where it would show up.
+
+`test_fork_orderPostedBeforeActivationValidatesOnceItsPreHookRuns` runs the activation through the real
+`HooksTrampoline` as the settlement contract, then asks the freshly deployed drop to validate an order
+built before it existed.
 
 `test_fork_stopLossIsTradeableOnceTheStrikeIsCrossed` does the same against the real `StopLoss` handler
 with only the price feeds mocked, then moves the sell token up and asserts the order stops being

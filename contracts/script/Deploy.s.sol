@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {CowOrderPoster} from "src/CowOrderPoster.sol";
 import {DropExecutor} from "src/DropExecutor.sol";
 import {DropBungeeReceiver} from "src/bridge/DropBungeeReceiver.sol";
+import {SellBalanceHandler} from "src/handlers/SellBalanceHandler.sol";
 import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 import {ConvertSteps} from "src/steps/ConvertSteps.sol";
 import {CooldownSteps} from "src/steps/CooldownSteps.sol";
@@ -73,6 +74,7 @@ contract DeployScript is Script {
         address paymentSteps;
         address convertSteps;
         address cooldownSteps;
+        address sellBalanceHandler;
         address cowOrderPoster;
         address bungeeReceiver;
         address composableCow;
@@ -214,6 +216,16 @@ contract DeployScript is Script {
             new CooldownSteps{salt: SALT}();
         }
 
+        // A ComposableCoW handler rather than a step: a recipe names it inside the params it registers.
+        // Takes the executor because it checks a recipe against the drop it is asked about. Only
+        // recipes that register it reach this address, so joining the generation moves no drop.
+        bytes memory sellBalanceInit = abi.encodePacked(type(SellBalanceHandler).creationCode, abi.encode(executor));
+        address sellBalanceHandler = _create2(sellBalanceInit);
+        if (sellBalanceHandler.code.length == 0) {
+            vm.broadcast();
+            new SellBalanceHandler{salt: SALT}(DropExecutor(executor));
+        }
+
         // Not part of any drop address: nothing in a recipe reaches it, because the steps inline the
         // `CowOrder` library instead. It ships with the generation because it is the address a
         // third-party contract integrates against, and that address has to be stable and recorded.
@@ -247,6 +259,7 @@ contract DeployScript is Script {
             paymentSteps: paymentSteps,
             convertSteps: convertSteps,
             cooldownSteps: cooldownSteps,
+            sellBalanceHandler: sellBalanceHandler,
             cowOrderPoster: cowOrderPoster,
             bungeeReceiver: bungeeReceiver,
             composableCow: composableCow,
@@ -276,6 +289,7 @@ contract DeployScript is Script {
         console.log("paymentSteps       ", d.paymentSteps);
         console.log("convertSteps       ", d.convertSteps);
         console.log("cooldownSteps      ", d.cooldownSteps);
+        console.log("sellBalanceHandler ", d.sellBalanceHandler);
         console.log("cowOrderPoster     ", d.cowOrderPoster);
         console.log("bungeeReceiver     ", d.bungeeReceiver);
         console.log("executor           ", d.executor);
@@ -308,6 +322,7 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "paymentSteps", d.paymentSteps);
         vm.serializeAddress(obj, "convertSteps", d.convertSteps);
         vm.serializeAddress(obj, "cooldownSteps", d.cooldownSteps);
+        vm.serializeAddress(obj, "sellBalanceHandler", d.sellBalanceHandler);
         vm.serializeAddress(obj, "cowOrderPoster", d.cowOrderPoster);
         vm.serializeAddress(obj, "bungeeReceiver", d.bungeeReceiver);
         string memory json = vm.serializeAddress(obj, "executor", d.executor);

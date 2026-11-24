@@ -5,6 +5,8 @@ import {Script} from "forge-std/Script.sol";
 
 import {DropExecutor} from "src/DropExecutor.sol";
 import {DropDelivery} from "src/bridge/DropDelivery.sol";
+import {SellBalanceHandler} from "src/handlers/SellBalanceHandler.sol";
+import {IERC20Like} from "src/interfaces/IDropExternal.sol";
 import {Orders} from "src/lib/Orders.sol";
 
 import {COWShed} from "cow-shed/COWShed.sol";
@@ -110,8 +112,71 @@ contract FixturesScript is Script {
             payloads[i] = vm.serializeBytes(obj, "expected", abi.encode(owner, setupData, onFailure));
         }
 
-        string memory json = vm.serializeString(root, "deliveryPayloads", payloads);
+        vm.serializeString(root, "deliveryPayloads", payloads);
+
+        // An order posted before its drop is activated is built entirely off-chain: the handler's
+        // `staticInput`, the recipe as offchain input, and an appData document the handler rebuilds
+        // byte for byte. Any of the three drifting means an order the drop refuses to sign.
+        SellBalanceHandler handler = new SellBalanceHandler(executor);
+        vm.warp(HOOK_TIMESTAMP);
+        string[] memory hookOrders = new string[](2);
+        for (uint256 i; i < 2; i++) {
+            hookOrders[i] = _hookOrder(i, executor, handler);
+        }
+
+        string memory json = vm.serializeString(root, "hookOrders", hookOrders);
         vm.writeJson(json, "./deployments/derivation-fixtures.json");
+    }
+
+    uint256 internal constant HOOK_TIMESTAMP = 1_800_000_123;
+    uint256 internal constant HOOK_BALANCE = 1234.5e18;
+    address internal constant HOOK_SELL_TOKEN = address(0x5E11);
+
+    /// @dev Case 0 rebuilds the appData from a template; case 1 uses a fixed one.
+    function _hookOrder(uint256 i, DropExecutor executor, SellBalanceHandler handler) internal returns (string memory) {
+        (address owner, bytes memory setupData,) = _case(3);
+        address drop = executor.dropOf(owner, setupData);
+        bool template = i == 0;
+
+        string memory prefix = template ? '{"appCode":"cow-drop","metadata":{"hooks":{"pre":[{"callData":"0x' : "";
+        string memory suffix = template
+            ? string.concat(
+                '","gasLimit":"900000","target":"', vm.toString(address(executor)), '"}]}},"version":"1.1.0"}'
+            )
+            : "";
+
+        bytes memory staticInput = abi.encode(
+            SellBalanceHandler.Data({
+                sellToken: HOOK_SELL_TOKEN,
+                buyToken: address(0xB111),
+                receiver: address(0xBEEF),
+                limitNumerator: 95,
+                limitDenominator: 100,
+                validitySeconds: 1800,
+                appData: template ? bytes32(0) : keccak256("appData"),
+                appDataPrefix: bytes(prefix),
+                appDataSuffix: bytes(suffix)
+            })
+        );
+        bytes memory offchainInput = abi.encode(owner, setupData);
+
+        vm.mockCall(HOOK_SELL_TOKEN, abi.encodeCall(IERC20Like.balanceOf, (drop)), abi.encode(HOOK_BALANCE));
+        LibCowOrder.Data memory order =
+            handler.getTradeableOrder(drop, address(0), bytes32(0), staticInput, template ? offchainInput : bytes(""));
+
+        string memory obj = string.concat("hookOrder", vm.toString(i));
+        vm.serializeString(obj, "name", template ? "appData from a template" : "fixed appData");
+        vm.serializeAddress(obj, "executor", address(executor));
+        vm.serializeAddress(obj, "owner", owner);
+        vm.serializeBytes(obj, "setupData", setupData);
+        vm.serializeAddress(obj, "drop", drop);
+        vm.serializeString(obj, "appDataPrefix", prefix);
+        vm.serializeString(obj, "appDataSuffix", suffix);
+        vm.serializeBytes(obj, "staticInput", staticInput);
+        vm.serializeBytes(obj, "offchainInput", offchainInput);
+        vm.serializeUint(obj, "timestamp", HOOK_TIMESTAMP);
+        vm.serializeUint(obj, "balance", HOOK_BALANCE);
+        return vm.serializeString(obj, "order", _serializeOrder(string.concat(obj, "order"), order));
     }
 
     function _serializeOrder(string memory obj, LibCowOrder.Data memory order) internal returns (string memory) {
