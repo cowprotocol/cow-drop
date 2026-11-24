@@ -4,9 +4,12 @@ pragma solidity ^0.8.25;
 import {Test} from "forge-std/Test.sol";
 
 import {DropExecutor} from "src/DropExecutor.sol";
+import {PaymentHandler} from "src/handlers/PaymentHandler.sol";
 import {SellBalanceHandler} from "src/handlers/SellBalanceHandler.sol";
 import {IComposableCowLike, IERC20Like, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 import {Orders} from "src/lib/Orders.sol";
+import {HookPaymentSteps} from "src/steps/HookPaymentSteps.sol";
+import {PaymentSteps} from "src/steps/PaymentSteps.sol";
 import {PresignSteps} from "src/steps/PresignSteps.sol";
 import {StopLossSteps} from "src/steps/StopLossSteps.sol";
 import {TokenSteps} from "src/steps/TokenSteps.sol";
@@ -411,6 +414,92 @@ contract DropGnosisForkTest is Test {
         digest = LibCowOrder.hash(order, IComposableCowFork(COMPOSABLE_COW).domainSeparator());
         vm.expectRevert();
         IERC1271(drop).isValidSignature(digest, signature);
+    }
+
+    /// @dev The any-token counterpart: the recipe names no sell token, the order does, and the hook
+    ///      that carries it is what makes the drop approve exactly that token.
+    function test_fork_paymentOrderInAnUnnamedTokenValidatesOnceItsPreHookRuns() external {
+        PaymentSteps payments = new PaymentSteps(ISettlementLike(SETTLEMENT), VAULT_RELAYER, executor);
+        HookPaymentSteps hookPayments = new HookPaymentSteps(VAULT_RELAYER, payments);
+        PaymentHandler handler = new PaymentHandler(executor);
+
+        bytes memory prefix = '{"appCode":"cow-drop","metadata":{"hooks":{"pre":[{"callData":"0x';
+        bytes memory suffix = bytes(
+            string.concat(
+                '","gasLimit":"900000","target":"', vm.toString(address(payments)), '"}]}},"version":"1.1.0"}'
+            )
+        );
+
+        IConditionalOrder.ConditionalOrderParams memory params = IConditionalOrder.ConditionalOrderParams({
+            handler: IConditionalOrder(address(handler)),
+            salt: bytes32(0),
+            staticInput: abi.encode(
+                PaymentHandler.Data({
+                    buyToken: COW,
+                    buyAmount: 1e16,
+                    receiver: recipient,
+                    validitySeconds: 30 minutes,
+                    appData: bytes32(0),
+                    appDataPrefix: prefix,
+                    appDataSuffix: suffix
+                })
+            )
+        });
+
+        Call[] memory calls = new Call[](2);
+        calls[0] = Call({
+            target: address(hookPayments),
+            value: 0,
+            callData: abi.encodeCall(HookPaymentSteps.approvePayment, (COW, recipient)),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+        calls[1] = Call({
+            target: COMPOSABLE_COW,
+            value: 0,
+            callData: abi.encodeCall(IComposableCowLike.create, (params, true)),
+            allowFailure: false,
+            isDelegateCall: false
+        });
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "pay", salt: bytes32(0), once: false, calls: calls}));
+
+        address drop = executor.dropOf(owner, recipe);
+        deal(WXDAI, drop, 10e18);
+
+        bytes memory hook = abi.encodeCall(PaymentSteps.activatePayment, (owner, recipe, WXDAI));
+        LibCowOrder.Data memory order = LibCowOrder.Data({
+            sellToken: IERC20(WXDAI),
+            buyToken: IERC20(COW),
+            receiver: recipient,
+            sellAmount: 10e18,
+            buyAmount: 1e16,
+            validTo: uint32(block.timestamp + 30 minutes),
+            appData: keccak256(abi.encodePacked(prefix, _hex(hook), suffix)),
+            feeAmount: 0,
+            kind: Orders.KIND_SELL,
+            partiallyFillable: false,
+            sellTokenBalance: Orders.BALANCE_ERC20,
+            buyTokenBalance: Orders.BALANCE_ERC20 // gitleaks:allow (balance-kind constant, not a secret)
+        });
+        bytes memory signature = abi.encode(
+            order,
+            IComposableCow.PayloadStruct({
+                proof: new bytes32[](0), params: params, offchainInput: abi.encode(owner, recipe)
+            })
+        );
+        bytes32 digest = LibCowOrder.hash(order, IComposableCowFork(COMPOSABLE_COW).domainSeparator());
+
+        assertEq(drop.code.length, 0, "the drop must not exist before the hook");
+
+        IHooksTrampoline.Hook[] memory hooks = new IHooksTrampoline.Hook[](1);
+        hooks[0] = IHooksTrampoline.Hook({target: address(payments), callData: hook, gasLimit: 900_000});
+        vm.prank(SETTLEMENT);
+        IHooksTrampoline(HOOKS_TRAMPOLINE).execute(hooks);
+
+        assertGt(drop.code.length, 0, "the hook did not deploy the drop");
+        assertEq(IERC20Like(WXDAI).allowance(drop, VAULT_RELAYER), type(uint256).max, "relayer not approved");
+        assertEq(IERC1271(drop).isValidSignature(digest, signature), MAGIC_VALUE_1271, "order not valid after the hook");
     }
 
     /// @dev `vm.toString(bytes)` without its `0x`.

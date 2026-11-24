@@ -268,6 +268,22 @@ Three things to know:
 - **A watch tower cannot drive it.** `getTradeableOrder` answers `PollNever` when the appData needs a
   recipe it was not given.
 
+### `PaymentHandler` — the same, in any token
+
+`SellBalanceHandler` is the swap: a fixed pair and a price ratio. `PaymentHandler` is the payment
+request: the recipe commits to `buyToken`, `buyAmount` and `receiver` and leaves the sell token open, so
+the order names it. `verify` accepts the drop's whole balance of whichever token that is, for at least
+`buyAmount`.
+
+The drop still has to approve that token, and the recipe cannot name it. So the hook is
+`PaymentSteps.activatePayment(owner, setupData, sellToken)`, the entry point payment drops already use,
+and the recipe's step is `HookPaymentSteps.approvePayment`, which reads the token back and approves the
+relayer for it. The handler rebuilds the appData around that calldata with the order's own sell token,
+so an order cannot carry a hook that approves a different one.
+
+A payment made in `buyToken` itself has no order to place: activating with that token forwards the
+balance to the receiver, which takes a transaction.
+
 ## Build settings are load-bearing
 
 `foundry.toml` must stay byte-identical to cow-shed's (`solc 0.8.30`, `via_ir`,
@@ -295,6 +311,7 @@ addresses cow-shed#79 records as live on Gnosis is proof it reproduces the canon
 | `steps/StopLossSteps.t.sol` | The stop-loss step, the deadline running from activation, and the thirteen-word `StopLossData` layout. |
 | `steps/ComposableBase.t.sol` | The half `TwapSteps` does not reach: `divisor == 1`, and a zero value factory routing to plain `create`. Uses a throwaway handler so the branch a future step will take does not ship unexercised. |
 | `handlers/SellBalanceHandler.t.sol` | Every refusal, both appData modes, a recipe that is not the drop's, and the recipe surviving a second run. |
+| `handlers/PaymentHandler.t.sol` | The same for the any-token handler, plus a hook naming the wrong token, a second token arriving later, and a payment in the buy token being forwarded. |
 | `DropGnosisFork.t.sol` | Against the real Gnosis deployments. Skipped unless `GNOSIS_RPC_URL` is set. |
 
 The load-bearing fork test is `test_fork_twapIsTradeableAndTheDropValidatesTheSignature`: it does exactly

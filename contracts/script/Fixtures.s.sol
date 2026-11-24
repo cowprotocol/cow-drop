@@ -5,9 +5,11 @@ import {Script} from "forge-std/Script.sol";
 
 import {DropExecutor} from "src/DropExecutor.sol";
 import {DropDelivery} from "src/bridge/DropDelivery.sol";
+import {PaymentHandler} from "src/handlers/PaymentHandler.sol";
 import {SellBalanceHandler} from "src/handlers/SellBalanceHandler.sol";
 import {IERC20Like} from "src/interfaces/IDropExternal.sol";
 import {Orders} from "src/lib/Orders.sol";
+import {PaymentSteps} from "src/steps/PaymentSteps.sol";
 
 import {COWShed} from "cow-shed/COWShed.sol";
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
@@ -124,7 +126,13 @@ contract FixturesScript is Script {
             hookOrders[i] = _hookOrder(i, executor, handler);
         }
 
-        string memory json = vm.serializeString(root, "hookOrders", hookOrders);
+        vm.serializeString(root, "hookOrders", hookOrders);
+
+        // The same three encodings for the any-token handler, whose hook also names the sell token.
+        string[] memory hookPayments = new string[](1);
+        hookPayments[0] = _hookPayment(executor, new PaymentHandler(executor));
+
+        string memory json = vm.serializeString(root, "hookPayments", hookPayments);
         vm.writeJson(json, "./deployments/derivation-fixtures.json");
     }
 
@@ -167,6 +175,73 @@ contract FixturesScript is Script {
         string memory obj = string.concat("hookOrder", vm.toString(i));
         vm.serializeString(obj, "name", template ? "appData from a template" : "fixed appData");
         vm.serializeAddress(obj, "executor", address(executor));
+        vm.serializeAddress(obj, "owner", owner);
+        vm.serializeBytes(obj, "setupData", setupData);
+        vm.serializeAddress(obj, "drop", drop);
+        vm.serializeString(obj, "appDataPrefix", prefix);
+        vm.serializeString(obj, "appDataSuffix", suffix);
+        vm.serializeBytes(obj, "staticInput", staticInput);
+        vm.serializeBytes(obj, "offchainInput", offchainInput);
+        vm.serializeUint(obj, "timestamp", HOOK_TIMESTAMP);
+        vm.serializeUint(obj, "balance", HOOK_BALANCE);
+        return vm.serializeString(obj, "order", _serializeOrder(string.concat(obj, "order"), order));
+    }
+
+    /// @dev Stands in for the deployed `PaymentSteps`: only its address reaches the document.
+    address internal constant HOOK_PAYMENT_TARGET = address(0x9A1D);
+
+    /// @dev An order the handler accepts, so the fixture is proof and not just a transcription.
+    function _hookPayment(DropExecutor executor, PaymentHandler handler) internal returns (string memory) {
+        (address owner, bytes memory setupData,) = _case(3);
+        address drop = executor.dropOf(owner, setupData);
+
+        string memory prefix = '{"appCode":"cow-drop","metadata":{"hooks":{"pre":[{"callData":"0x';
+        string memory suffix = string.concat(
+            '","gasLimit":"900000","target":"', vm.toString(HOOK_PAYMENT_TARGET), '"}]}},"version":"1.1.0"}'
+        );
+        bytes memory staticInput = abi.encode(
+            PaymentHandler.Data({
+                buyToken: address(0xB111),
+                buyAmount: 100e18,
+                receiver: address(0xBEEF),
+                validitySeconds: 1800,
+                appData: bytes32(0),
+                appDataPrefix: bytes(prefix),
+                appDataSuffix: bytes(suffix)
+            })
+        );
+        bytes memory offchainInput = abi.encode(owner, setupData);
+
+        string memory hook =
+            vm.toString(abi.encodeCall(PaymentSteps.activatePayment, (owner, setupData, HOOK_SELL_TOKEN)));
+        LibCowOrder.Data memory order = LibCowOrder.Data({
+            sellToken: IERC20(HOOK_SELL_TOKEN),
+            buyToken: IERC20(address(0xB111)),
+            receiver: address(0xBEEF),
+            sellAmount: HOOK_BALANCE,
+            buyAmount: 100e18,
+            validTo: uint32(HOOK_TIMESTAMP + 1800),
+            // `prefix` ends in the `0x` that `vm.toString` also writes, so drop one of the two.
+            appData: keccak256(
+                bytes(string.concat('{"appCode":"cow-drop","metadata":{"hooks":{"pre":[{"callData":"', hook, suffix))
+            ),
+            feeAmount: 0,
+            kind: Orders.KIND_SELL,
+            partiallyFillable: false,
+            sellTokenBalance: Orders.BALANCE_ERC20,
+            buyTokenBalance: Orders.BALANCE_ERC20 // gitleaks:allow (balance-kind constant, not a secret)
+        });
+
+        vm.mockCall(HOOK_SELL_TOKEN, abi.encodeCall(IERC20Like.balanceOf, (drop)), abi.encode(HOOK_BALANCE));
+        bytes32 domain = keccak256("domain");
+        handler.verify(
+            drop, address(0), LibCowOrder.hash(order, domain), domain, bytes32(0), staticInput, offchainInput, order
+        );
+
+        string memory obj = "hookPayment0";
+        vm.serializeString(obj, "name", "any token, fixed price");
+        vm.serializeAddress(obj, "executor", address(executor));
+        vm.serializeAddress(obj, "hookTarget", HOOK_PAYMENT_TARGET);
         vm.serializeAddress(obj, "owner", owner);
         vm.serializeBytes(obj, "setupData", setupData);
         vm.serializeAddress(obj, "drop", drop);
