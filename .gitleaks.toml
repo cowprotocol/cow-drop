@@ -1,0 +1,10 @@
+# CoW order structs name their balance sources `buyTokenBalance` / `sellTokenBalance`, and the values
+# are public constants (`keccak256("erc20")` and friends). The default `generic-api-key` rule reads
+# "Token" plus a hash as a credential.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "CoW order balance-source fields"
+regexTarget = "line"
+regexes = ['''(?i)(buy|sell)TokenBalance''']

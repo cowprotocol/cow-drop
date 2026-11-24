@@ -40,6 +40,7 @@ generate` pick the new directory up — it reads every `gen*/` and emits them al
 | `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | **not yet broadcast** | same |
 | `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | **not yet broadcast** | same |
 | `PaymentSteps` | `0x8BA52FAcbeFCC97CB93ccfCB53e3f2204543EEe8` | live on Gnosis | new |
+| `SellBalanceHandler` | `0x33da3b784F6d4D9065377b6aDC4690Ba50f2C185` | **not yet broadcast** | new |
 | `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | **not yet broadcast** | **moved** |
 | `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | **not yet broadcast** | new |
 | `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis | same |

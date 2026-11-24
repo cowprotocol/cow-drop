@@ -124,6 +124,7 @@ for CHAIN in $CHAINS; do
   verify paymentSteps       src/steps/PaymentSteps.sol:PaymentSteps     "address,address,address"    "$SETTLEMENT" "$VAULT_RELAYER" "$EXECUTOR"
   verify convertSteps       src/steps/ConvertSteps.sol:ConvertSteps     "address,address,address"    "$SETTLEMENT" "$VAULT_RELAYER" "$EXECUTOR"
   verify cooldownSteps      src/steps/CooldownSteps.sol:CooldownSteps                              ""
+  verify sellBalanceHandler src/handlers/SellBalanceHandler.sol:SellBalanceHandler "address"         "$EXECUTOR"
   verify cowOrderPoster     src/CowOrderPoster.sol:CowOrderPoster       "address"                    "$SETTLEMENT"
   verify bungeeReceiver     src/bridge/DropBungeeReceiver.sol:DropBungeeReceiver "address"           "$EXECUTOR"
 

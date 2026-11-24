@@ -56,7 +56,11 @@ a different recipe at this one. **The address is the authorization.**
 | After activation | an off-chain poster submits the order | self-driving; each part is posted for you |
 | Good for | swap whatever arrived, once | TWAP and anything recurring |
 
-Both share one implementation, `COWShedWithExecutorSigner`, whose ERC-1271 delegates to the shed's
+A third shape, `SellBalanceHandler`, needs no activation transaction at all: the order is posted for
+the undeployed drop and activates it from a pre-hook, paid for by the solver out of the surplus. See
+[`contracts/ARCHITECTURE.md`](../contracts/ARCHITECTURE.md#sellbalancehandler--an-order-posted-before-the-drop-exists).
+
+All share one implementation, `COWShedWithExecutorSigner`, whose ERC-1271 delegates to the shed's
 trusted executor — `DropExecutor` for a drop. That is what lets us reuse the cow-shed contracts
 already deployed rather than shipping a variant. Details in
 [`contracts/ARCHITECTURE.md`](../contracts/ARCHITECTURE.md).

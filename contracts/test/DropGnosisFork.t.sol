@@ -4,10 +4,12 @@ pragma solidity ^0.8.25;
 import {Test} from "forge-std/Test.sol";
 
 import {DropExecutor} from "src/DropExecutor.sol";
+import {SellBalanceHandler} from "src/handlers/SellBalanceHandler.sol";
 import {IComposableCowLike, IERC20Like, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 import {Orders} from "src/lib/Orders.sol";
 import {PresignSteps} from "src/steps/PresignSteps.sol";
 import {StopLossSteps} from "src/steps/StopLossSteps.sol";
+import {TokenSteps} from "src/steps/TokenSteps.sol";
 import {TwapSteps} from "src/steps/TwapSteps.sol";
 
 import {COWShedExecutorFactory} from "cow-shed/COWShedExecutorFactory.sol";
@@ -32,6 +34,17 @@ interface IComposableCowFork {
     function cabinet(address owner, bytes32 ctx) external view returns (bytes32);
 }
 
+/// @dev CoW's hooks trampoline: how a solver runs an order's pre-hooks.
+interface IHooksTrampoline {
+    struct Hook {
+        address target;
+        bytes callData;
+        uint256 gasLimit;
+    }
+
+    function execute(Hook[] calldata hooks) external;
+}
+
 interface IERC1271 {
     function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4);
 }
@@ -50,6 +63,9 @@ contract DropGnosisForkTest is Test {
 
     /// @dev cow-shed#79: the live executor factory on Gnosis, over `COWShedWithExecutorSigner`.
     address internal constant EXECUTOR_FACTORY = 0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99;
+
+    /// @dev The trampoline CoW's services use on Gnosis.
+    address internal constant HOOKS_TRAMPOLINE = 0x01DcB88678aedD0C4cC9552B20F4718550250574;
 
     address internal constant WXDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
 
@@ -291,5 +307,118 @@ contract DropGnosisForkTest is Test {
             abi.encodeWithSignature("latestRoundData()"),
             abi.encode(uint80(1), answer, block.timestamp, block.timestamp, uint80(1))
         );
+    }
+
+    // --- activation as the order's pre-hook --------------------------------------------------
+
+    /// @dev What the order book and the solver both do with an order posted for a drop that does
+    ///      not exist yet: run the pre-hook through the trampoline as the settlement contract, then
+    ///      ask the owner whether it signed. Before the hook the owner has no code; after it the
+    ///      drop is deployed, registered with the real ComposableCoW and has approved the relayer.
+    function test_fork_orderPostedBeforeActivationValidatesOnceItsPreHookRuns() external {
+        SellBalanceHandler handler = new SellBalanceHandler(executor);
+        TokenSteps tokenSteps = new TokenSteps();
+
+        bytes memory prefix = '{"appCode":"cow-drop","metadata":{"hooks":{"pre":[{"callData":"0x';
+        bytes memory suffix = bytes(
+            string.concat(
+                '","gasLimit":"900000","target":"', vm.toString(address(executor)), '"}]}},"version":"1.1.0"}'
+            )
+        );
+
+        IConditionalOrder.ConditionalOrderParams memory params = IConditionalOrder.ConditionalOrderParams({
+            handler: IConditionalOrder(address(handler)),
+            salt: bytes32(0),
+            staticInput: abi.encode(
+                SellBalanceHandler.Data({
+                    sellToken: WXDAI,
+                    buyToken: COW,
+                    receiver: recipient,
+                    limitNumerator: 1,
+                    limitDenominator: 1000,
+                    validitySeconds: 30 minutes,
+                    appData: bytes32(0),
+                    appDataPrefix: prefix,
+                    appDataSuffix: suffix
+                })
+            )
+        });
+
+        Call[] memory calls = new Call[](2);
+        calls[0] = Call({
+            target: address(tokenSteps),
+            value: 0,
+            callData: abi.encodeCall(TokenSteps.approveMax, (WXDAI, VAULT_RELAYER)),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+        calls[1] = Call({
+            target: COMPOSABLE_COW,
+            value: 0,
+            callData: abi.encodeCall(IComposableCowLike.create, (params, true)),
+            allowFailure: false,
+            isDelegateCall: false
+        });
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "hook", salt: bytes32(0), once: false, calls: calls}));
+
+        address drop = executor.dropOf(owner, recipe);
+        deal(WXDAI, drop, 10e18);
+
+        // Everything below is built off-chain, from the recipe and the balance alone.
+        bytes memory hook = abi.encodeCall(DropExecutor.activate, (owner, recipe));
+        LibCowOrder.Data memory order = LibCowOrder.Data({
+            sellToken: IERC20(WXDAI),
+            buyToken: IERC20(COW),
+            receiver: recipient,
+            sellAmount: 10e18,
+            buyAmount: 10e18 / 1000,
+            validTo: uint32(block.timestamp + 30 minutes),
+            appData: keccak256(abi.encodePacked(prefix, _hex(hook), suffix)),
+            feeAmount: 0,
+            kind: Orders.KIND_SELL,
+            partiallyFillable: false,
+            sellTokenBalance: Orders.BALANCE_ERC20,
+            buyTokenBalance: Orders.BALANCE_ERC20
+        });
+        bytes memory signature = abi.encode(
+            order,
+            IComposableCow.PayloadStruct({
+                proof: new bytes32[](0), params: params, offchainInput: abi.encode(owner, recipe)
+            })
+        );
+        bytes32 digest = LibCowOrder.hash(order, IComposableCowFork(COMPOSABLE_COW).domainSeparator());
+
+        assertEq(drop.code.length, 0, "the drop must not exist before the hook");
+
+        IHooksTrampoline.Hook[] memory hooks = new IHooksTrampoline.Hook[](1);
+        hooks[0] = IHooksTrampoline.Hook({target: address(executor), callData: hook, gasLimit: 900_000});
+        vm.prank(SETTLEMENT);
+        IHooksTrampoline(HOOKS_TRAMPOLINE).execute(hooks);
+
+        assertGt(drop.code.length, 0, "the hook did not deploy the drop");
+        assertEq(IERC20Like(WXDAI).allowance(drop, VAULT_RELAYER), type(uint256).max, "relayer not approved");
+        assertEq(IERC1271(drop).isValidSignature(digest, signature), MAGIC_VALUE_1271, "order not valid after the hook");
+
+        // The same signature cannot carry a different appData past the drop.
+        order.appData = keccak256("someone else's fee");
+        signature = abi.encode(
+            order,
+            IComposableCow.PayloadStruct({
+                proof: new bytes32[](0), params: params, offchainInput: abi.encode(owner, recipe)
+            })
+        );
+        digest = LibCowOrder.hash(order, IComposableCowFork(COMPOSABLE_COW).domainSeparator());
+        vm.expectRevert();
+        IERC1271(drop).isValidSignature(digest, signature);
+    }
+
+    /// @dev `vm.toString(bytes)` without its `0x`.
+    function _hex(bytes memory data) internal pure returns (bytes memory out) {
+        bytes memory prefixed = bytes(vm.toString(data));
+        out = new bytes(prefixed.length - 2);
+        for (uint256 i; i < out.length; ++i) {
+            out[i] = prefixed[i + 2];
+        }
     }
 }
