@@ -1,4 +1,5 @@
 import type { PostResult } from '@cowprotocol/cow-drop-watch-tower'
+import type { OrderBookApi } from '@cowprotocol/cow-sdk'
 import type { Address, Hex } from 'viem'
 
 import type { EventBus } from './events.js'
@@ -67,8 +68,24 @@ export function forwardOrderResults(options: { store: KeeperStore; events: Event
   }
 }
 
+/** The slice of the order book a hook-posted drop needs: its appData document, then its order. */
+export type OrderPoster = Pick<OrderBookApi, 'sendOrder' | 'uploadAppData'>
+
+/**
+ * How the order book answered an order the keeper posted itself.
+ *
+ * The same three-way split the watch tower makes: a duplicate is a success, a 4xx is a verdict on the
+ * order, and anything else is the order book failing to answer.
+ */
+export function classifyPostError(error: unknown): 'duplicate' | 'rejected' | 'unavailable' {
+  const body = (error as { body?: { errorType?: string } })?.body
+  if (body?.errorType === 'DuplicatedOrder') return 'duplicate'
+  const status = (error as { response?: { status?: number } })?.response?.status
+  return typeof status === 'number' && status >= 400 && status < 500 ? 'rejected' : 'unavailable'
+}
+
 /** The most useful line out of an error: the order book's `errorType` when there is one. */
-function describe(error: unknown): string {
+export function describe(error: unknown): string {
   if (error instanceof Error) return error.message
   const body = (error as { body?: { errorType?: string } })?.body
   return body?.errorType ?? String(error)

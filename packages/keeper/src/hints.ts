@@ -10,7 +10,7 @@ import type { WatchHints } from './types.js'
  * pin the poll set for the life of a registration — a drop stuck `blind` forever because the SDK that
  * first saw it could not name a step the current one can.
  */
-export const HINTS_VERSION = '3'
+export const HINTS_VERSION = '4'
 
 const ZERO: Address = '0x0000000000000000000000000000000000000000'
 
@@ -43,6 +43,7 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
     switch (step.type) {
       case 'presignSellAll':
       case 'presignSellAllAtOracle':
+      case 'sellBalanceViaHook':
       case 'twapFromBalance':
       case 'stopLossFromBalance':
         tokens.add(lower(step.sellToken))
@@ -148,6 +149,16 @@ function minOf(current: number | null, next: number): number {
  * a finished schedule from a running one.
  */
 const SELF_DRIVING_STEPS = new Set<DropStepJson['type']>(['twapFromBalance', 'stopLossFromBalance'])
+
+/**
+ * Whether the recipe's order is posted *before* activation, carrying the activation as its pre-hook.
+ *
+ * Such a drop costs the keeper no gas: it posts the order and the solver that fills it activates the
+ * drop. So it is never sent a transaction, and never asked for a fee.
+ */
+export function hookPosted(recipe: DropRecipeJson): boolean {
+  return recipe.steps.some((step) => step.type === 'sellBalanceViaHook')
+}
 
 /**
  * Whether the recipe paces itself on chain, with a cooldown the contract enforces.

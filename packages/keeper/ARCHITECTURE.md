@@ -66,6 +66,21 @@ refuses while the polled digest still matches, and the commitment ends on whiche
   the balance never moved. Before a uid exists the recipe's own validity window stands in, measured from
   the receipt, which errs late.
 
+## Drops activated by their own order
+
+A recipe with a `sellBalanceViaHook` step is never sent a transaction. Once the simulation passes, the
+keeper builds the order with the SDK's `buildHookOrder`, uploads its appData and posts it. The appData
+carries `activate` as a pre-hook, so the solver that fills the order deploys the drop in the same
+settlement and takes the gas out of the surplus.
+
+- **No policy, no budget.** Nothing is spent, so the subsidy modes do not apply and `paying` mode asks
+  such a recipe for no fee.
+- **The same latch.** A posted order records `committedDigest` and an activation entry with `status:
+  'posted'` whose `ref` is the order uid, so `lastOrderDead` reads its `validTo` and a second order
+  goes out only after the first expires or the balance moves.
+- **A refusal is retried.** The order book rejecting the order usually means the market is under the
+  limit; the drop backs off and the next attempt re-prices nothing but the deadline.
+
 ## Payment drops
 
 A `payment` recipe — "pay me `buyAmount` of `buyToken`, in any token" — names no sell token, so the

@@ -140,8 +140,13 @@ export interface PaymentState {
 }
 
 export interface ActivationRecord {
+  /** The activation's transaction hash, or the order uid when `status` is `posted`. */
   ref: Hex
-  status: 'confirmed' | 'reverted' | 'dropped'
+  /**
+   * `posted` is not a transaction: an order went to the order book carrying the activation as its
+   * pre-hook, and the solver that fills it activates the drop.
+   */
+  status: 'confirmed' | 'reverted' | 'dropped' | 'posted'
   at: number
   blockNumber?: string
   costWei?: string
