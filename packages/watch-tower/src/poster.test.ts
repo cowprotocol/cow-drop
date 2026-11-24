@@ -2,7 +2,7 @@ import type { Address } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 
 import { orderPlacementLog, ZERO_APP_DATA } from './fixtures.js'
-import { postDiscoveredOrder } from './poster.js'
+import { describeOrderBookError, postDiscoveredOrder } from './poster.js'
 import type { DiscoveredOrder } from './scanner.js'
 import { parseOrderPlacement } from '@cowprotocol/cow-drop-sdk'
 
@@ -100,5 +100,29 @@ describe('postDiscoveredOrder', () => {
 
     expect((await postDiscoveredOrder(discovered(), { orderBook, dryRun: true })).status).toBe('skipped')
     expect(orderBook.sendOrder).not.toHaveBeenCalled()
+  })
+})
+
+describe('describeOrderBookError', () => {
+  it('reports what the API said, not just the status text', () => {
+    // The SDK's error message is only "Bad Request"; the reason is in the body.
+    const error = Object.assign(new Error('Bad Request'), {
+      response: { status: 400 },
+      body: { errorType: 'InsufficientValidTo', description: 'validTo is not far enough in the future' },
+    })
+
+    expect(describeOrderBookError(error)).toBe(
+      'InsufficientValidTo: validTo is not far enough in the future (HTTP 400)',
+    )
+  })
+
+  it('falls back to the message when there is no body', () => {
+    expect(describeOrderBookError(new Error('socket hang up'))).toBe('socket hang up')
+    expect(describeOrderBookError('plain')).toBe('plain')
+  })
+
+  it('passes a plain-text body through', () => {
+    const error = Object.assign(new Error('Too Many Requests'), { response: { status: 429 }, body: 'slow down' })
+    expect(describeOrderBookError(error)).toBe('slow down (HTTP 429)')
   })
 })
