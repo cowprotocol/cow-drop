@@ -171,6 +171,7 @@ async function startChain(options: ChainKeeperOptions, account: PrivateKeyAccoun
     // before turning the gate on.
     prices: orderBookPrices(orderBook),
     quoter: orderBookPaymentQuoter(orderBook),
+    orderBook,
     pollIntervalMs,
     dryRun,
     logger,

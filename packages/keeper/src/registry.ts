@@ -2,7 +2,7 @@ import { compileRecipe, type DropDeployment, type DropRecipeJson } from '@cowpro
 import type { Address, Hex } from 'viem'
 
 import { feeFor, isProblem, matchDocuments } from './appData.js'
-import { deriveHints, HINTS_VERSION, selfDriving, tradesOf } from './hints.js'
+import { deriveHints, HINTS_VERSION, hookPosted, selfDriving, tradesOf } from './hints.js'
 import { DropConflict, type DropStore } from './store.js'
 
 /** "Anyone may activate", as the convert step reads it. */
@@ -228,7 +228,8 @@ export async function registerDrop(input: RegisterInput): Promise<RegistrationRe
     ? findFee(trades, matched, input.requireFeeFor, input.minFeeBps ?? 0)
     : undefined
 
-  if (input.requireFeeFor && !fee) {
+  // A hook-posted drop is never sent a transaction, so there is no gas for a fee to cover.
+  if (input.requireFeeFor && !fee && !hookPosted(recipe)) {
     return {
       ok: false,
       error: 'no-fee',

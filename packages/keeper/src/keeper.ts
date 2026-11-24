@@ -4,19 +4,22 @@ import {
   convertMinimum,
   buildActivatePaymentTx,
   buildActivateTx,
+  buildHookOrder,
+  findSellBalanceOrders,
   requiredPayment,
   type DropDeployment,
   type DropRecipeJson,
   type EvmCall,
 } from '@cowprotocol/cow-drop-sdk'
-import { getWrappedTokenForChain, type SupportedChainId } from '@cowprotocol/cow-sdk'
+import { getWrappedTokenForChain, type OrderCreation, type SupportedChainId } from '@cowprotocol/cow-sdk'
 import type { Logger } from '@cowprotocol/cow-drop-watch-tower'
 import { silentLogger } from '@cowprotocol/cow-drop-watch-tower'
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 
 import type { KeeperChain, Submitter } from './chain.js'
 import type { EventBus } from './events.js'
-import { balancesDigest, pacedOnChain, pollTargets, selfDriving } from './hints.js'
+import { balancesDigest, hookPosted, pacedOnChain, pollTargets, selfDriving } from './hints.js'
+import { classifyPostError, describe, type OrderPoster } from './orders.js'
 import { evaluatePolicy } from './policy.js'
 import type { PaymentQuoter, PriceOracle } from './revenue.js'
 import { feeValueWei } from './revenue.js'
@@ -41,6 +44,11 @@ export interface KeeperOptions {
    * never activated in any token but its own `buyToken`, since nothing else can be shown to cover it.
    */
   quoter?: PaymentQuoter
+  /**
+   * Where a hook-posted drop's order goes. Without it such a drop is watched and never served, since
+   * sending it a transaction would register the rule and still leave nobody to post the order.
+   */
+  orderBook?: OrderPoster
   /** How far back a payment drop's first `Transfer` scan reaches, in blocks. */
   transferLookbackBlocks?: bigint
   /** The widest block range one `eth_getLogs` asks for. Public RPCs refuse wide ones. */
@@ -116,6 +124,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
     events,
     prices,
     quoter,
+    orderBook,
     transferLookbackBlocks = 10_000n,
     maxTransferRange = 5_000n,
     maxTransferChunksPerTick = 10,
@@ -660,6 +669,12 @@ export function createKeeper(options: KeeperOptions): Keeper {
     }))
     result.ready++
 
+    // Posted, not sent: the order carries the activation, so there is no gas to price or budget.
+    if (hookPosted(drop.recipe)) {
+      await postHookOrders(drop, digest, balances, result)
+      return
+    }
+
     const fees = await chain.getFees()
     const gasLimit = (simulation.gas * BigInt(Math.round(gasBuffer * 1000))) / 1000n
     const day = utcDay(now())
@@ -695,6 +710,100 @@ export function createKeeper(options: KeeperOptions): Keeper {
     }
 
     await send(drop, { call, gasLimit, ...fees, costWei: verdict.costWei, paying }, result)
+  }
+
+  /**
+   * Post the orders of a drop whose recipe activates from the order's own pre-hook.
+   *
+   * The simulation above still gated this, so every guard in the recipe has passed. What is recorded
+   * is the same commitment a confirmed activation records: the balances are spoken for until the
+   * order fills or expires, which is what stops the next tick posting a second one.
+   */
+  async function postHookOrders(
+    drop: RegisteredDrop,
+    digest: string,
+    balances: Record<string, bigint>,
+    result: KeeperTickResult,
+  ): Promise<void> {
+    const orderUids: Hex[] = []
+
+    for (const { data } of findSellBalanceOrders(deployment, drop.setupData)) {
+      const balance = balances[data.sellToken.toLowerCase()] ?? 0n
+      if (balance === 0n) continue
+
+      const built = buildHookOrder({
+        deployment,
+        owner: drop.recipe.owner,
+        setupData: drop.setupData,
+        balance,
+        now: Math.floor(now() / 1000),
+        sellToken: data.sellToken,
+      })
+
+      if (dryRun || !orderBook) {
+        logger.info(
+          `${dryRun ? '[dry run] would post' : 'no order book configured to post'} order ${built.orderUid} for drop ${drop.address}`,
+        )
+        continue
+      }
+
+      let status: 'posted' | 'duplicate' = 'posted'
+      try {
+        if (built.appDataDocument !== undefined) {
+          await orderBook.uploadAppData(built.order.appData, built.appDataDocument)
+        }
+        await orderBook.sendOrder(built.payload as unknown as OrderCreation)
+      } catch (cause) {
+        const outcome = classifyPostError(cause)
+        if (outcome !== 'duplicate') {
+          // Backed off either way. A refusal usually means the market moved under the limit or the
+          // hook cannot run yet, and both can change; an outage certainly will.
+          await store.update(chainId, drop.address, (current) => ({
+            ...current,
+            backoff: { failures: current.backoff.failures + 1, nextAttemptAt: backoffUntil(current) },
+            updatedAt: now(),
+          }))
+          if (outcome === 'rejected') {
+            events.emit({
+              type: 'order-rejected',
+              chainId,
+              drop: drop.address,
+              owner: drop.owner,
+              orderUid: built.orderUid,
+              detail: describe(cause),
+            })
+          }
+          logger.error(`could not post order for drop ${drop.address}: ${describe(cause)}`)
+          return
+        }
+        status = 'duplicate'
+      }
+
+      orderUids.push(built.orderUid)
+      events.emit({
+        type: 'order-posted',
+        chainId,
+        drop: drop.address,
+        owner: drop.owner,
+        orderUid: built.orderUid,
+        status,
+      })
+      logger.info(`posted order ${built.orderUid} for drop ${drop.address}; its pre-hook activates the drop`)
+    }
+
+    const first = orderUids[0]
+    if (!first) return
+
+    await store.update(chainId, drop.address, (current) => ({
+      ...current,
+      blockedReason: undefined,
+      blockedUntil: undefined,
+      committedDigest: digest,
+      backoff: { failures: 0, nextAttemptAt: 0 },
+      activations: [...current.activations, { ref: first, status: 'posted', at: now(), orderUids }],
+      updatedAt: now(),
+    }))
+    result.sent++
   }
 
   /**
