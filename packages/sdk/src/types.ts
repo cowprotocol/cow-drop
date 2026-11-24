@@ -100,6 +100,12 @@ export interface DropAddresses {
    */
   cooldownSteps?: Address
   /**
+   * `SellBalanceHandler`: the ComposableCoW handler a recipe registers to have its order posted
+   * before activation. A handler rather than a step, so a recipe names it inside the params it
+   * registers. Optional because it joined generation 2 late.
+   */
+  sellBalanceHandler?: Address
+  /**
    * `GPv2Settlement` and `ComposableCoW`. Not cow-drop's own contracts and not inputs to a drop
    * address — but they *are* constructor inputs to the step contracts, so they belong to the
    * generation. Carried so a rescue can retire live orders without an RPC round-trip.

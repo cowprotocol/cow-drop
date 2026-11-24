@@ -39,8 +39,12 @@ await walletClient.sendTransaction(tx)
 | `twapOnArrival(params)` | Template: split whatever lands here into parts and sell over time. One-shot. |
 | `stopLossOnArrival(params)` | Template: sell whatever lands here once a feed pair crosses a strike. One-shot, and self-driving — the watch tower polls the condition. |
 | `paymentRequest(params)` | Template: "pay me `buyAmount` of `buyToken`, in any token". Reusable. The recipe names no sell token; activate it with `buildActivatePaymentTx`. Takes the time guards only. |
-| `steps.*` | Build individual steps by hand: `presignSellAll`, `presignSellAllAtOracle`, `twapFromBalance`, `stopLossFromBalance`, `payment`, `requireCallResult`, `requireMinBalance`, `requireTimeWindow`, `claimCooldown`, `wrapNative`, `approveMax`, `approveBalance`, `sweep`, and `raw` for anything else. |
+| `steps.*` | Build individual steps by hand: `presignSellAll`, `sellBalanceViaHook`, `presignSellAllAtOracle`, `twapFromBalance`, `stopLossFromBalance`, `payment`, `requireCallResult`, `requireMinBalance`, `requireTimeWindow`, `claimCooldown`, `wrapNative`, `approveMax`, `approveBalance`, `sweep`, and `raw` for anything else. |
 | `describeRecipe(setupData, deployment)` | The inverse: committed bytes → named steps, decoded arguments, and warnings. See below. |
+
+`swapOnArrival({ activation: 'hook' })` swaps the pre-sign step for `sellBalanceViaHook`: the order is
+posted before the drop exists and activates it from its own pre-hook, so nobody sends an activation
+transaction. It compiles to two calls, and guards then gate the first activation only.
 
 All three templates take the same optional guards (`minAmount`, `notBefore`, `notAfter`), and
 `swapOnArrival` takes an optional `oracle` which turns its `limitPrice` into a floor the feed may only
@@ -64,6 +68,9 @@ so asking a guard for `deployment.twapSteps` would misstate what moves that guar
 |---|---|
 | `buildActivateTx({ deployment, owner, setupData })` | `{ to, data, value }` for deploying the drop and running its recipe. Idempotent — safe to send twice. |
 | `buildActivatePaymentTx({ deployment, owner, setupData, sellToken })` | The same for a payment recipe, naming which of the drop's balances pays. Goes through `PaymentSteps.activatePayment`; plain activation of a payment recipe reverts with `NoPaymentToken`. |
+| `buildHookOrder({ deployment, owner, setupData, balance, now })` | For a `sellBalanceViaHook` recipe: the ERC-1271 order to post for a funded drop, deployed or not. Returns `{ payload, appDataDocument, orderUid, signature, order, drop }`; upload the document, then post the payload. |
+| `hookAppDataTemplate({ deployment, gasLimit? })` | The default appData template: a document holding only the activation hook. Pass your own `appDataTemplate` to the step to add a partner fee. |
+| `findSellBalanceOrders(deployment, setupData)` | The whole-balance sells a recipe registers, read from its committed bytes. |
 | `parseOrderPlacement(log, { chainId, settlement })` | Decode an `OrderPlacement` event into the order that was placed, with the owner taken from the field its scheme puts it in and the uid recomputed. |
 | `toOrderBookPayload(order)` | That order as a `POST /api/v1/orders` body, forwarding the scheme and signature the event carried. |
 | `parseExtraData(extraData)` | The `int64 quoteId ++ uint32 validTo` the `data` field carries, or `undefined` if it is some other length. |

@@ -1,6 +1,7 @@
 import { decodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 
 import { decodeRecipe } from './encoding.js'
+import { COMPOSABLE_COW_CREATE_ABI } from './hookOrder.js'
 import {
   STOP_LOSS_STEPS_ABI,
   TWAP_STEPS_ABI,
@@ -29,6 +30,8 @@ export type StepContractName =
   | 'PaymentSteps'
   | 'ConvertSteps'
   | 'CooldownSteps'
+  /** Not a step contract: named only for a plain `create` registering this generation's handler. */
+  | 'ComposableCoW'
 
 /** One decoded argument, with the name the contract gives it. */
 export interface DescribedArg {
@@ -72,6 +75,7 @@ const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   PaymentSteps: PAYMENT_STEPS_ABI as unknown as Abi,
   ConvertSteps: CONVERT_STEPS_ABI as unknown as Abi,
   CooldownSteps: COOLDOWN_STEPS_ABI as unknown as Abi,
+  ComposableCoW: COMPOSABLE_COW_CREATE_ABI as unknown as Abi,
 }
 
 /**
@@ -124,7 +128,7 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
 
   /** Each call named where the SDK recognises it, and flagged where it does not. */
   const steps = recipe.calls.map((call, index): DescribedStep => {
-    const contract = byAddress.get(call.target.toLowerCase())
+    const contract = byAddress.get(call.target.toLowerCase()) ?? registersSellBalance(call, deployment)
     const warnings: string[] = []
 
     let known: DescribedStep['known'] = null
@@ -157,7 +161,7 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
       )
     }
 
-    if (!call.isDelegateCall && contract) {
+    if (!call.isDelegateCall && contract && contract !== 'ComposableCoW') {
       // Easy to get wrong by hand, and it fails quietly: the step reads the step contract's own
       // balance, which is always zero, so an amount-dependent step either reverts or does nothing.
       warnings.push(
@@ -183,6 +187,24 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
   })
 
   return { label: recipe.label, salt: recipe.salt, once: recipe.once, steps }
+}
+
+/**
+ * A plain call registering this generation's `SellBalanceHandler` with ComposableCoW. Any other call
+ * to ComposableCoW stays unnamed: what a foreign handler does cannot be shown here.
+ */
+function registersSellBalance(
+  call: { target: Address; callData: Hex; isDelegateCall: boolean },
+  deployment: DropDeployment,
+): StepContractName | undefined {
+  if (call.isDelegateCall || !deployment.sellBalanceHandler) return undefined
+  if (call.target.toLowerCase() !== deployment.composableCow.toLowerCase()) return undefined
+  try {
+    const { args } = decodeFunctionData({ abi: COMPOSABLE_COW_CREATE_ABI, data: call.callData })
+    return args[0].handler.toLowerCase() === deployment.sellBalanceHandler.toLowerCase() ? 'ComposableCoW' : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Whether anything in a described recipe needs flagging to whoever is about to fund it. */

@@ -10,6 +10,13 @@ import {
   TOKEN_STEPS_ABI,
   TWAP_STEPS_ABI,
 } from './generated/artifacts.js'
+import {
+  COMPOSABLE_COW_CREATE_ABI,
+  COW_VAULT_RELAYER,
+  encodeSellBalanceData,
+  hookAppDataTemplate,
+  type AppDataTemplate,
+} from './hookOrder.js'
 import type { DropCall, DropDeployment, LimitPriceFraction } from './types.js'
 
 const ZERO_ADDRESS: Address = '0x0000000000000000000000000000000000000000'
@@ -45,6 +52,21 @@ export interface PresignSellAllParams {
   validitySeconds: bigint
   appData?: Hex
   allowFailure?: boolean
+}
+
+export interface SellBalanceViaHookParams {
+  sellToken: Address
+  buyToken: Address
+  /** Where the bought tokens go. Defaults to the drop itself. */
+  receiver?: Address
+  limitPrice: LimitPriceFraction
+  /** The furthest an order's deadline may sit from the block it settles in. */
+  validitySeconds: bigint
+  /** Gas forwarded to the activation hook. Ignored when `appDataTemplate` is given. */
+  hookGasLimit?: bigint
+  /** The JSON around the hook's calldata. Defaults to a document holding only the hook. */
+  appDataTemplate?: AppDataTemplate
+  orderSalt?: Hex
 }
 
 export interface TwapFromBalanceParams {
@@ -206,6 +228,59 @@ export const steps = {
       }),
       params.allowFailure,
     )
+  },
+
+  /**
+   * Sell the drop's whole balance through an order that is posted *before* activation and activates
+   * the drop from its own pre-hook, so nobody sends an activation transaction.
+   *
+   * Two calls, and no step contract of its own: approve the relayer, then register
+   * `SellBalanceHandler` with ComposableCoW. Build the order to post with `buildHookOrder`.
+   */
+  sellBalanceViaHook(
+    deployment: Pick<DropDeployment, 'tokenSteps' | 'composableCow' | 'sellBalanceHandler' | 'executor'>,
+    params: SellBalanceViaHookParams,
+  ): DropCall[] {
+    if (!deployment.sellBalanceHandler) {
+      throw new Error('this generation has no SellBalanceHandler; sellBalanceViaHook needs generation 2 or later')
+    }
+    assertDistinctTokens(params.sellToken, params.buyToken)
+    if (params.validitySeconds <= 0n) throw new Error('validitySeconds must be greater than zero')
+
+    const appDataTemplate =
+      params.appDataTemplate ?? hookAppDataTemplate({ deployment, gasLimit: params.hookGasLimit })
+    if (!appDataTemplate.prefix.endsWith('0x')) {
+      throw new Error('the appData template prefix must end in "0x", where the hook calldata begins')
+    }
+
+    const staticInput = encodeSellBalanceData({
+      sellToken: params.sellToken,
+      buyToken: params.buyToken,
+      receiver: params.receiver ?? ZERO_ADDRESS,
+      limitPrice: params.limitPrice,
+      validitySeconds: params.validitySeconds,
+      appData: ZERO_BYTES32,
+      appDataTemplate,
+    })
+
+    return [
+      steps.approveMax(deployment, { token: params.sellToken, spender: COW_VAULT_RELAYER }),
+      steps.raw({
+        target: deployment.composableCow,
+        callData: encodeFunctionData({
+          abi: COMPOSABLE_COW_CREATE_ABI,
+          functionName: 'create',
+          args: [
+            {
+              handler: deployment.sellBalanceHandler,
+              salt: params.orderSalt ?? ZERO_BYTES32,
+              staticInput,
+            },
+            true,
+          ],
+        }),
+      }),
+    ]
   },
 
   /** Split the drop's whole balance into parts and register a TWAP (path C). */

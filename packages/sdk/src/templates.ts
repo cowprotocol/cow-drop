@@ -80,6 +80,15 @@ export interface SwapOnArrivalParams extends RecipeGuards {
   label?: string
   appData?: Hex
   /**
+   * How the drop gets activated. `'transaction'` (the default) pre-signs on activation, which
+   * someone has to send. `'hook'` registers a rule instead, so the order can be posted first and
+   * activates the drop from its own pre-hook: build it with `buildHookOrder`.
+   *
+   * With `'hook'` the guards gate the first activation only, `appData` is ignored (the document is
+   * built around the hook), and `oracle` is refused.
+   */
+  activation?: 'transaction' | 'hook'
+  /**
    * Wrap the drop's native balance first, for a drop funded with ETH/xDAI rather than a token.
    * Pass the wrapped-native address of the chain.
    */
@@ -119,6 +128,28 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
   }
 
   steps.push(...balanceGuard(params, params.sellToken))
+
+  if (params.activation === 'hook') {
+    if (params.oracle) throw new Error("activation: 'hook' does not support an oracle limit")
+    steps.push({
+      type: 'sellBalanceViaHook',
+      sellToken: params.sellToken,
+      buyToken: params.buyToken,
+      receiver: params.receiver ?? params.owner,
+      limitPrice: params.limitPrice,
+      validitySeconds: params.validitySeconds ?? 30 * 60,
+    })
+    return {
+      version: 1,
+      generation: LATEST_GENERATION,
+      label: params.label ?? 'swap on arrival via hook',
+      chainId: params.chainId,
+      owner: params.owner,
+      salt: params.salt,
+      once: false,
+      steps,
+    }
+  }
 
   steps.push(
     params.oracle

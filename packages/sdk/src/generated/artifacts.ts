@@ -2265,6 +2265,302 @@ export const COOLDOWN_STEPS_ABI = [
   }
 ] as const
 
+/** The ComposableCoW handler behind an order posted before its drop is activated. */
+export const SELL_BALANCE_HANDLER_ABI = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "executor",
+        "type": "address",
+        "internalType": "contract DropExecutor"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "EXECUTOR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract DropExecutor"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTradeableOrder",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "staticInput",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "offchainInput",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibCowOrder.Data",
+        "components": [
+          {
+            "name": "sellToken",
+            "type": "address",
+            "internalType": "contract IERC20"
+          },
+          {
+            "name": "buyToken",
+            "type": "address",
+            "internalType": "contract IERC20"
+          },
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sellAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "buyAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "validTo",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "appData",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "feeAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "kind",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "partiallyFillable",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "sellTokenBalance",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "buyTokenBalance",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "supportsInterface",
+    "inputs": [
+      {
+        "name": "interfaceId",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "verify",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "domainSeparator",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "staticInput",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "offchainInput",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "order",
+        "type": "tuple",
+        "internalType": "struct LibCowOrder.Data",
+        "components": [
+          {
+            "name": "sellToken",
+            "type": "address",
+            "internalType": "contract IERC20"
+          },
+          {
+            "name": "buyToken",
+            "type": "address",
+            "internalType": "contract IERC20"
+          },
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sellAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "buyAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "validTo",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "appData",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "feeAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "kind",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "partiallyFillable",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "sellTokenBalance",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "buyTokenBalance",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "LimitPriceTooLow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OrderNotValid",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PollNever",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PollTryNextBlock",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  }
+] as const
+
 export const DROP_EXECUTOR_ABI = [
   {
     "type": "constructor",
