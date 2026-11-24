@@ -23,7 +23,7 @@ export type DropStepJson =
       allowFailure?: boolean
     }
   | {
-      /** Posted before activation; the order's own pre-hook activates the drop. Two calls. */
+      /** Posted before activation; the order's own pre-hook activates the drop. Three calls. */
       type: 'sellBalanceViaHook'
       sellToken: Address
       buyToken: Address
@@ -113,7 +113,7 @@ export type DropStepJson =
       appData?: Hex
     }
   | {
-      /** `payment`, posted before activation; the order's own pre-hook activates the drop. Two calls. */
+      /** `payment`, posted before activation; the order's own pre-hook activates the drop. Three calls. */
       type: 'paymentViaHook'
       buyToken: Address
       /** In `buyToken` atoms. */

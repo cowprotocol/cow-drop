@@ -44,7 +44,8 @@ await walletClient.sendTransaction(tx)
 
 `swapOnArrival({ activation: 'hook' })` swaps the pre-sign step for `sellBalanceViaHook`: the order is
 posted before the drop exists and activates it from its own pre-hook, so nobody sends an activation
-transaction. It compiles to two calls, and guards then gate the first activation only.
+transaction. It compiles to three calls, the last telling the handler the recipe ran: the handler
+only accepts an order in a transaction where it did, so guards hold on every order.
 
 `paymentRequest({ activation: 'hook' })` does the same for a payment: the recipe still names no sell
 token, and the order built by `buildHookPaymentOrder` names it.

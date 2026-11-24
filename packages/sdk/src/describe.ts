@@ -1,7 +1,7 @@
 import { decodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 
 import { decodeRecipe } from './encoding.js'
-import { COMPOSABLE_COW_CREATE_ABI } from './hookOrder.js'
+import { COMPOSABLE_COW_CREATE_ABI, MARK_RAN_ABI } from './hookOrder.js'
 import {
   STOP_LOSS_STEPS_ABI,
   TWAP_STEPS_ABI,
@@ -34,6 +34,9 @@ export type StepContractName =
   | 'HookPaymentSteps'
   /** Not a step contract: named only for a plain `create` registering this generation's handler. */
   | 'ComposableCoW'
+  /** Not step contracts either: named for the plain `markRan` call that ends a hook-activated recipe. */
+  | 'SellBalanceHandler'
+  | 'PaymentHandler'
 
 /** One decoded argument, with the name the contract gives it. */
 export interface DescribedArg {
@@ -68,6 +71,9 @@ export interface DescribedRecipe {
   steps: DescribedStep[]
 }
 
+/** Contracts a recipe reaches by a plain call on purpose, so that is not something to warn about. */
+const PLAIN_CALLED: ReadonlySet<StepContractName> = new Set(['ComposableCoW', 'SellBalanceHandler', 'PaymentHandler'])
+
 const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   GuardSteps: GUARD_STEPS_ABI as unknown as Abi,
   TokenSteps: TOKEN_STEPS_ABI as unknown as Abi,
@@ -79,6 +85,8 @@ const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   CooldownSteps: COOLDOWN_STEPS_ABI as unknown as Abi,
   HookPaymentSteps: HOOK_PAYMENT_STEPS_ABI as unknown as Abi,
   ComposableCoW: COMPOSABLE_COW_CREATE_ABI as unknown as Abi,
+  SellBalanceHandler: MARK_RAN_ABI as unknown as Abi,
+  PaymentHandler: MARK_RAN_ABI as unknown as Abi,
 }
 
 /**
@@ -130,6 +138,10 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
     ...(deployment.hookPaymentSteps
       ? [[deployment.hookPaymentSteps.toLowerCase(), 'HookPaymentSteps'] as const]
       : []),
+    ...(deployment.sellBalanceHandler
+      ? [[deployment.sellBalanceHandler.toLowerCase(), 'SellBalanceHandler'] as const]
+      : []),
+    ...(deployment.paymentHandler ? [[deployment.paymentHandler.toLowerCase(), 'PaymentHandler'] as const] : []),
   ])
 
   /** Each call named where the SDK recognises it, and flagged where it does not. */
@@ -167,7 +179,7 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
       )
     }
 
-    if (!call.isDelegateCall && contract && contract !== 'ComposableCoW') {
+    if (!call.isDelegateCall && contract && !PLAIN_CALLED.has(contract)) {
       // Easy to get wrong by hand, and it fails quietly: the step reads the step contract's own
       // balance, which is always zero, so an amount-dependent step either reverts or does nothing.
       warnings.push(

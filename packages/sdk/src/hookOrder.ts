@@ -54,6 +54,11 @@ export interface SellBalanceData {
   appDataTemplate: AppDataTemplate
 }
 
+/** `HookOrderBase.markRan`: the last call of a hook-activated recipe, the same on every handler. */
+export const MARK_RAN_ABI = [
+  { type: 'function', name: 'markRan', stateMutability: 'nonpayable', inputs: [], outputs: [] },
+] as const
+
 /** Hand-written like the other ComposableCoW ABIs here: composable-cow is not a submodule. */
 export const COMPOSABLE_COW_CREATE_ABI = [
   {

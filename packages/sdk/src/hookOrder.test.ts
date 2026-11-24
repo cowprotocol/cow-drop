@@ -137,7 +137,7 @@ describe('sellBalanceViaHook', () => {
   const { deployment } = compiled
 
   it('compiles to an approval as the drop and a plain registration', () => {
-    const [approve, register] = compiled.recipe.calls
+    const [approve, register, mark] = compiled.recipe.calls
 
     expect(approve!.target).toBe(deployment.tokenSteps)
     expect(approve!.isDelegateCall).toBe(true)
@@ -149,6 +149,10 @@ describe('sellBalanceViaHook', () => {
     expect(register!.target).toBe(deployment.composableCow)
     expect(register!.isDelegateCall).toBe(false)
 
+    // Last, and a plain call: the handler keys the mark by who called it.
+    expect(mark).toMatchObject({ target: deployment.sellBalanceHandler, isDelegateCall: false, allowFailure: false })
+    expect(compiled.recipe.calls).toHaveLength(3)
+
     const [found] = findSellBalanceOrders(deployment, compiled.setupData)
     expect(found!.params.handler).toBe(deployment.sellBalanceHandler)
     expect(found!.data.receiver).toBe(OWNER)
@@ -157,7 +161,7 @@ describe('sellBalanceViaHook', () => {
 
   it('reads as a recipe with nothing to warn about', () => {
     const described = describeRecipe(compiled.setupData, deployment)
-    expect(described.steps.map((step) => step.known?.contract)).toEqual(['TokenSteps', 'ComposableCoW'])
+    expect(described.steps.map((step) => step.known?.contract)).toEqual(['TokenSteps', 'ComposableCoW', 'SellBalanceHandler'])
     expect(hasWarnings(described)).toBe(false)
   })
 
@@ -298,7 +302,8 @@ describe('paymentViaHook', () => {
   const { deployment, setupData } = compiled
 
   it('compiles to an approval step and a plain registration, naming no sell token', () => {
-    const [approve, register] = compiled.recipe.calls
+    const [approve, register, mark] = compiled.recipe.calls
+    expect(mark).toMatchObject({ target: deployment.paymentHandler, isDelegateCall: false })
     expect(approve!.target).toBe(deployment.hookPaymentSteps)
     expect(approve!.isDelegateCall).toBe(true)
     expect(register!.target).toBe(deployment.composableCow)
@@ -311,7 +316,7 @@ describe('paymentViaHook', () => {
 
   it('reads as a recipe with nothing to warn about', () => {
     const described = describeRecipe(setupData, deployment)
-    expect(described.steps.map((step) => step.known?.contract)).toEqual(['HookPaymentSteps', 'ComposableCoW'])
+    expect(described.steps.map((step) => step.known?.contract)).toEqual(['HookPaymentSteps', 'ComposableCoW', 'PaymentHandler'])
     expect(hasWarnings(described)).toBe(false)
   })
 

@@ -14,6 +14,7 @@ import {
 import {
   COMPOSABLE_COW_CREATE_ABI,
   COW_VAULT_RELAYER,
+  MARK_RAN_ABI,
   encodeHookPaymentData,
   encodeSellBalanceData,
   hookAppDataTemplate,
@@ -41,6 +42,23 @@ function stepCall(target: Address, callData: Hex, allowFailure = false): DropCal
     callData,
     allowFailure,
     isDelegateCall: true,
+  }
+}
+
+/**
+ * The last call of a hook-activated recipe: tell the handler this drop's recipe ran to completion.
+ *
+ * The handler only accepts an order in a transaction where this happened, which is what makes every
+ * guard hold on every order. A hook that reverts is ignored by CoW's trampoline, and the registration
+ * from an earlier activation would otherwise still stand.
+ */
+function markRan(handler: Address): DropCall {
+  return {
+    target: handler,
+    value: 0n,
+    callData: encodeFunctionData({ abi: MARK_RAN_ABI, functionName: 'markRan' }),
+    allowFailure: false,
+    isDelegateCall: false,
   }
 }
 
@@ -250,8 +268,9 @@ export const steps = {
    * Sell the drop's whole balance through an order that is posted *before* activation and activates
    * the drop from its own pre-hook, so nobody sends an activation transaction.
    *
-   * Two calls, and no step contract of its own: approve the relayer, then register
-   * `SellBalanceHandler` with ComposableCoW. Build the order to post with `buildHookOrder`.
+   * Three calls, and no step contract of its own: approve the relayer, register `SellBalanceHandler`
+   * with ComposableCoW, and tell the handler the recipe ran. Build the order to post with
+   * `buildHookOrder`.
    */
   sellBalanceViaHook(
     deployment: Pick<DropDeployment, 'tokenSteps' | 'composableCow' | 'sellBalanceHandler' | 'executor'>,
@@ -297,6 +316,7 @@ export const steps = {
           ],
         }),
       }),
+      markRan(deployment.sellBalanceHandler),
     ]
   },
 
@@ -304,8 +324,9 @@ export const steps = {
    * `payment`, with the order posted before activation: "pay me `buyAmount` of `buyToken`, in any
    * token", and nobody sends an activation transaction.
    *
-   * Two calls: approve the relayer for whichever token the order's hook names, then register
-   * `PaymentHandler`. Build the order to post with `buildHookPaymentOrder`.
+   * Three calls: approve the relayer for whichever token the order's hook names, register
+   * `PaymentHandler`, and tell the handler the recipe ran. Build the order to post with
+   * `buildHookPaymentOrder`.
    */
   paymentViaHook(
     deployment: Pick<DropDeployment, 'hookPaymentSteps' | 'paymentHandler' | 'paymentSteps' | 'composableCow' | 'executor'>,
@@ -355,6 +376,7 @@ export const steps = {
           args: [{ handler: paymentHandler, salt: params.orderSalt ?? ZERO_BYTES32, staticInput }, true],
         }),
       }),
+      markRan(paymentHandler),
     ]
   },
 

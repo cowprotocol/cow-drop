@@ -84,8 +84,9 @@ export interface SwapOnArrivalParams extends RecipeGuards {
    * someone has to send. `'hook'` registers a rule instead, so the order can be posted first and
    * activates the drop from its own pre-hook: build it with `buildHookOrder`.
    *
-   * With `'hook'` the guards gate the first activation only, `appData` is ignored (the document is
-   * built around the hook), and `oracle` is refused.
+   * With `'hook'`, `appData` is ignored (the document is built around the hook) and `oracle` is
+   * refused. The guards still gate every order: the handler only accepts one in a transaction
+   * where the whole recipe ran.
    */
   activation?: 'transaction' | 'hook'
   /**
