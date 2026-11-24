@@ -2,12 +2,10 @@
 pragma solidity ^0.8.25;
 
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
-import {LibString} from "solady/utils/LibString.sol";
 
 import {DropExecutor} from "../DropExecutor.sol";
 import {IConditionalOrderHandler} from "../interfaces/IConditionalOrderHandler.sol";
-import {IERC20Like} from "../interfaces/IDropExternal.sol";
-import {Orders} from "../lib/Orders.sol";
+import {HookOrderBase} from "../lib/HookOrderBase.sol";
 import {PaymentSteps} from "../steps/PaymentSteps.sol";
 
 /// @title PaymentHandler
@@ -20,11 +18,12 @@ import {PaymentSteps} from "../steps/PaymentSteps.sol";
 ///
 ///      The order's pre-hook is `PaymentSteps.activatePayment(owner, setupData, sellToken)`, which is
 ///      how the recipe's `HookPaymentSteps.approvePayment` step learns which token to approve. The
-///      appData is rebuilt around that calldata, sell token included, as `SellBalanceHandler` does.
+///      appData is rebuilt around that calldata, so an order cannot carry a hook that approves a
+///      different token.
 ///
 ///      A payment made in `buyToken` itself has no order to place. It is forwarded by activating
 ///      with that token, which takes a transaction.
-contract PaymentHandler is IConditionalOrderHandler {
+contract PaymentHandler is HookOrderBase {
     /// @dev `staticInput`. Must not mention the drop, which is derived from it.
     struct Data {
         address buyToken;
@@ -39,11 +38,7 @@ contract PaymentHandler is IConditionalOrderHandler {
         bytes appDataSuffix;
     }
 
-    DropExecutor public immutable EXECUTOR;
-
-    constructor(DropExecutor executor) {
-        EXECUTOR = executor;
-    }
+    constructor(DropExecutor executor) HookOrderBase(executor) {}
 
     /// @inheritdoc IConditionalOrderHandler
     /// @dev `sender` is ignored: by the time a check reaches here through `DropExecutor` it is the
@@ -60,24 +55,26 @@ contract PaymentHandler is IConditionalOrderHandler {
     ) external view override {
         Data memory data = abi.decode(staticInput, (Data));
         address sellToken = address(order.sellToken);
-
-        if (LibCowOrder.hash(order, domainSeparator) != hash) revert OrderNotValid("invalid hash");
-        if (address(order.buyToken) != data.buyToken) revert OrderNotValid("buy token");
         if (sellToken == data.buyToken) revert OrderNotValid("already the buy token");
-        if (order.receiver != data.receiver) revert OrderNotValid("receiver");
-        if (order.kind != Orders.KIND_SELL) revert OrderNotValid("not a sell order");
-        if (order.partiallyFillable) revert OrderNotValid("partially fillable");
-        if (order.feeAmount != 0) revert OrderNotValid("fee");
-        if (order.sellTokenBalance != Orders.BALANCE_ERC20) revert OrderNotValid("sell token balance");
-        // gitleaks:allow (balance-kind constant, not a secret)
-        if (order.buyTokenBalance != Orders.BALANCE_ERC20) revert OrderNotValid("buy token balance");
 
-        uint256 balance = IERC20Like(sellToken).balanceOf(owner);
-        if (balance == 0 || order.sellAmount != balance) revert OrderNotValid("not the whole balance");
-
-        if (data.buyAmount == 0 || order.buyAmount < data.buyAmount) revert OrderNotValid("below the price");
-        if (order.validTo > block.timestamp + data.validitySeconds) revert OrderNotValid("valid for too long");
-        if (order.appData != _appData(owner, sellToken, data, offchainInput)) revert OrderNotValid("appData");
+        _wholeBalance(owner, sellToken, order);
+        _check(
+            owner,
+            hash,
+            domainSeparator,
+            order,
+            Terms({
+                sellToken: sellToken,
+                buyToken: data.buyToken,
+                receiver: data.receiver,
+                minBuyAmount: data.buyAmount,
+                validitySeconds: data.validitySeconds,
+                appData: data.appData,
+                appDataPrefix: data.appDataPrefix,
+                appDataSuffix: data.appDataSuffix
+            }),
+            offchainInput
+        );
     }
 
     /// @inheritdoc IConditionalOrderHandler
@@ -91,27 +88,14 @@ contract PaymentHandler is IConditionalOrderHandler {
         revert PollNever("the poster chooses the sell token");
     }
 
-    /// @inheritdoc IConditionalOrderHandler
-    function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
-        return interfaceId == this.getTradeableOrder.selector || interfaceId == this.supportsInterface.selector;
-    }
-
-    /// @notice The appData hash an order selling `sellToken` for `owner` must carry.
-    /// @param offchainInput `abi.encode(address shedOwner, bytes setupData)`: the recipe `owner` is
-    ///        the drop of. Unused when the appData is fixed.
-    function _appData(address owner, address sellToken, Data memory data, bytes calldata offchainInput)
+    /// @inheritdoc HookOrderBase
+    /// @dev Names the token, or the drop would approve a different one from the order's.
+    function _hook(address shedOwner, bytes memory setupData, address sellToken)
         internal
-        view
-        returns (bytes32)
+        pure
+        override
+        returns (bytes memory)
     {
-        if (data.appDataPrefix.length == 0) return data.appData;
-        if (offchainInput.length == 0) revert OrderNotValid("appData needs the recipe as offchain input");
-
-        (address shedOwner, bytes memory setupData) = abi.decode(offchainInput, (address, bytes));
-        if (EXECUTOR.dropOf(shedOwner, setupData) != owner) revert OrderNotValid("not this drop's recipe");
-
-        // The hook must name the token this order sells, or the drop approves a different one.
-        bytes memory hook = abi.encodeCall(PaymentSteps.activatePayment, (shedOwner, setupData, sellToken));
-        return keccak256(abi.encodePacked(data.appDataPrefix, LibString.toHexStringNoPrefix(hook), data.appDataSuffix));
+        return abi.encodeCall(PaymentSteps.activatePayment, (shedOwner, setupData, sellToken));
     }
 }

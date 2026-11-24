@@ -270,6 +270,10 @@ Three things to know:
 
 ### `PaymentHandler` — the same, in any token
 
+Both handlers are `lib/HookOrderBase.sol` plus the three things that differ: which token is sold, the
+least it may fetch, and the hook. The fixed fields, the whole-balance rule, the deadline and the appData
+rebuild live in the base, once. It is abstract, so it has no address.
+
 `SellBalanceHandler` is the swap: a fixed pair and a price ratio. `PaymentHandler` is the payment
 request: the recipe commits to `buyToken`, `buyAmount` and `receiver` and leaves the sell token open, so
 the order names it. `verify` accepts the drop's whole balance of whichever token that is, for at least

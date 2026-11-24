@@ -235,7 +235,7 @@ contract SellBalanceHandlerTest is StepsBase {
         (address drop, bytes memory recipe, LibCowOrder.Data memory order) = _funded();
         order.buyAmount -= 1;
 
-        _expectNotValid("below the limit price");
+        _expectNotValid("below the minimum");
         _verify(drop, recipe, order);
     }
 
