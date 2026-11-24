@@ -175,7 +175,7 @@ describe('a drop activated by its own order', () => {
     const stored = await h.store.get(CHAIN_ID, h.drop.address)
     expect(stored!.activations).toHaveLength(0)
     expect(stored!.backoff.failures).toBe(1)
-    expect(h.events.find((e) => e.type === 'order-rejected')).toMatchObject({ detail: 'InvalidEip1271Signature' })
+    expect(h.events.find((e) => e.type === 'order-rejected')).toMatchObject({ detail: 'InvalidEip1271Signature (HTTP 400)' })
   })
 
   it('backs off quietly when the order book cannot answer', async () => {

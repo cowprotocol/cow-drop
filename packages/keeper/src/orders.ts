@@ -1,4 +1,4 @@
-import type { PostResult } from '@cowprotocol/cow-drop-watch-tower'
+import { describeOrderBookError, type PostResult } from '@cowprotocol/cow-drop-watch-tower'
 import type { OrderBookApi } from '@cowprotocol/cow-sdk'
 import type { Address, Hex } from 'viem'
 
@@ -86,7 +86,5 @@ export function classifyPostError(error: unknown): 'duplicate' | 'rejected' | 'u
 
 /** The most useful line out of an error: the order book's `errorType` when there is one. */
 export function describe(error: unknown): string {
-  if (error instanceof Error) return error.message
-  const body = (error as { body?: { errorType?: string } })?.body
-  return body?.errorType ?? String(error)
+  return describeOrderBookError(error)
 }

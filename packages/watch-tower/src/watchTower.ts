@@ -4,7 +4,7 @@ import type { OrderBookApi } from '@cowprotocol/cow-sdk'
 import type { ChainReader } from './chain.js'
 import { silentLogger, type Logger } from './logger.js'
 import { memoryCursor, type Cursor } from './cursor.js'
-import { postDiscoveredOrder, type AppDataResolver, type PostResult } from './poster.js'
+import { describeOrderBookError, postDiscoveredOrder, type AppDataResolver, type PostResult } from './poster.js'
 import { scanForOrders, type SkippedLog } from './scanner.js'
 
 export { createLogger, silentLogger } from './logger.js'
@@ -150,7 +150,7 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
       onResult?.(result)
 
       const line = `order ${result.orderUid} owned by ${discovered.owner} (tx ${discovered.transactionHash})`
-      if (result.status === 'rejected') logger.error(`order book rejected ${line}: ${describe(result.error)}`)
+      if (result.status === 'rejected') logger.error(`order book rejected ${line}: ${describeOrderBookError(result.error)}`)
       else logger.info(`${result.status} ${line}`)
     }
 
@@ -177,7 +177,7 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
       } catch (error) {
         // Kept alive on purpose: an RPC or order-book outage should cost a tick, not the process. The
         // cursor did not advance, so the next pass re-scans the same range.
-        logger.error(`tick failed, retrying: ${describe(error)}`)
+        logger.error(`tick failed, retrying: ${describeOrderBookError(error)}`)
         onTick?.(error)
       }
 
@@ -187,12 +187,6 @@ export function createWatchTower(options: WatchTowerOptions): WatchTower {
   }
 
   return { tick, run }
-}
-
-/** An error as one printable line, whatever it was thrown as. */
-function describe(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return typeof error === 'string' ? error : JSON.stringify(error)
 }
 
 /** A sleep that wakes early when the signal aborts, so shutdown does not wait out a poll interval. */

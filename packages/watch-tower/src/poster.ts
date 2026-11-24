@@ -91,6 +91,28 @@ function errorBody(error: unknown): { errorType?: string } | undefined {
   return typeof body === 'object' && body !== null ? (body as { errorType?: string }) : undefined
 }
 
+/**
+ * An order-book error as one line that says what the API said.
+ *
+ * The SDK's error carries only the HTTP status text as its message ("Bad Request"); the reason is in
+ * the body, as `errorType` and `description`.
+ */
+export function describeOrderBookError(error: unknown): string {
+  const body = (error as { body?: unknown })?.body
+  const status = (error as { response?: { status?: number } })?.response?.status
+  const fallback = error instanceof Error ? error.message : typeof error === 'string' ? error : JSON.stringify(error)
+
+  let reason: string | undefined
+  if (typeof body === 'string' && body.length > 0) reason = body
+  else if (typeof body === 'object' && body !== null) {
+    const { errorType, description } = body as { errorType?: string; description?: string }
+    reason = [errorType, description].filter(Boolean).join(': ') || JSON.stringify(body)
+  }
+
+  if (reason === undefined) return fallback
+  return typeof status === 'number' ? `${reason} (HTTP ${status})` : reason
+}
+
 /** Somebody already posted this order — a success here, not a failure. */
 function isDuplicate(error: unknown): boolean {
   return errorBody(error)?.errorType === 'DuplicatedOrder'
