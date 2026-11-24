@@ -4,7 +4,7 @@ import { ZERO_SALT, deriveDropAddress, encodeRecipe } from './encoding.js'
 import { getDeployment } from './generated/deployments.js'
 import { limitPriceToFraction } from './price.js'
 import { steps, type Comparison } from './steps.js'
-import type { DropDeployment, LimitPriceFraction, Recipe } from './types.js'
+import type { DropCall, DropDeployment, LimitPriceFraction, Recipe } from './types.js'
 
 /** A limit price, either as the exact atomic fraction or as a human price plus token decimals. */
 export type LimitPriceJson =
@@ -21,6 +21,18 @@ export type DropStepJson =
       validitySeconds: number | string
       appData?: Hex
       allowFailure?: boolean
+    }
+  | {
+      /** Posted before activation; the order's own pre-hook activates the drop. Two calls. */
+      type: 'sellBalanceViaHook'
+      sellToken: Address
+      buyToken: Address
+      receiver?: Address
+      limitPrice: LimitPriceJson
+      validitySeconds: number | string
+      hookGasLimit?: number | string
+      appDataTemplate?: { prefix: string; suffix: string }
+      orderSalt?: Hex
     }
   | {
       type: 'twapFromBalance'
@@ -235,7 +247,7 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
     label: json.label,
     salt: json.salt ?? ZERO_SALT,
     once: json.once ?? false,
-    calls: json.steps.map((step) => compileStep(step, deployment, json.owner)),
+    calls: json.steps.flatMap((step) => compileStep(step, deployment, json.owner)),
   }
 
   const cooldown = json.steps.some((step) => step.type === 'claimCooldown')
@@ -278,6 +290,7 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
 
 const ORDER_STEPS = new Set<DropStepJson['type']>([
   'presignSellAll',
+  'sellBalanceViaHook',
   'presignSellAllAtOracle',
   'twapFromBalance',
   'stopLossFromBalance',
@@ -301,11 +314,22 @@ function assertPaymentStandsAlone(steps: DropStepJson[]): void {
 }
 
 /**
- * One recipe step into the call that performs it. The switch is exhaustive over `DropStepJson`, so
- * a new step type fails to compile here until it is handled.
+ * One recipe step into the call or calls that perform it. The switch is exhaustive over
+ * `DropStepJson`, so a new step type fails to compile here until it is handled.
  */
-function compileStep(step: DropStepJson, deployment: DropDeployment, owner: Address) {
+function compileStep(step: DropStepJson, deployment: DropDeployment, owner: Address): DropCall | DropCall[] {
   switch (step.type) {
+    case 'sellBalanceViaHook':
+      return steps.sellBalanceViaHook(deployment, {
+        sellToken: step.sellToken,
+        buyToken: step.buyToken,
+        receiver: step.receiver,
+        limitPrice: resolveLimitPrice(step.limitPrice),
+        validitySeconds: BigInt(step.validitySeconds),
+        hookGasLimit: step.hookGasLimit === undefined ? undefined : BigInt(step.hookGasLimit),
+        appDataTemplate: step.appDataTemplate,
+        orderSalt: step.orderSalt,
+      })
     case 'presignSellAll':
       return steps.presignSellAll(deployment, {
         sellToken: step.sellToken,
