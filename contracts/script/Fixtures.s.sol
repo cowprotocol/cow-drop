@@ -19,6 +19,8 @@ import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
+import {MarkThenVerify} from "./MarkThenVerify.sol";
+
 /// @notice Generates address-derivation fixtures for the SDK to check itself against.
 ///
 /// @dev The SDK reimplements the CREATE2 derivation off-chain so a UI can quote a drop address
@@ -234,9 +236,26 @@ contract FixturesScript is Script {
 
         vm.mockCall(HOOK_SELL_TOKEN, abi.encodeCall(IERC20Like.balanceOf, (drop)), abi.encode(HOOK_BALANCE));
         bytes32 domain = keccak256("domain");
-        handler.verify(
-            drop, address(0), LibCowOrder.hash(order, domain), domain, bytes32(0), staticInput, offchainInput, order
-        );
+        // The handler only accepts an order in the transaction the drop's recipe ran in. So stand in
+        // for the drop: mark and verify from its address, in one call.
+        vm.etch(drop, address(new MarkThenVerify()).code);
+        MarkThenVerify(drop)
+            .run(
+                handler,
+                abi.encodeCall(
+                    PaymentHandler.verify,
+                    (
+                        drop,
+                        address(0),
+                        LibCowOrder.hash(order, domain),
+                        domain,
+                        bytes32(0),
+                        staticInput,
+                        offchainInput,
+                        order
+                    )
+                )
+            );
 
         string memory obj = "hookPayment0";
         vm.serializeString(obj, "name", "any token, fixed price");

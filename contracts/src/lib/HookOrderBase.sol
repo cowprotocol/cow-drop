@@ -27,10 +27,17 @@ import {Orders} from "./Orders.sol";
 ///      An empty prefix switches to a fixed `appData`, for orders that reach the chain without a
 ///      hook carrying the recipe.
 ///
-///      ## What is not re-checked
+///      ## The recipe has to run, every time
 ///
-///      A registration outlives the activation that made it. Guards in the recipe gate that first
-///      activation only; later arrivals are sold under the same rule without running them again.
+///      A registration outlives the activation that made it, and CoW's hooks trampoline ignores a
+///      hook that reverts. So without more, a recipe's guards would gate the first activation only:
+///      on a later order they would revert the hook, and the order would settle anyway under the
+///      registration already in place.
+///
+///      The recipe therefore ends by calling `markRan` on its handler, which records in transient
+///      storage that this drop's recipe completed in this transaction, and `_check` requires it. A
+///      guard that reverts takes the mark with it, so an order only ever settles in a transaction
+///      whose hook ran the whole recipe.
 abstract contract HookOrderBase is IConditionalOrderHandler {
     /// @dev What one order is held to, resolved by the handler from its own `staticInput`.
     struct Terms {
@@ -49,10 +56,31 @@ abstract contract HookOrderBase is IConditionalOrderHandler {
 
     string internal constant NEEDS_RECIPE = "appData needs the recipe as offchain input";
 
+    /// @dev Base slot of the per-drop mark. Hashed with the drop, so one drop cannot vouch for another.
+    bytes32 private constant RAN_SLOT = keccak256("cow-drop.HookOrderBase.ran");
+
     DropExecutor public immutable EXECUTOR;
 
     constructor(DropExecutor executor) {
         EXECUTOR = executor;
+    }
+
+    /// @notice Record that the caller's recipe ran to completion in this transaction.
+    /// @dev A plain call, made by the drop as the last step of its recipe. Keyed by `msg.sender`, so
+    ///      only a drop can mark itself; transient, so the mark cannot outlive the transaction.
+    function markRan() external {
+        bytes32 slot = _ranSlot(msg.sender);
+        assembly ("memory-safe") {
+            tstore(slot, 1)
+        }
+    }
+
+    /// @notice Whether `drop`'s recipe has run in this transaction.
+    function ranThisTransaction(address drop) public view returns (bool ran) {
+        bytes32 slot = _ranSlot(drop);
+        assembly ("memory-safe") {
+            ran := tload(slot)
+        }
     }
 
     /// @inheritdoc IConditionalOrderHandler
@@ -92,6 +120,7 @@ abstract contract HookOrderBase is IConditionalOrderHandler {
         if (LibCowOrder.hash(order, domainSeparator) != hash) {
             revert OrderNotValid("invalid hash");
         }
+        if (!ranThisTransaction(owner)) revert OrderNotValid("recipe did not run in this transaction");
         if (address(order.sellToken) != terms.sellToken) revert OrderNotValid("sell token");
         if (address(order.buyToken) != terms.buyToken) revert OrderNotValid("buy token");
         if (order.receiver != terms.receiver) revert OrderNotValid("receiver");
@@ -105,6 +134,10 @@ abstract contract HookOrderBase is IConditionalOrderHandler {
         if (terms.minBuyAmount == 0 || order.buyAmount < terms.minBuyAmount) revert OrderNotValid("below the minimum");
         if (order.validTo > block.timestamp + terms.validitySeconds) revert OrderNotValid("valid for too long");
         if (order.appData != _appData(owner, terms, offchainInput)) revert OrderNotValid("appData");
+    }
+
+    function _ranSlot(address drop) private pure returns (bytes32) {
+        return keccak256(abi.encode(RAN_SLOT, drop));
     }
 
     /// @notice The appData hash an order for `owner` must carry.

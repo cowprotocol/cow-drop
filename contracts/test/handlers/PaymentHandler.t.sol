@@ -5,6 +5,7 @@ import {PaymentHandler} from "src/handlers/PaymentHandler.sol";
 import {IConditionalOrderHandler} from "src/interfaces/IConditionalOrderHandler.sol";
 import {IComposableCowLike} from "src/interfaces/IDropExternal.sol";
 import {NothingToSell} from "src/lib/Errors.sol";
+import {HookOrderBase} from "src/lib/HookOrderBase.sol";
 import {Orders} from "src/lib/Orders.sol";
 import {HookPaymentSteps} from "src/steps/HookPaymentSteps.sol";
 import {PaymentSteps} from "src/steps/PaymentSteps.sol";
@@ -14,7 +15,7 @@ import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
-import {MockERC20} from "../mocks/Mocks.sol";
+import {MockERC20, SameTransaction} from "../mocks/Mocks.sol";
 import {ConditionalOrderParamsMirror, StepsBase} from "../steps/StepsBase.sol";
 
 contract PaymentHandlerTest is StepsBase {
@@ -29,12 +30,14 @@ contract PaymentHandlerTest is StepsBase {
     PaymentHandler internal handler;
     HookPaymentSteps internal hookPayments;
     MockERC20 internal otherToken;
+    SameTransaction internal sameTx;
 
     function setUp() public override {
         super.setUp();
         handler = new PaymentHandler(executor);
         hookPayments = new HookPaymentSteps(VAULT_RELAYER, payments);
         otherToken = new MockERC20();
+        sameTx = new SameTransaction();
     }
 
     // --- helpers ---------------------------------------------------------------------------
@@ -64,7 +67,7 @@ contract PaymentHandlerTest is StepsBase {
             handler: IConditionalOrder(address(handler)), salt: bytes32(0), staticInput: abi.encode(_data())
         });
 
-        Call[] memory calls = new Call[](2);
+        Call[] memory calls = new Call[](3);
         calls[0] = _step(
             address(hookPayments), abi.encodeCall(HookPaymentSteps.approvePayment, (address(buyToken), recipient))
         );
@@ -72,6 +75,13 @@ contract PaymentHandlerTest is StepsBase {
             target: address(composableCow),
             value: 0,
             callData: abi.encodeCall(IComposableCowLike.create, (params, true)),
+            allowFailure: false,
+            isDelegateCall: false
+        });
+        calls[2] = Call({
+            target: address(handler),
+            value: 0,
+            callData: abi.encodeCall(HookOrderBase.markRan, ()),
             allowFailure: false,
             isDelegateCall: false
         });
@@ -122,16 +132,33 @@ contract PaymentHandlerTest is StepsBase {
         order = _order(address(token), _appData(owner, recipe, address(token)));
     }
 
-    function _verify(address drop, bytes memory recipe, LibCowOrder.Data memory order) internal view {
-        handler.verify(
-            drop,
-            address(0),
-            LibCowOrder.hash(order, DOMAIN),
-            DOMAIN,
-            bytes32(0),
-            abi.encode(_data()),
-            abi.encode(owner, recipe),
-            order
+    /// @dev Activates with the order's own sell token and verifies, in one transaction, as a
+    ///      settlement does with the hook and the signature check. The activation's revert is
+    ///      swallowed, as the trampoline swallows it.
+    function _verify(address drop, bytes memory recipe, LibCowOrder.Data memory order) internal {
+        _verifyAs(owner, drop, recipe, order);
+    }
+
+    /// @param claimed Whose recipe the offchain input says it is.
+    function _verifyAs(address claimed, address drop, bytes memory recipe, LibCowOrder.Data memory order) internal {
+        sameTx.run(
+            address(payments),
+            abi.encodeCall(PaymentSteps.activatePayment, (owner, recipe, address(order.sellToken))),
+            true,
+            address(handler),
+            abi.encodeCall(
+                PaymentHandler.verify,
+                (
+                    drop,
+                    address(0),
+                    LibCowOrder.hash(order, DOMAIN),
+                    DOMAIN,
+                    bytes32(0),
+                    abi.encode(_data()),
+                    abi.encode(claimed, recipe),
+                    order
+                )
+            )
         );
     }
 
@@ -189,6 +216,26 @@ contract PaymentHandlerTest is StepsBase {
         payments.activatePayment(owner, recipe, address(sellToken));
     }
 
+    function test_verify_rejectsAnOrderWhoseRecipeDidNotRunInThisTransaction() external {
+        bytes memory recipe = _recipe();
+        address drop = executor.dropOf(owner, recipe);
+        otherToken.mint(drop, PAID);
+
+        LibCowOrder.Data memory order = _order(address(otherToken), _appData(owner, recipe, address(otherToken)));
+
+        _expectNotValid("recipe did not run in this transaction");
+        handler.verify(
+            drop,
+            address(0),
+            LibCowOrder.hash(order, DOMAIN),
+            DOMAIN,
+            bytes32(0),
+            abi.encode(_data()),
+            abi.encode(owner, recipe),
+            order
+        );
+    }
+
     // --- verify ----------------------------------------------------------------------------
 
     /// @dev Nothing is deployed or registered here, and the recipe never named either token.
@@ -221,16 +268,7 @@ contract PaymentHandlerTest is StepsBase {
         LibCowOrder.Data memory order = _order(address(otherToken), _appData(stranger, recipe, address(otherToken)));
 
         _expectNotValid("not this drop's recipe");
-        handler.verify(
-            drop,
-            address(0),
-            LibCowOrder.hash(order, DOMAIN),
-            DOMAIN,
-            bytes32(0),
-            abi.encode(_data()),
-            abi.encode(stranger, recipe),
-            order
-        );
+        _verifyAs(stranger, drop, recipe, order);
     }
 
     function test_verify_rejectsLessThanThePrice() external {

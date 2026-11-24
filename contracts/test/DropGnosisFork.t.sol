@@ -7,6 +7,7 @@ import {DropExecutor} from "src/DropExecutor.sol";
 import {PaymentHandler} from "src/handlers/PaymentHandler.sol";
 import {SellBalanceHandler} from "src/handlers/SellBalanceHandler.sol";
 import {IComposableCowLike, IERC20Like, ISettlementLike} from "src/interfaces/IDropExternal.sol";
+import {HookOrderBase} from "src/lib/HookOrderBase.sol";
 import {Orders} from "src/lib/Orders.sol";
 import {HookPaymentSteps} from "src/steps/HookPaymentSteps.sol";
 import {PaymentSteps} from "src/steps/PaymentSteps.sol";
@@ -21,6 +22,8 @@ import {IComposableCow} from "cow-shed/IComposableCow.sol";
 import {IConditionalOrder} from "cow-shed/IConditionalOrder.sol";
 import {LibCowOrder} from "cow-shed/LibCowOrder.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+
+import {SameTransaction} from "./mocks/Mocks.sol";
 
 /// @dev The watch tower's entry point. `GPv2Order.Data` and `LibCowOrder.Data` have identical
 ///      layouts, so decoding the return value as the latter is exact.
@@ -347,7 +350,7 @@ contract DropGnosisForkTest is Test {
             )
         });
 
-        Call[] memory calls = new Call[](2);
+        Call[] memory calls = new Call[](3);
         calls[0] = Call({
             target: address(tokenSteps),
             value: 0,
@@ -359,6 +362,14 @@ contract DropGnosisForkTest is Test {
             target: COMPOSABLE_COW,
             value: 0,
             callData: abi.encodeCall(IComposableCowLike.create, (params, true)),
+            allowFailure: false,
+            isDelegateCall: false
+        });
+        // Last: tells the handler the whole recipe ran in this transaction.
+        calls[2] = Call({
+            target: address(handler),
+            value: 0,
+            callData: abi.encodeCall(HookOrderBase.markRan, ()),
             allowFailure: false,
             isDelegateCall: false
         });
@@ -396,12 +407,9 @@ contract DropGnosisForkTest is Test {
 
         IHooksTrampoline.Hook[] memory hooks = new IHooksTrampoline.Hook[](1);
         hooks[0] = IHooksTrampoline.Hook({target: address(executor), callData: hook, gasLimit: 900_000});
-        vm.prank(SETTLEMENT);
-        IHooksTrampoline(HOOKS_TRAMPOLINE).execute(hooks);
-
+        assertEq(_hookThenValidate(hooks, drop, digest, signature), MAGIC_VALUE_1271, "order not valid after the hook");
         assertGt(drop.code.length, 0, "the hook did not deploy the drop");
         assertEq(IERC20Like(WXDAI).allowance(drop, VAULT_RELAYER), type(uint256).max, "relayer not approved");
-        assertEq(IERC1271(drop).isValidSignature(digest, signature), MAGIC_VALUE_1271, "order not valid after the hook");
 
         // The same signature cannot carry a different appData past the drop.
         order.appData = keccak256("someone else's fee");
@@ -413,7 +421,14 @@ contract DropGnosisForkTest is Test {
         );
         digest = LibCowOrder.hash(order, IComposableCowFork(COMPOSABLE_COW).domainSeparator());
         vm.expectRevert();
-        IERC1271(drop).isValidSignature(digest, signature);
+        SameTransaction(SETTLEMENT)
+            .run(
+                HOOKS_TRAMPOLINE,
+                abi.encodeCall(IHooksTrampoline.execute, (hooks)),
+                false,
+                drop,
+                abi.encodeCall(IERC1271.isValidSignature, (digest, signature))
+            );
     }
 
     /// @dev The any-token counterpart: the recipe names no sell token, the order does, and the hook
@@ -446,7 +461,7 @@ contract DropGnosisForkTest is Test {
             )
         });
 
-        Call[] memory calls = new Call[](2);
+        Call[] memory calls = new Call[](3);
         calls[0] = Call({
             target: address(hookPayments),
             value: 0,
@@ -458,6 +473,14 @@ contract DropGnosisForkTest is Test {
             target: COMPOSABLE_COW,
             value: 0,
             callData: abi.encodeCall(IComposableCowLike.create, (params, true)),
+            allowFailure: false,
+            isDelegateCall: false
+        });
+        // Last: tells the handler the whole recipe ran in this transaction.
+        calls[2] = Call({
+            target: address(handler),
+            value: 0,
+            callData: abi.encodeCall(HookOrderBase.markRan, ()),
             allowFailure: false,
             isDelegateCall: false
         });
@@ -494,12 +517,32 @@ contract DropGnosisForkTest is Test {
 
         IHooksTrampoline.Hook[] memory hooks = new IHooksTrampoline.Hook[](1);
         hooks[0] = IHooksTrampoline.Hook({target: address(payments), callData: hook, gasLimit: 900_000});
-        vm.prank(SETTLEMENT);
-        IHooksTrampoline(HOOKS_TRAMPOLINE).execute(hooks);
-
+        assertEq(_hookThenValidate(hooks, drop, digest, signature), MAGIC_VALUE_1271, "order not valid after the hook");
         assertGt(drop.code.length, 0, "the hook did not deploy the drop");
         assertEq(IERC20Like(WXDAI).allowance(drop, VAULT_RELAYER), type(uint256).max, "relayer not approved");
-        assertEq(IERC1271(drop).isValidSignature(digest, signature), MAGIC_VALUE_1271, "order not valid after the hook");
+    }
+
+    /// @dev The pre-hook and the signature check in one transaction, with the settlement contract as
+    ///      the caller of both, which is how a settlement runs them. The handler only accepts an order
+    ///      in the transaction its recipe ran in, so checking in a later call would prove nothing.
+    ///
+    ///      The settlement's code is swapped for a relay to get there; it is only the caller here.
+    function _hookThenValidate(
+        IHooksTrampoline.Hook[] memory hooks,
+        address drop,
+        bytes32 digest,
+        bytes memory signature
+    ) internal returns (bytes4) {
+        vm.etch(SETTLEMENT, address(new SameTransaction()).code);
+        bytes memory answer = SameTransaction(SETTLEMENT)
+            .run(
+                HOOKS_TRAMPOLINE,
+                abi.encodeCall(IHooksTrampoline.execute, (hooks)),
+                false,
+                drop,
+                abi.encodeCall(IERC1271.isValidSignature, (digest, signature))
+            );
+        return abi.decode(answer, (bytes4));
     }
 
     /// @dev `vm.toString(bytes)` without its `0x`.

@@ -246,7 +246,8 @@ recipe and the balance, posted for a drop with no code, and carry the activation
 its appData. The order book and the solver both run pre-hooks before asking the owner whether it signed.
 
 The recipe needs no step contract of its own, since the handler's `staticInput` carries no amount:
-`TokenSteps.approveMax(sellToken, vaultRelayer)`, then a plain call to `ComposableCoW.create`.
+`TokenSteps.approveMax(sellToken, vaultRelayer)`, a plain call to `ComposableCoW.create`, and last a
+plain call to the handler's `markRan`.
 
 `verify` accepts a fill-or-kill, fee-less sell of exactly `balanceOf(drop)`, at or above the committed
 limit, with `validTo` no further than `validitySeconds` from the block it settles in.
@@ -261,8 +262,11 @@ another appData, say one naming a different fee recipient, fails. An empty prefi
 
 Three things to know:
 
-- **Guards gate the first activation only.** The registration outlives it, and a later arrival is sold
-  under the same rule without the recipe running again.
+- **The recipe has to run in the order's own transaction.** The registration and the approval outlive
+  an activation, and the trampoline swallows a hook that reverts, so on their own a recipe's guards
+  would gate the first activation only. `markRan` closes that: it records in transient storage, keyed
+  by the calling drop, that the recipe completed, and `verify` requires it. A guard that reverts takes
+  the mark with it, so every order is held to every guard, and a `once` recipe fills once.
 - **The solver pays for the activation and takes it from the surplus**, so the limit needs that much
   room below the market.
 - **A watch tower cannot drive it.** `getTradeableOrder` answers `PollNever` when the appData needs a
@@ -314,7 +318,7 @@ addresses cow-shed#79 records as live on Gnosis is proof it reproduces the canon
 | `steps/PaymentSteps.t.sol` | Activating with a token the recipe never named, the committed price and receiver holding whatever token is chosen, payment in the buy token forwarded without an order, plain `activate` refused, and the transient input scoped to one drop and cleared after the call. |
 | `steps/StopLossSteps.t.sol` | The stop-loss step, the deadline running from activation, and the thirteen-word `StopLossData` layout. |
 | `steps/ComposableBase.t.sol` | The half `TwapSteps` does not reach: `divisor == 1`, and a zero value factory routing to plain `create`. Uses a throwaway handler so the branch a future step will take does not ship unexercised. |
-| `handlers/SellBalanceHandler.t.sol` | Every refusal, both appData modes, a recipe that is not the drop's, and the recipe surviving a second run. |
+| `handlers/SellBalanceHandler.t.sol` | Every refusal, both appData modes, a recipe that is not the drop's, and the recipe surviving a second run. A second suite starts from a drop activated in an earlier transaction: its order is refused without the hook, and when a guard makes the hook revert. Each runs the activation and the check in one transaction, since that is what the mark is about. |
 | `handlers/PaymentHandler.t.sol` | The same for the any-token handler, plus a hook naming the wrong token, a second token arriving later, and a payment in the buy token being forwarded. |
 | `DropGnosisFork.t.sol` | Against the real Gnosis deployments. Skipped unless `GNOSIS_RPC_URL` is set. |
 

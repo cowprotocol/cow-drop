@@ -245,3 +245,31 @@ contract MockReentrantERC20 is MockERC20 {
         return true;
     }
 }
+
+/// @notice Two calls in one transaction, the way a settlement runs a pre-hook and then checks a signature.
+///
+/// @dev The handlers only accept an order in the transaction its recipe ran in, and they know through
+///      transient storage. A test that activates in one call and verifies in the next proves nothing:
+///      under `forge test --isolate` each is its own transaction and the mark is gone, exactly as it
+///      would be on chain.
+contract SameTransaction {
+    /// @param tolerate Swallow a revert of the first call, as CoW's hooks trampoline does.
+    /// @return What the second call returned. Its revert is bubbled.
+    function run(address firstTarget, bytes calldata first, bool tolerate, address secondTarget, bytes calldata second)
+        external
+        returns (bytes memory)
+    {
+        (bool ok, bytes memory data) = firstTarget.call(first);
+        if (!ok && !tolerate) _bubble(data);
+
+        (ok, data) = secondTarget.staticcall(second);
+        if (!ok) _bubble(data);
+        return data;
+    }
+
+    function _bubble(bytes memory data) private pure {
+        assembly ("memory-safe") {
+            revert(add(data, 0x20), mload(data))
+        }
+    }
+}
