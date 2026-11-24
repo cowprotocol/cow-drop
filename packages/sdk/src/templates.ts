@@ -132,6 +132,8 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
 
   if (params.activation === 'hook') {
     if (params.oracle) throw new Error("activation: 'hook' does not support an oracle limit")
+    // The order is sized from the token balance before the hook runs, so there is nothing to wrap into it.
+    if (params.wrapNative) throw new Error("activation: 'hook' cannot wrap a native balance first")
     steps.push({
       type: 'sellBalanceViaHook',
       sellToken: params.sellToken,

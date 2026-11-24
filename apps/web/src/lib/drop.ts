@@ -2,12 +2,17 @@ import {
   buildActivateConvertTx,
   buildActivatePaymentTx,
   buildActivateTx,
+  buildHookOrder,
+  buildHookPaymentOrder,
   compileRecipe,
+  findHookPayment,
+  findSellBalanceOrders,
   getDeployment,
   parseOrderPlacement,
   toOrderBookPayload,
   type CompiledRecipe,
   type DropDeployment,
+  type HookOrder,
   type DropRecipeJson,
 } from '@cowprotocol/cow-drop-sdk'
 import type { OrderCreation } from '@cowprotocol/cow-sdk'
@@ -129,9 +134,20 @@ export async function readMissingForRecipe(compiled: CompiledRecipe): Promise<st
     targets.set(key, named.get(key) ?? `the step contract at ${call.target}`)
   }
 
+  // A handler is registered by a plain call, so the loop above never sees it. Without its code the
+  // activation still succeeds and the drop then refuses every order, which is the quiet failure.
+  const handlers: { name: string; address: Address }[] = []
+  if (deployment.sellBalanceHandler && findSellBalanceOrders(deployment, compiled.setupData).length > 0) {
+    handlers.push({ name: 'SellBalanceHandler', address: deployment.sellBalanceHandler })
+  }
+  if (deployment.paymentHandler && findHookPayment(deployment, compiled.setupData)) {
+    handlers.push({ name: 'PaymentHandler', address: deployment.paymentHandler })
+  }
+
   return readMissing(deployment.chainId, [
     ...CORE_CONTRACTS.map((contract) => ({ name: contract.name, address: contract.at(deployment) })),
     ...[...targets].map(([address, name]) => ({ name, address: address as Address })),
+    ...handlers,
   ])
 }
 
@@ -337,6 +353,53 @@ export async function readDropOwner(chainId: number, drop: Address): Promise<Add
     return owner === '0x0000000000000000000000000000000000000000' ? null : owner
   } catch {
     return null
+  }
+}
+
+/** Whether the recipe's order is posted before activation and activates the drop from its pre-hook. */
+export function isHookActivated(recipe: DropRecipeJson): boolean {
+  return recipe.steps.some((step) => step.type === 'sellBalanceViaHook' || step.type === 'paymentViaHook')
+}
+
+/**
+ * Post the order for a hook-activated drop, selling the balance it holds right now.
+ *
+ * No wallet and no transaction: the order carries the activation as its pre-hook, so the solver that
+ * fills it deploys the drop. This is the keeper's job, done by hand.
+ *
+ * @param params.sellToken Required for a payment recipe, which names no sell token of its own.
+ */
+export async function postHookOrder(params: {
+  recipe: DropRecipeJson
+  balance: bigint
+  sellToken?: Address
+}): Promise<string> {
+  const compiled = compileRecipe(params.recipe)
+  const base = {
+    deployment: compiled.deployment,
+    owner: params.recipe.owner,
+    setupData: compiled.setupData,
+    balance: params.balance,
+    now: Math.floor(Date.now() / 1000),
+  }
+
+  const payment = findHookPayment(compiled.deployment, compiled.setupData) !== undefined
+  if (payment && !params.sellToken) throw new Error('a payment order needs the token it is paid in')
+  const built: HookOrder = payment
+    ? buildHookPaymentOrder({ ...base, sellToken: params.sellToken! })
+    : buildHookOrder({ ...base, sellToken: params.sellToken })
+
+  const orderBook = getOrderBookApi(compiled.deployment.chainId)
+  try {
+    // The order book refuses an appData hash it has never seen, and this document exists nowhere
+    // else: it is built around this drop's own activation call.
+    if (built.appDataDocument !== undefined) {
+      await orderBook.uploadAppData(built.order.appData, built.appDataDocument)
+    }
+    return await orderBook.sendOrder(built.payload as unknown as OrderCreation)
+  } catch (cause) {
+    if (orderBookErrorType(cause) === 'DuplicatedOrder') return built.orderUid
+    throw new Error(describeOrderBookError(cause), { cause })
   }
 }
 
