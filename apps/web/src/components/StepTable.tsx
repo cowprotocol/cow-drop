@@ -1,4 +1,11 @@
-import { describeRecipe, type DescribedArg, type DescribedStep, type DropDeployment } from '@cowprotocol/cow-drop-sdk'
+import {
+  decodeHookPaymentData,
+  decodeSellBalanceData,
+  describeRecipe,
+  type DescribedStep,
+  type DropDeployment,
+} from '@cowprotocol/cow-drop-sdk'
+import type { ReactNode } from 'react'
 import type { Hex } from 'viem'
 
 import { explorerAddressUrl } from '../lib/chain.js'
@@ -27,7 +34,7 @@ export function StepTable({ setupData, deployment }: { setupData: Hex; deploymen
         </thead>
         <tbody>
           {described.steps.map((step) => (
-            <StepRow key={step.index} step={step} chainId={deployment.chainId} />
+            <StepRow key={step.index} step={step} deployment={deployment} />
           ))}
         </tbody>
       </table>
@@ -45,7 +52,9 @@ export function StepTable({ setupData, deployment }: { setupData: Hex; deploymen
   )
 }
 
-function StepRow({ step, chainId }: { step: DescribedStep; chainId: number }) {
+function StepRow({ step, deployment }: { step: DescribedStep; deployment: DropDeployment }) {
+  const chainId = deployment.chainId
+  const terms = step.known ? handlerTerms(step, deployment) : null
   /*
    * The contract the step calls, linked to its explorer page.
    *
@@ -90,14 +99,52 @@ function StepRow({ step, chainId }: { step: DescribedStep; chainId: number }) {
               <div key={arg.name}>
                 <dt>{arg.name}</dt>
                 <dd>
-                  <code>{formatArg(arg)}</code>
+                  <ArgValue value={arg.value} />
                 </dd>
               </div>
             ))}
           </dl>
-        ) : (
-          <code className="calldata">{step.callData}</code>
+        ) : null}
+        {terms && (
+          <details>
+            <summary>{terms.title}</summary>
+            <ArgValue value={terms.value} />
+          </details>
         )}
+        {/*
+          * The call exactly as the drop makes it. The decoded arguments above are a reading of
+          * these bytes; this is what is hashed into the address, so it is what to compare against
+          * an explorer or another tool.
+          */}
+        <details open={!step.known}>
+          <summary>Call</summary>
+          <dl className="args">
+            <div>
+              <dt>to</dt>
+              <dd>
+                <code>{step.target}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>type</dt>
+              <dd>
+                <code>{step.isDelegateCall ? 'delegatecall' : 'call'}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>value</dt>
+              <dd>
+                <code>{step.value.toString()}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>calldata</dt>
+              <dd>
+                <code className="calldata block">{step.callData}</code>
+              </dd>
+            </div>
+          </dl>
+        </details>
         {step.warnings.length > 0 && (
           <ul className="step-warnings">
             {step.warnings.map((warning) => (
@@ -121,9 +168,71 @@ function StepRow({ step, chainId }: { step: DescribedStep; chainId: number }) {
  * Deliberately no unit conversion or symbol lookup: these are the exact values hashed into the
  * address, and a prettified `1000 WXDAI` that disagreed with the committed `1000000000000000000000`
  * by one atomic unit would be describing a different drop.
+ *
+ * A struct or an array is laid out field by field rather than stringified: `String()` of one is
+ * `[object Object]`, which says nothing about a value somebody is about to fund.
  */
-function formatArg(arg: DescribedArg): string {
-  if (typeof arg.value === 'bigint') return arg.value.toString()
-  if (typeof arg.value === 'boolean') return arg.value ? 'true' : 'false'
-  return String(arg.value)
+function ArgValue({ value }: { value: unknown }): ReactNode {
+  if (typeof value === 'bigint') return <code>{value.toString()}</code>
+  if (typeof value === 'boolean') return <code>{value ? 'true' : 'false'}</code>
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <code>[]</code>
+    return (
+      <dl className="args">
+        {value.map((item, index) => (
+          <div key={index}>
+            <dt>[{index}]</dt>
+            <dd>
+              <ArgValue value={item} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+    )
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    return (
+      <dl className="args">
+        {Object.entries(value).map(([name, field]) => (
+          <div key={name}>
+            <dt>{name}</dt>
+            <dd>
+              <ArgValue value={field} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+    )
+  }
+
+  // Long hex (calldata, a handler's static input) wraps instead of pushing the table sideways.
+  const text = String(value)
+  return <code className={text.length > 66 ? 'calldata block' : undefined}>{text}</code>
+}
+
+/**
+ * What a `ComposableCoW.create` registers, when the handler is one of this generation's.
+ *
+ * The call's own argument is `staticInput`, an opaque blob to anyone reading the table. It is where
+ * the terms of every order the drop will sign are committed, so it is decoded here beside it.
+ */
+function handlerTerms(step: DescribedStep, deployment: DropDeployment): { title: string; value: unknown } | null {
+  if (step.known?.contract !== 'ComposableCoW') return null
+  const params = step.known.args[0]?.value as { handler?: string; staticInput?: Hex } | undefined
+  const handler = params?.handler?.toLowerCase()
+  if (!handler || !params?.staticInput) return null
+
+  try {
+    if (handler === deployment.sellBalanceHandler?.toLowerCase()) {
+      return { title: 'SellBalanceHandler terms', value: decodeSellBalanceData(params.staticInput) }
+    }
+    if (handler === deployment.paymentHandler?.toLowerCase()) {
+      return { title: 'PaymentHandler terms', value: decodeHookPaymentData(params.staticInput) }
+    }
+  } catch {
+    // Not the layout this SDK knows; the raw static input above still stands.
+  }
+  return null
 }
