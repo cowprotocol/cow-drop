@@ -1453,6 +1453,46 @@ button.danger:hover:not(:disabled) {
   word-break: break-all;
 }
 
+/*
+ * A step row opens to show the call it makes. The arrow sits in the row, before the number, so the
+ * row itself reads as the control rather than a link buried under the arguments.
+ */
+.step-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.step-arrow {
+  color: var(--accent);
+  font-size: 1.2rem;
+  line-height: 1;
+  width: 0.9rem;
+}
+
+/* The row it belongs to keeps no rule under it while open, so the two read as one block. */
+.step-row.open > td {
+  border-bottom-color: transparent;
+}
+
+/* Second level: a shade off the table, so the call is visibly inside the step above it. */
+.step-detail > td {
+  background: var(--panel-2);
+  padding-top: 0.6rem;
+  padding-bottom: 0.7rem;
+}
+
+.step-detail > td:first-child {
+  background: none;
+}
+
 .step-warnings {
   margin: 0.4rem 0 0;
   padding-left: 1rem;
