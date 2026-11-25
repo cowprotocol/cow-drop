@@ -246,8 +246,8 @@ recipe and the balance, posted for a drop with no code, and carry the activation
 its appData. The order book and the solver both run pre-hooks before asking the owner whether it signed.
 
 The recipe needs no step contract of its own, since the handler's `staticInput` carries no amount:
-`TokenSteps.approveMax(sellToken, vaultRelayer)`, a plain call to `ComposableCoW.create`, and last a
-plain call to the handler's `markRan`.
+`TokenSteps.approveMax(sellToken, vaultRelayer)` and a plain call to `ComposableCoW.create`. A strict
+recipe, below, ends with a third: a plain call to the handler's `markRan`.
 
 `verify` accepts a fill-or-kill, fee-less sell of exactly `balanceOf(drop)`, at or above the committed
 limit, with `validTo` no further than `validitySeconds` from the block it settles in.
@@ -262,11 +262,16 @@ another appData, say one naming a different fee recipient, fails. An empty prefi
 
 Three things to know:
 
-- **The recipe has to run in the order's own transaction.** The registration and the approval outlive
-  an activation, and the trampoline swallows a hook that reverts, so on their own a recipe's guards
-  would gate the first activation only. `markRan` closes that: it records in transient storage, keyed
-  by the calling drop, that the recipe completed, and `verify` requires it. A guard that reverts takes
-  the mark with it, so every order is held to every guard, and a `once` recipe fills once.
+- **A recipe is strict or it is not, and commits to which.** The registration and the approval
+  outlive an activation, and the trampoline swallows a hook that reverts.
+  - *Not strict*, for a recipe that only approves and registers. The hook matters once, to deploy the
+    drop. After that an order may also come with **no hook at all**, under a fixed `appData` the recipe
+    commits to, so follow-up fills pay for no activation. Whoever posts picks: the hook when the drop
+    is not deployed or the relayer is not yet approved for the token, the hook-free form otherwise.
+  - *Strict*, for a recipe with a guard, `once` or a cooldown, which has to be re-checked per order.
+    `markRan` records in transient storage, keyed by the calling drop and the sell token, that the
+    recipe completed; `verify` requires it. A guard that reverts takes the mark with it, and one
+    order's hook cannot vouch for another's. There is no hook-free form.
 - **The solver pays for the activation and takes it from the surplus**, so the limit needs that much
   room below the market.
 - **A watch tower cannot drive it.** `getTradeableOrder` answers `PollNever` when the appData needs a
@@ -288,6 +293,11 @@ The drop still has to approve that token, and the recipe cannot name it. So the 
 and the recipe's step is `HookPaymentSteps.approvePayment`, which reads the token back and approves the
 relayer for it. The handler rebuilds the appData around that calldata with the order's own sell token,
 so an order cannot carry a hook that approves a different one.
+
+An approval belongs to one token, so a payment drop is approved only for tokens that have been
+through a hook: the first order in a new token needs one even if the drop exists, and later orders in
+that token do not. When the recipe is strict the step makes the mark itself, since only it knows the
+token.
 
 A payment made in `buyToken` itself has no order to place: activating with that token forwards the
 balance to the receiver, which takes a transaction.

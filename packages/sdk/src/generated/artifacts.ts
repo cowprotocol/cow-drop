@@ -2395,7 +2395,13 @@ export const SELL_BALANCE_HANDLER_ABI = [
   {
     "type": "function",
     "name": "markRan",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "sellToken",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -2405,6 +2411,11 @@ export const SELL_BALANCE_HANDLER_ABI = [
     "inputs": [
       {
         "name": "drop",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "sellToken",
         "type": "address",
         "internalType": "address"
       }

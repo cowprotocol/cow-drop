@@ -57,7 +57,8 @@ function fixtureData(fixture: HookFixture): SellBalanceData {
     receiver: getAddress('0x000000000000000000000000000000000000beef'),
     limitPrice: { numerator: 95n, denominator: 100n },
     validitySeconds: 1800n,
-    appData: templated ? `0x${'00'.repeat(32)}` : keccak256(toBytes('appData')),
+    strict: false,
+    appData: keccak256(toBytes('appData')),
     appDataTemplate: { prefix: fixture.appDataPrefix, suffix: fixture.appDataSuffix },
   }
 }

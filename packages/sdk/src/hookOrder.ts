@@ -46,7 +46,9 @@ export interface SellBalanceData {
   receiver: Address
   limitPrice: LimitPriceFraction
   validitySeconds: bigint
-  /** The order's appData when there is no template. */
+  /** Whether every order needs its own hook to have run the recipe. Set it with a guard or a ration. */
+  strict: boolean
+  /** The appData of an order posted with no hook. */
   appData: Hex
   /** Empty prefix and suffix mean a fixed `appData`. */
   appDataTemplate: AppDataTemplate
@@ -84,6 +86,7 @@ const SELL_BALANCE_DATA_PARAMS = [
       { name: 'limitNumerator', type: 'uint256' },
       { name: 'limitDenominator', type: 'uint256' },
       { name: 'validitySeconds', type: 'uint256' },
+      { name: 'strict', type: 'bool' },
       { name: 'appData', type: 'bytes32' },
       { name: 'appDataPrefix', type: 'bytes' },
       { name: 'appDataSuffix', type: 'bytes' },
@@ -162,6 +165,7 @@ export function encodeSellBalanceData(data: SellBalanceData): Hex {
       limitNumerator: data.limitPrice.numerator,
       limitDenominator: data.limitPrice.denominator,
       validitySeconds: data.validitySeconds,
+      strict: data.strict,
       appData: data.appData,
       appDataPrefix: stringToHex(data.appDataTemplate.prefix),
       appDataSuffix: stringToHex(data.appDataTemplate.suffix),
@@ -177,6 +181,7 @@ export function decodeSellBalanceData(staticInput: Hex): SellBalanceData {
     receiver: raw.receiver,
     limitPrice: { numerator: raw.limitNumerator, denominator: raw.limitDenominator },
     validitySeconds: raw.validitySeconds,
+    strict: raw.strict,
     appData: raw.appData,
     appDataTemplate: { prefix: hexToString(raw.appDataPrefix), suffix: hexToString(raw.appDataSuffix) },
   }

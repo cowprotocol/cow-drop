@@ -28,8 +28,12 @@ contract SellBalanceHandler is HookOrderBase {
         uint256 limitDenominator;
         /// @dev The furthest `validTo` may sit from the block the order settles in.
         uint256 validitySeconds;
-        /// @dev The order's appData when `appDataPrefix` is empty. Ignored otherwise.
+        /// @dev Whether every order needs its own hook to have run the recipe: set it when the recipe
+        ///      has a guard or a ration. See `HookOrderBase`.
+        bool strict;
+        /// @dev The appData of an order with no hook. Refused when `strict` and there is a template.
         bytes32 appData;
+        /// @dev The JSON around the hook's calldata. Empty means no order carries a hook.
         bytes appDataPrefix;
         bytes appDataSuffix;
     }
@@ -66,8 +70,12 @@ contract SellBalanceHandler is HookOrderBase {
     ) external view override returns (LibCowOrder.Data memory) {
         Data memory data = abi.decode(staticInput, (Data));
 
-        // A watch tower polls with no offchain input, and cannot produce the recipe.
-        if (data.appDataPrefix.length != 0 && offchainInput.length == 0) revert PollNever(NEEDS_RECIPE);
+        // A watch tower polls with no offchain input, and cannot produce the recipe. That is fine
+        // for a recipe that takes an order without its hook, and the end of the road for one that
+        // does not.
+        if (data.strict && data.appDataPrefix.length != 0 && offchainInput.length == 0) {
+            revert PollNever(NEEDS_RECIPE);
+        }
 
         uint256 balance = IERC20Like(data.sellToken).balanceOf(owner);
         if (balance == 0) revert PollTryNextBlock("nothing to sell");
@@ -103,6 +111,7 @@ contract SellBalanceHandler is HookOrderBase {
             receiver: data.receiver,
             minBuyAmount: Orders.applyLimitPrice(balance, data.limitNumerator, data.limitDenominator),
             validitySeconds: data.validitySeconds,
+            strict: data.strict,
             appData: data.appData,
             appDataPrefix: data.appDataPrefix,
             appDataSuffix: data.appDataSuffix

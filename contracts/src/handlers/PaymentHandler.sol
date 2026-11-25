@@ -32,8 +32,12 @@ contract PaymentHandler is HookOrderBase {
         address receiver;
         /// @dev The furthest `validTo` may sit from the block the order settles in.
         uint256 validitySeconds;
-        /// @dev The order's appData when `appDataPrefix` is empty. Ignored otherwise.
+        /// @dev Whether every order needs its own hook to have run the recipe: set it when the recipe
+        ///      has a guard or a ration. See `HookOrderBase`.
+        bool strict;
+        /// @dev The appData of an order with no hook. Refused when `strict` and there is a template.
         bytes32 appData;
+        /// @dev The JSON around the hook's calldata. Empty means no order carries a hook.
         bytes appDataPrefix;
         bytes appDataSuffix;
     }
@@ -69,6 +73,7 @@ contract PaymentHandler is HookOrderBase {
                 receiver: data.receiver,
                 minBuyAmount: data.buyAmount,
                 validitySeconds: data.validitySeconds,
+                strict: data.strict,
                 appData: data.appData,
                 appDataPrefix: data.appDataPrefix,
                 appDataSuffix: data.appDataSuffix

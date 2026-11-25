@@ -29,8 +29,13 @@ abstract contract SellBalanceHandlerFixture is StepsBase {
     uint256 internal constant VALIDITY = 30 minutes;
     uint256 internal constant ARRIVED = 1234.5e18;
 
+    bytes32 internal constant HOOK_FREE_APP_DATA = keccak256("hook-free");
+
     SellBalanceHandler internal handler;
     SameTransaction internal sameTx;
+    /// @dev Which kind of recipe the suite builds. A strict one marks every run and takes no order
+    ///      without its hook.
+    bool internal strict;
 
     function setUp() public virtual override {
         super.setUp();
@@ -52,7 +57,8 @@ abstract contract SellBalanceHandlerFixture is StepsBase {
             limitNumerator: 95,
             limitDenominator: 100,
             validitySeconds: VALIDITY,
-            appData: template ? bytes32(0) : keccak256("fixed"),
+            strict: strict,
+            appData: template ? HOOK_FREE_APP_DATA : keccak256("fixed"),
             appDataPrefix: template ? bytes(PREFIX) : bytes(""),
             appDataSuffix: template ? bytes(_suffix()) : bytes("")
         });
@@ -68,10 +74,10 @@ abstract contract SellBalanceHandlerFixture is StepsBase {
         });
     }
 
-    /// @dev The whole recipe: approve the relayer as the drop, register with ComposableCoW, and tell
-    ///      the handler it ran.
+    /// @dev The whole recipe: approve the relayer as the drop and register with ComposableCoW. A
+    ///      strict one also tells the handler it ran, last.
     function _recipeFor(SellBalanceHandler.Data memory data) internal view returns (bytes memory) {
-        Call[] memory calls = new Call[](3);
+        Call[] memory calls = new Call[](strict ? 3 : 2);
         calls[0] = _step(address(tokenOps), abi.encodeCall(TokenSteps.approveMax, (address(sellToken), VAULT_RELAYER)));
         calls[1] = Call({
             target: address(composableCow),
@@ -80,14 +86,18 @@ abstract contract SellBalanceHandlerFixture is StepsBase {
             allowFailure: false,
             isDelegateCall: false
         });
-        calls[2] = Call({
+        if (strict) calls[2] = _mark();
+        return _recipeOf("hook", false, calls);
+    }
+
+    function _mark() internal view returns (Call memory) {
+        return Call({
             target: address(handler),
             value: 0,
-            callData: abi.encodeCall(HookOrderBase.markRan, ()),
+            callData: abi.encodeCall(HookOrderBase.markRan, (address(sellToken))),
             allowFailure: false,
             isDelegateCall: false
         });
-        return _recipeOf("hook", false, calls);
     }
 
     /// @dev The document built the way an off-chain poster builds it, not the way the handler does.
@@ -203,25 +213,36 @@ contract SellBalanceHandlerTest is SellBalanceHandlerFixture {
 
     // --- the recipe has to run, every time ---------------------------------------------------
 
-    function test_markRan_onlyVouchesForTheCaller() external {
-        // `sameTx` marks itself and reads the test's own mark back in the same transaction.
+    function test_markRan_vouchesOnlyForItsCallerAndItsToken() external {
+        bytes memory mark = abi.encodeCall(HookOrderBase.markRan, (address(sellToken)));
+
+        // `sameTx` marks itself for `sellToken`, and each question is asked in that same transaction.
         bytes memory answer = sameTx.run(
             address(handler),
-            abi.encodeCall(HookOrderBase.markRan, ()),
+            mark,
             false,
             address(handler),
-            abi.encodeCall(HookOrderBase.ranThisTransaction, (address(this)))
+            abi.encodeCall(HookOrderBase.ranThisTransaction, (address(sameTx), address(sellToken)))
+        );
+        assertTrue(abi.decode(answer, (bool)));
+
+        answer = sameTx.run(
+            address(handler),
+            mark,
+            false,
+            address(handler),
+            abi.encodeCall(HookOrderBase.ranThisTransaction, (address(this), address(sellToken)))
         );
         assertFalse(abi.decode(answer, (bool)), "one caller's mark vouched for another");
 
         answer = sameTx.run(
             address(handler),
-            abi.encodeCall(HookOrderBase.markRan, ()),
+            mark,
             false,
             address(handler),
-            abi.encodeCall(HookOrderBase.ranThisTransaction, (address(sameTx)))
+            abi.encodeCall(HookOrderBase.ranThisTransaction, (address(sameTx), address(buyToken)))
         );
-        assertTrue(abi.decode(answer, (bool)));
+        assertFalse(abi.decode(answer, (bool)), "a mark for one token vouched for another");
     }
 
     // --- verify ----------------------------------------------------------------------------
@@ -258,11 +279,33 @@ contract SellBalanceHandlerTest is SellBalanceHandlerFixture {
         _verifyWith(drop, recipe, _data(true), abi.encode(stranger, recipe), order);
     }
 
-    function test_verify_rejectsATemplateOrderWithoutTheRecipe() external {
+    /// @dev With no recipe there is no hook to rebuild, so the order is held to the hook-free appData.
+    function test_verify_holdsAnOrderWithoutTheRecipeToTheHookFreeAppData() external {
         (address drop, bytes memory recipe, LibCowOrder.Data memory order) = _funded();
 
-        _expectNotValid("appData needs the recipe as offchain input");
+        _expectNotValid("appData");
         _verifyWith(drop, recipe, _data(true), "", order);
+    }
+
+    /// @dev The follow-up order: once the drop exists and the relayer is approved, nothing the hook
+    ///      does is needed, so the order may come without one. Checked with no activation at all,
+    ///      because the handler asks for none; an undeployed drop simply cannot sign.
+    function test_verify_acceptsAnOrderWithNoHookUnderTheCommittedAppData() external {
+        (address drop,,) = _funded();
+        LibCowOrder.Data memory order = _order(HOOK_FREE_APP_DATA);
+
+        handler.verify(
+            drop, address(0), LibCowOrder.hash(order, DOMAIN), DOMAIN, bytes32(0), abi.encode(_data(true)), "", order
+        );
+    }
+
+    function test_verify_rejectsAHookWhereTheRecipeCommitsNoTemplate() external {
+        bytes memory recipe = _recipeFor(_data(false));
+        address drop = executor.dropOf(owner, recipe);
+        sellToken.mint(drop, ARRIVED);
+
+        _expectNotValid("no appData template for a hook");
+        _verifyWith(drop, recipe, _data(false), abi.encode(owner, recipe), _order(keccak256("fixed")));
     }
 
     function test_verify_rejectsLessThanTheWholeBalance() external {
@@ -388,12 +431,24 @@ contract SellBalanceHandlerTest is SellBalanceHandlerFixture {
         _verify(drop, recipe, later);
     }
 
-    function test_getTradeableOrder_tellsAWatchTowerToStopWhenItCannotSupplyTheRecipe() external {
+    /// @dev What a watch tower polling with no offchain input gets: the hook-free order.
+    function test_getTradeableOrder_answersWithTheHookFreeOrderWhenGivenNoRecipe() external {
+        (address drop,,) = _funded();
+
+        LibCowOrder.Data memory order =
+            handler.getTradeableOrder(drop, address(0), bytes32(0), abi.encode(_data(true)), "");
+
+        assertEq(order.appData, HOOK_FREE_APP_DATA);
+        assertEq(order.sellAmount, ARRIVED);
+    }
+
+    function test_getTradeableOrder_tellsAWatchTowerToStopWhenAStrictRecipeNeedsItsHook() external {
+        strict = true;
         (address drop,,) = _funded();
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IConditionalOrderHandler.PollNever.selector, "appData needs the recipe as offchain input"
+                IConditionalOrderHandler.PollNever.selector, "this recipe needs its hook on every order"
             )
         );
         handler.getTradeableOrder(drop, address(0), bytes32(0), abi.encode(_data(true)), "");
@@ -419,15 +474,17 @@ contract SellBalanceHandlerTest is SellBalanceHandlerFixture {
 
 /// @notice A drop that was already activated, in an earlier transaction.
 ///
-/// @dev This is when a recipe's guards used to stop binding: the registration and the approval
-///      outlive the activation, and the trampoline swallows a hook that reverts. `setUp` is its own
-///      transaction, so the mark it leaves is gone by the time a test runs, whatever `--isolate` says.
+/// @dev A strict recipe, one with a guard. This is when a guard would otherwise stop binding: the
+///      registration and the approval outlive the activation, and the trampoline swallows a hook
+///      that reverts. `setUp` is its own transaction, so the mark it leaves is gone by the time a
+///      test runs, whatever `--isolate` says.
 contract SellBalanceHandlerActivatedEarlierTest is SellBalanceHandlerFixture {
     bytes internal recipe;
     address internal drop;
 
     function setUp() public override {
         super.setUp();
+        strict = true;
 
         Call[] memory calls = new Call[](4);
         calls[0] = _step(address(guards), abi.encodeCall(GuardSteps.requireMinBalance, (address(sellToken), ARRIVED)));
@@ -439,13 +496,7 @@ contract SellBalanceHandlerActivatedEarlierTest is SellBalanceHandlerFixture {
             allowFailure: false,
             isDelegateCall: false
         });
-        calls[3] = Call({
-            target: address(handler),
-            value: 0,
-            callData: abi.encodeCall(HookOrderBase.markRan, ()),
-            allowFailure: false,
-            isDelegateCall: false
-        });
+        calls[3] = _mark();
         recipe = _recipeOf("guarded", false, calls);
         drop = executor.dropOf(owner, recipe);
 
@@ -456,7 +507,7 @@ contract SellBalanceHandlerActivatedEarlierTest is SellBalanceHandlerFixture {
     function test_theRegistrationAndApprovalOutliveTheActivation() external view {
         assertGt(drop.code.length, 0);
         assertEq(sellToken.allowance(drop, VAULT_RELAYER), type(uint256).max);
-        assertFalse(handler.ranThisTransaction(drop), "the mark outlived its transaction");
+        assertFalse(handler.ranThisTransaction(drop, address(sellToken)), "the mark outlived its transaction");
     }
 
     function test_anOrderIsRefusedWithoutItsHook() external {
@@ -473,6 +524,15 @@ contract SellBalanceHandlerActivatedEarlierTest is SellBalanceHandlerFixture {
             abi.encode(owner, recipe),
             order
         );
+    }
+
+    /// @dev A strict recipe has no hook-free form, even in a transaction where the recipe did run:
+    ///      that order would skip the very thing the recipe is strict about.
+    function test_anOrderWithNoHookIsRefused() external {
+        LibCowOrder.Data memory order = _order(HOOK_FREE_APP_DATA);
+
+        _expectNotValid("this recipe needs its hook on every order");
+        _verifyWith(drop, recipe, _data(true), "", order);
     }
 
     function test_anOrderPassesWhenItsHookRunsTheRecipeAgain() external {

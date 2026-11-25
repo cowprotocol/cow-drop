@@ -5,7 +5,6 @@ import {PaymentHandler} from "src/handlers/PaymentHandler.sol";
 import {IConditionalOrderHandler} from "src/interfaces/IConditionalOrderHandler.sol";
 import {IComposableCowLike} from "src/interfaces/IDropExternal.sol";
 import {NothingToSell} from "src/lib/Errors.sol";
-import {HookOrderBase} from "src/lib/HookOrderBase.sol";
 import {Orders} from "src/lib/Orders.sol";
 import {HookPaymentSteps} from "src/steps/HookPaymentSteps.sol";
 import {PaymentSteps} from "src/steps/PaymentSteps.sol";
@@ -27,6 +26,11 @@ contract PaymentHandlerTest is StepsBase {
     uint256 internal constant PRICE = 100e18;
     uint256 internal constant PAID = 1234.5e18;
 
+    bytes32 internal constant HOOK_FREE_APP_DATA = keccak256("hook-free");
+
+    /// @dev Which kind of recipe a test builds. A strict one marks every run, per token, and takes
+    ///      no order without its hook.
+    bool internal strict;
     PaymentHandler internal handler;
     HookPaymentSteps internal hookPayments;
     MockERC20 internal otherToken;
@@ -55,7 +59,8 @@ contract PaymentHandlerTest is StepsBase {
             buyAmount: PRICE,
             receiver: recipient,
             validitySeconds: VALIDITY,
-            appData: bytes32(0),
+            strict: strict,
+            appData: HOOK_FREE_APP_DATA,
             appDataPrefix: bytes(PREFIX),
             appDataSuffix: bytes(_suffix())
         });
@@ -67,21 +72,18 @@ contract PaymentHandlerTest is StepsBase {
             handler: IConditionalOrder(address(handler)), salt: bytes32(0), staticInput: abi.encode(_data())
         });
 
-        Call[] memory calls = new Call[](3);
+        // A strict recipe has the step record the run, for the token it approved.
+        Call[] memory calls = new Call[](2);
         calls[0] = _step(
-            address(hookPayments), abi.encodeCall(HookPaymentSteps.approvePayment, (address(buyToken), recipient))
+            address(hookPayments),
+            abi.encodeCall(
+                HookPaymentSteps.approvePayment, (address(buyToken), recipient, strict ? address(handler) : address(0))
+            )
         );
         calls[1] = Call({
             target: address(composableCow),
             value: 0,
             callData: abi.encodeCall(IComposableCowLike.create, (params, true)),
-            allowFailure: false,
-            isDelegateCall: false
-        });
-        calls[2] = Call({
-            target: address(handler),
-            value: 0,
-            callData: abi.encodeCall(HookOrderBase.markRan, ()),
             allowFailure: false,
             isDelegateCall: false
         });
@@ -216,12 +218,11 @@ contract PaymentHandlerTest is StepsBase {
         payments.activatePayment(owner, recipe, address(sellToken));
     }
 
-    function test_verify_rejectsAnOrderWhoseRecipeDidNotRunInThisTransaction() external {
-        bytes memory recipe = _recipe();
-        address drop = executor.dropOf(owner, recipe);
-        otherToken.mint(drop, PAID);
+    // --- a strict recipe: the hook has to run, for this token, every time -----------------------
 
-        LibCowOrder.Data memory order = _order(address(otherToken), _appData(owner, recipe, address(otherToken)));
+    function test_strict_refusesAnOrderWhoseHookDidNotRun() external {
+        strict = true;
+        (address drop, bytes memory recipe, LibCowOrder.Data memory order) = _paidIn(otherToken);
 
         _expectNotValid("recipe did not run in this transaction");
         handler.verify(
@@ -233,6 +234,71 @@ contract PaymentHandlerTest is StepsBase {
             abi.encode(_data()),
             abi.encode(owner, recipe),
             order
+        );
+    }
+
+    function test_strict_acceptsAnOrderWhoseHookRan() external {
+        strict = true;
+        (address drop, bytes memory recipe, LibCowOrder.Data memory order) = _paidIn(otherToken);
+        _verify(drop, recipe, order);
+    }
+
+    /// @dev Two orders from one drop in one settlement. The hook for one token ran; the order in
+    ///      the other token must not ride on it.
+    function test_strict_oneTokensHookDoesNotVouchForAnotherTokensOrder() external {
+        strict = true;
+        (address drop, bytes memory recipe,) = _paidIn(otherToken);
+        sellToken.mint(drop, PAID);
+        LibCowOrder.Data memory other = _order(address(sellToken), _appData(owner, recipe, address(sellToken)));
+
+        _expectNotValid("recipe did not run in this transaction");
+        sameTx.run(
+            address(payments),
+            abi.encodeCall(PaymentSteps.activatePayment, (owner, recipe, address(otherToken))),
+            false,
+            address(handler),
+            abi.encodeCall(
+                PaymentHandler.verify,
+                (
+                    drop,
+                    address(0),
+                    LibCowOrder.hash(other, DOMAIN),
+                    DOMAIN,
+                    bytes32(0),
+                    abi.encode(_data()),
+                    abi.encode(owner, recipe),
+                    other
+                )
+            )
+        );
+    }
+
+    /// @dev Even in a transaction where the recipe did run for this token.
+    function test_strict_refusesAnOrderWithNoHook() external {
+        strict = true;
+        (address drop, bytes memory recipe,) = _paidIn(otherToken);
+        LibCowOrder.Data memory order = _order(address(otherToken), HOOK_FREE_APP_DATA);
+
+        _expectNotValid("this recipe needs its hook on every order");
+        sameTx.run(
+            address(payments),
+            abi.encodeCall(PaymentSteps.activatePayment, (owner, recipe, address(otherToken))),
+            false,
+            address(handler),
+            abi.encodeCall(
+                PaymentHandler.verify,
+                (drop, address(0), LibCowOrder.hash(order, DOMAIN), DOMAIN, bytes32(0), abi.encode(_data()), "", order)
+            )
+        );
+    }
+
+    /// @dev The follow-up order of a recipe that is not strict: no hook, the committed appData.
+    function test_verify_acceptsAnOrderWithNoHookUnderTheCommittedAppData() external {
+        (address drop,,) = _paidIn(otherToken);
+        LibCowOrder.Data memory order = _order(address(otherToken), HOOK_FREE_APP_DATA);
+
+        handler.verify(
+            drop, address(0), LibCowOrder.hash(order, DOMAIN), DOMAIN, bytes32(0), abi.encode(_data()), "", order
         );
     }
 

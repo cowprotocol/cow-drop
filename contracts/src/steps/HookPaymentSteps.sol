@@ -7,6 +7,7 @@ import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/Safe
 import {IERC20Like} from "../interfaces/IDropExternal.sol";
 import {Allowance} from "../lib/Allowance.sol";
 import {NothingToSell} from "../lib/Errors.sol";
+import {HookOrderBase} from "../lib/HookOrderBase.sol";
 import {PaymentSteps} from "./PaymentSteps.sol";
 
 /// @title HookPaymentSteps
@@ -38,7 +39,10 @@ contract HookPaymentSteps {
 
     /// @notice Approve the relayer for the activator-chosen token, or forward it if it is already
     ///         `buyToken`: there is no order to place for a payment made in the token asked for.
-    function approvePayment(address buyToken, address receiver) external {
+    /// @param strictHandler The recipe's handler when it is strict, so that this run is recorded for
+    ///        the token it approved; zero otherwise. The mark is made here rather than by a call of
+    ///        its own because only this step knows which token the activator named.
+    function approvePayment(address buyToken, address receiver, address strictHandler) external {
         if (receiver == address(0)) revert InvalidRecipient();
 
         address sellToken = PAYMENT_STEPS.paymentToken(address(this));
@@ -53,5 +57,6 @@ contract HookPaymentSteps {
         }
 
         Allowance.ensureMax(sellToken, VAULT_RELAYER, balance);
+        if (strictHandler != address(0)) HookOrderBase(strictHandler).markRan(sellToken);
     }
 }

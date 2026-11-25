@@ -40,9 +40,9 @@ generate` pick the new directory up — it reads every `gen*/` and emits them al
 | `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | live on Gnosis | same |
 | `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | live on Gnosis | same |
 | `PaymentSteps` | `0x8BA52FAcbeFCC97CB93ccfCB53e3f2204543EEe8` | live on Gnosis | new |
-| `SellBalanceHandler` | `0x590B050d12F6b3554BD98F0be24610dBF0976403` | **not yet broadcast** | new |
-| `PaymentHandler` | `0x237140226A487B7Bb6aA22e5FC53E297236c84bd` | **not yet broadcast** | new |
-| `HookPaymentSteps` | `0x08E10c04B82639085d75DC867946E197c8cAa389` | **not yet broadcast** | new |
+| `SellBalanceHandler` | `0x61CBDa9a385a57fb684C5789A9276Eefc2CFcC3D` | **not yet broadcast** | new |
+| `PaymentHandler` | `0x7f14b1C0473771c234Ba07dC68b8c6C74912540E` | **not yet broadcast** | new |
+| `HookPaymentSteps` | `0x640F2f235610FfE0832eD65524AbA1768496f457` | **not yet broadcast** | new |
 | `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | live on Gnosis | **moved** |
 | `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | live on Gnosis | new |
 | `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis | same |

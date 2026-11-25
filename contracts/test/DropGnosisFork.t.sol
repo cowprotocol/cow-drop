@@ -343,6 +343,7 @@ contract DropGnosisForkTest is Test {
                     limitNumerator: 1,
                     limitDenominator: 1000,
                     validitySeconds: 30 minutes,
+                    strict: true,
                     appData: bytes32(0),
                     appDataPrefix: prefix,
                     appDataSuffix: suffix
@@ -369,7 +370,7 @@ contract DropGnosisForkTest is Test {
         calls[2] = Call({
             target: address(handler),
             value: 0,
-            callData: abi.encodeCall(HookOrderBase.markRan, ()),
+            callData: abi.encodeCall(HookOrderBase.markRan, (WXDAI)),
             allowFailure: false,
             isDelegateCall: false
         });
@@ -454,6 +455,7 @@ contract DropGnosisForkTest is Test {
                     buyAmount: 1e16,
                     receiver: recipient,
                     validitySeconds: 30 minutes,
+                    strict: true,
                     appData: bytes32(0),
                     appDataPrefix: prefix,
                     appDataSuffix: suffix
@@ -461,11 +463,11 @@ contract DropGnosisForkTest is Test {
             )
         });
 
-        Call[] memory calls = new Call[](3);
+        Call[] memory calls = new Call[](2);
         calls[0] = Call({
             target: address(hookPayments),
             value: 0,
-            callData: abi.encodeCall(HookPaymentSteps.approvePayment, (COW, recipient)),
+            callData: abi.encodeCall(HookPaymentSteps.approvePayment, (COW, recipient, address(handler))),
             allowFailure: false,
             isDelegateCall: true
         });
@@ -473,14 +475,6 @@ contract DropGnosisForkTest is Test {
             target: COMPOSABLE_COW,
             value: 0,
             callData: abi.encodeCall(IComposableCowLike.create, (params, true)),
-            allowFailure: false,
-            isDelegateCall: false
-        });
-        // Last: tells the handler the whole recipe ran in this transaction.
-        calls[2] = Call({
-            target: address(handler),
-            value: 0,
-            callData: abi.encodeCall(HookOrderBase.markRan, ()),
             allowFailure: false,
             isDelegateCall: false
         });
@@ -520,6 +514,96 @@ contract DropGnosisForkTest is Test {
         assertEq(_hookThenValidate(hooks, drop, digest, signature), MAGIC_VALUE_1271, "order not valid after the hook");
         assertGt(drop.code.length, 0, "the hook did not deploy the drop");
         assertEq(IERC20Like(WXDAI).allowance(drop, VAULT_RELAYER), type(uint256).max, "relayer not approved");
+    }
+
+    /// @dev A recipe with nothing to re-check: the hook matters once, to deploy the drop. After that
+    ///      the same drop signs an order that carries no hook at all, in a transaction of its own.
+    function test_fork_followUpOrderNeedsNoHookOnceTheDropExists() external {
+        SellBalanceHandler handler = new SellBalanceHandler(executor);
+        TokenSteps tokenSteps = new TokenSteps();
+        bytes32 hookFree = keccak256("hook-free");
+
+        bytes memory prefix = '{"appCode":"cow-drop","metadata":{"hooks":{"pre":[{"callData":"0x';
+        bytes memory suffix = bytes(
+            string.concat(
+                '","gasLimit":"900000","target":"', vm.toString(address(executor)), '"}]}},"version":"1.1.0"}'
+            )
+        );
+        IConditionalOrder.ConditionalOrderParams memory params = IConditionalOrder.ConditionalOrderParams({
+            handler: IConditionalOrder(address(handler)),
+            salt: bytes32(0),
+            staticInput: abi.encode(
+                SellBalanceHandler.Data({
+                    sellToken: WXDAI,
+                    buyToken: COW,
+                    receiver: recipient,
+                    limitNumerator: 1,
+                    limitDenominator: 1000,
+                    validitySeconds: 30 minutes,
+                    strict: false,
+                    appData: hookFree,
+                    appDataPrefix: prefix,
+                    appDataSuffix: suffix
+                })
+            )
+        });
+
+        Call[] memory calls = new Call[](2);
+        calls[0] = Call({
+            target: address(tokenSteps),
+            value: 0,
+            callData: abi.encodeCall(TokenSteps.approveMax, (WXDAI, VAULT_RELAYER)),
+            allowFailure: false,
+            isDelegateCall: true
+        });
+        calls[1] = Call({
+            target: COMPOSABLE_COW,
+            value: 0,
+            callData: abi.encodeCall(IComposableCowLike.create, (params, true)),
+            allowFailure: false,
+            isDelegateCall: false
+        });
+        bytes memory recipe =
+            abi.encode(DropExecutor.Recipe({label: "basic", salt: bytes32(0), once: false, calls: calls}));
+        address drop = executor.dropOf(owner, recipe);
+        deal(WXDAI, drop, 10e18);
+
+        LibCowOrder.Data memory order = LibCowOrder.Data({
+            sellToken: IERC20(WXDAI),
+            buyToken: IERC20(COW),
+            receiver: recipient,
+            sellAmount: 10e18,
+            buyAmount: 10e18 / 1000,
+            validTo: uint32(block.timestamp + 30 minutes),
+            appData: hookFree,
+            feeAmount: 0,
+            kind: Orders.KIND_SELL,
+            partiallyFillable: false,
+            sellTokenBalance: Orders.BALANCE_ERC20,
+            buyTokenBalance: Orders.BALANCE_ERC20 // gitleaks:allow (balance-kind constant, not a secret)
+        });
+        // No recipe in the signature: this order has no hook to rebuild.
+        bytes memory signature = abi.encode(
+            order, IComposableCow.PayloadStruct({proof: new bytes32[](0), params: params, offchainInput: ""})
+        );
+        bytes32 digest = LibCowOrder.hash(order, IComposableCowFork(COMPOSABLE_COW).domainSeparator());
+
+        // Before the drop exists nothing can sign for it, hook-free order or not.
+        assertEq(drop.code.length, 0);
+        (, bytes memory answer) = drop.staticcall(abi.encodeCall(IERC1271.isValidSignature, (digest, signature)));
+        assertEq(answer.length, 0, "an address with no code vouched for an order");
+
+        // The first order's hook, in some earlier settlement.
+        IHooksTrampoline.Hook[] memory hooks = new IHooksTrampoline.Hook[](1);
+        hooks[0] = IHooksTrampoline.Hook({
+            target: address(executor),
+            callData: abi.encodeCall(DropExecutor.activate, (owner, recipe)),
+            gasLimit: 900_000
+        });
+        vm.prank(SETTLEMENT);
+        IHooksTrampoline(HOOKS_TRAMPOLINE).execute(hooks);
+
+        assertEq(IERC1271(drop).isValidSignature(digest, signature), MAGIC_VALUE_1271, "follow-up order not valid");
     }
 
     /// @dev The pre-hook and the signature check in one transaction, with the settlement contract as
