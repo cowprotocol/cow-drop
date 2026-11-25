@@ -1,4 +1,4 @@
-import type { DropRecipeJson, DropStepJson } from '@cowprotocol/cow-drop-sdk'
+import { COW_DROP_APP_DATA, type DropRecipeJson, type DropStepJson } from '@cowprotocol/cow-drop-sdk'
 import type { Address, Hex } from 'viem'
 
 import type { WatchHints } from './types.js'
@@ -10,7 +10,7 @@ import type { WatchHints } from './types.js'
  * pin the poll set for the life of a registration — a drop stuck `blind` forever because the SDK that
  * first saw it could not name a step the current one can.
  */
-export const HINTS_VERSION = '4'
+export const HINTS_VERSION = '5'
 
 const ZERO: Address = '0x0000000000000000000000000000000000000000'
 
@@ -50,6 +50,7 @@ export function deriveHints(recipe: DropRecipeJson): WatchHints {
         break
 
       case 'payment':
+      case 'paymentViaHook':
         // No sell token to poll: the payer picks it. The tokens come from `Transfer` logs instead.
         payment = { buyToken: lower(step.buyToken), buyAmount: String(step.buyAmount) }
         break
@@ -157,7 +158,7 @@ const SELF_DRIVING_STEPS = new Set<DropStepJson['type']>(['twapFromBalance', 'st
  * drop. So it is never sent a transaction, and never asked for a fee.
  */
 export function hookPosted(recipe: DropRecipeJson): boolean {
-  return recipe.steps.some((step) => step.type === 'sellBalanceViaHook')
+  return recipe.steps.some((step) => step.type === 'sellBalanceViaHook' || step.type === 'paymentViaHook')
 }
 
 /**
@@ -247,6 +248,17 @@ export function tradesOf(recipe: DropRecipeJson): RecipeTrade[] {
         // against the buy token instead. For a payment that also fixes the volume (`buyAmount`); a
         // convert commits no amount, so its volume is only known at activation — see `priceFee`.
         trades.push({ sellToken: lower(step.buyToken), appData: step.appData ?? ZERO_APP_DATA })
+        break
+      /*
+       * A hook-activated step commits two appData: one rebuilt around the activation hook, which has
+       * no fixed hash to list, and the one a follow-up order with no hook carries. Only the second
+       * can be matched to a document here, and it defaults to cow-drop's own as it does in the SDK.
+       */
+      case 'sellBalanceViaHook':
+        trades.push({ sellToken: lower(step.sellToken), appData: step.appData ?? COW_DROP_APP_DATA })
+        break
+      case 'paymentViaHook':
+        trades.push({ sellToken: lower(step.buyToken), appData: step.appData ?? COW_DROP_APP_DATA })
         break
       default:
         break

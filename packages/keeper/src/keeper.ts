@@ -5,7 +5,12 @@ import {
   buildActivatePaymentTx,
   buildActivateTx,
   buildHookOrder,
+  buildHookPaymentOrder,
+  COW_VAULT_RELAYER,
+  findHookPayment,
   findSellBalanceOrders,
+  hookNeeded,
+  type HookOrder,
   requiredPayment,
   type DropDeployment,
   type DropRecipeJson,
@@ -670,8 +675,11 @@ export function createKeeper(options: KeeperOptions): Keeper {
     result.ready++
 
     // Posted, not sent: the order carries the activation, so there is no gas to price or budget.
-    if (hookPosted(drop.recipe)) {
-      await postHookOrders(drop, digest, balances, result)
+    // Except a payment made in the token asked for: there is no order to carry anything, so
+    // forwarding it takes the transaction below, under the same policy as any other.
+    const forwarded = paying !== undefined && paying.sellToken === drop.hints.payment?.buyToken
+    if (hookPosted(drop.recipe) && !forwarded) {
+      await postHookOrders(drop, digest, balances, result, paying)
       return
     }
 
@@ -724,21 +732,42 @@ export function createKeeper(options: KeeperOptions): Keeper {
     digest: string,
     balances: Record<string, bigint>,
     result: KeeperTickResult,
+    /** For a payment drop, the token this tick chose to pay with. */
+    paying?: { sellToken: Address; balance: bigint },
   ): Promise<void> {
     const orderUids: Hex[] = []
+    const base = { deployment, owner: drop.recipe.owner, setupData: drop.setupData, now: Math.floor(now() / 1000) }
 
-    for (const { data } of findSellBalanceOrders(deployment, drop.setupData)) {
-      const balance = balances[data.sellToken.toLowerCase()] ?? 0n
-      if (balance === 0n) continue
-
-      const built = buildHookOrder({
-        deployment,
-        owner: drop.recipe.owner,
-        setupData: drop.setupData,
-        balance,
-        now: Math.floor(now() / 1000),
-        sellToken: data.sellToken,
+    /*
+     * The hook is what deploys the drop and approves the relayer, so an order only needs it until
+     * the relayer can already pull the balance. A drop that has been through one fill in this token
+     * gets its later orders posted without it, and the solver pays for no activation. A strict
+     * recipe always carries it.
+     */
+    const withHook = async (selling: { sellToken: Address; balance: bigint }, strict: boolean) =>
+      hookNeeded({
+        strict,
+        balance: selling.balance,
+        allowance: strict
+          ? 0n
+          : await chain.getAllowance({ token: selling.sellToken, owner: drop.address, spender: COW_VAULT_RELAYER }),
       })
+
+    // A payment recipe names no token, so the one this tick priced is the order. A swap recipe names
+    // its own, one per registration.
+    const orders: HookOrder[] = []
+    if (paying) {
+      const strict = findHookPayment(deployment, drop.setupData)?.data.strict ?? true
+      orders.push(buildHookPaymentOrder({ ...base, ...paying, hook: await withHook(paying, strict) }))
+    } else {
+      for (const { data } of findSellBalanceOrders(deployment, drop.setupData)) {
+        const selling = { sellToken: data.sellToken, balance: balances[data.sellToken.toLowerCase()] ?? 0n }
+        if (selling.balance === 0n) continue
+        orders.push(buildHookOrder({ ...base, ...selling, hook: await withHook(selling, data.strict) }))
+      }
+    }
+
+    for (const built of orders) {
 
       if (dryRun || !orderBook) {
         logger.info(
@@ -749,8 +778,11 @@ export function createKeeper(options: KeeperOptions): Keeper {
 
       let status: 'posted' | 'duplicate' = 'posted'
       try {
-        if (built.appDataDocument !== undefined) {
-          await orderBook.uploadAppData(built.order.appData, built.appDataDocument)
+        // With a hook the SDK builds the document. Without one it only knows cow-drop's own, so a
+        // recipe committing a different hook-free appData relies on the one sent at registration.
+        const document = built.appDataDocument ?? drop.appDataDocuments?.[built.order.appData]
+        if (document !== undefined) {
+          await orderBook.uploadAppData(built.order.appData, document)
         }
         await orderBook.sendOrder(built.payload as unknown as OrderCreation)
       } catch (cause) {
@@ -788,7 +820,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
         orderUid: built.orderUid,
         status,
       })
-      logger.info(`posted order ${built.orderUid} for drop ${drop.address}; its pre-hook activates the drop`)
+      logger.info(`posted order ${built.orderUid} for drop ${drop.address}`)
     }
 
     const first = orderUids[0]
@@ -798,7 +830,20 @@ export function createKeeper(options: KeeperOptions): Keeper {
       ...current,
       blockedReason: undefined,
       blockedUntil: undefined,
-      committedDigest: digest,
+      // Per token for a payment, as a confirmed payment activation latches: a second token arriving
+      // must not release this one's order, nor be held back by it.
+      ...(paying
+        ? {
+            payment: {
+              tokens: [],
+              ...current.payment,
+              committed: {
+                ...current.payment?.committed,
+                [paying.sellToken]: { balance: String(paying.balance), until: orders[0]!.order.validTo * 1000 },
+              },
+            },
+          }
+        : { committedDigest: digest }),
       backoff: { failures: 0, nextAttemptAt: 0 },
       activations: [...current.activations, { ref: first, status: 'posted', at: now(), orderUids }],
       updatedAt: now(),

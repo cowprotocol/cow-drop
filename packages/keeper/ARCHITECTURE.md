@@ -73,6 +73,10 @@ keeper builds the order with the SDK's `buildHookOrder`, uploads its appData and
 carries `activate` as a pre-hook, so the solver that fills the order deploys the drop in the same
 settlement and takes the gas out of the surplus.
 
+- **The hook only while it is needed.** It deploys the drop and approves the relayer, so once the
+  relayer's allowance for the token covers the balance the keeper posts the order with no hook, and
+  the solver pays for no activation. One extra read per order. A strict recipe, one with a guard,
+  always carries the hook, because its handler refuses an order whose hook did not run the recipe.
 - **No policy, no budget.** Nothing is spent, so the subsidy modes do not apply and `paying` mode asks
   such a recipe for no fee.
 - **The same latch.** A posted order records `committedDigest` and an activation entry with `status:
@@ -80,6 +84,12 @@ settlement and takes the gas out of the surplus.
   goes out only after the first expires or the balance moves.
 - **A refusal is retried.** The order book rejecting the order usually means the market is under the
   limit; the drop backs off and the next attempt re-prices nothing but the deadline.
+
+A `paymentViaHook` recipe is the same with the sell token left open. It is found and priced exactly
+as a payment drop is (`Transfer` logs, then a buy quote per token), and the token that clears becomes
+the order, built with `buildHookPaymentOrder`. The latch is per token, as for a payment. One case
+still takes a transaction: a payment made in `buyToken` itself has no order to carry the activation,
+so it is forwarded by activating, under the ordinary policy.
 
 ## Payment drops
 

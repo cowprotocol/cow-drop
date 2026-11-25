@@ -1,4 +1,4 @@
-import { getDeployment, swapOnArrival } from '@cowprotocol/cow-drop-sdk'
+import { COW_DROP_APP_DATA_DOCUMENT, getDeployment, swapOnArrival } from '@cowprotocol/cow-drop-sdk'
 import { describe, expect, it } from 'vitest'
 
 import { createEventBus, type KeeperEvent } from './events.js'
@@ -47,8 +47,8 @@ function fakeOrderBook() {
   }
 }
 
-function harness() {
-  const drop = registered({ recipe, generation: 2 })
+function harness(dropRecipe = recipe) {
+  const drop = registered({ recipe: dropRecipe, generation: 2 })
   const store = memoryStore([drop])
   const chain = fakeChain({ balances: [BALANCE] })
   const submitter = fakeSubmitter(chain.calls)
@@ -122,6 +122,37 @@ describe('a drop activated by its own order', () => {
     expect(h.events.filter((e) => e.type === 'order-posted')).toHaveLength(1)
   })
 
+  it('posts a follow-up order with no hook once the relayer can already pull the balance', async () => {
+    const h = harness()
+    // The drop has been activated before: deployed, and approved for its sell token.
+    h.chain.state.allowance = 2n ** 256n - 1n
+
+    await h.keeper.tick()
+
+    const [upload] = h.book.uploads
+    expect(JSON.parse(upload!.document).metadata.hooks).toBeUndefined()
+    expect(h.book.orders[0]!.appData).toBe(upload!.hash)
+    expect(h.book.orders[0]).toMatchObject({ sellAmount: BALANCE.toString(), signingScheme: 'eip1271' })
+  })
+
+  it('keeps the hook on every order of a strict recipe, approved or not', async () => {
+    const guarded = swapOnArrival({
+      chainId: CHAIN_ID,
+      owner: OWNER,
+      sellToken: WXDAI,
+      buyToken: COW,
+      limitPrice: { numerator: '45', denominator: '1' },
+      activation: 'hook',
+      minAmount: 1n,
+    })
+    const h = harness(guarded)
+    h.chain.state.allowance = 2n ** 256n - 1n
+
+    await h.keeper.tick()
+
+    expect(JSON.parse(h.book.uploads[0]!.document).metadata.hooks.pre).toHaveLength(1)
+  })
+
   it('does not post a second order for the same money while the first can still fill', async () => {
     const h = harness()
 
@@ -186,6 +217,19 @@ describe('a drop activated by its own order', () => {
 
     expect((await h.store.get(CHAIN_ID, h.drop.address))!.backoff.failures).toBe(1)
     expect(h.events.filter((e) => e.type === 'order-rejected')).toHaveLength(0)
+  })
+
+  it('is registered with the standard appData document the web app sends', async () => {
+    const result = await registerDrop({
+      recipe,
+      appDataDocuments: [COW_DROP_APP_DATA_DOCUMENT],
+      store: memoryStore([]),
+      deployment,
+      maxDrops: 10,
+      now: 0,
+    })
+
+    expect(result).toMatchObject({ ok: true })
   })
 
   it('is registered in paying mode without a fee, since it costs the keeper no gas', async () => {
