@@ -1591,7 +1591,8 @@ export function RecipesTab({
                   so the solver that fills it deploys the drop and takes the gas from the surplus.
                 </span>
                 <span>
-                  It changes the address, and any guard below then gates the first activation only.
+                  It changes the address. Any guard below still gates every order: the drop only
+                  accepts one whose hook ran the whole recipe.
                 </span>
               </Tooltip>
             </label>
