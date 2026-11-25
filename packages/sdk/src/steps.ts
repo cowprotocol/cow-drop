@@ -1,5 +1,6 @@
 import { encodeFunctionData, type Address, type Hex } from 'viem'
 
+import { COW_DROP_APP_DATA } from './appData.js'
 import {
   GUARD_STEPS_ABI,
   CONVERT_STEPS_ABI,
@@ -46,17 +47,18 @@ function stepCall(target: Address, callData: Hex, allowFailure = false): DropCal
 }
 
 /**
- * The last call of a hook-activated recipe: tell the handler this drop's recipe ran to completion.
+ * The last call of a *strict* recipe: tell the handler this drop's recipe ran to completion, for
+ * the token it sells.
  *
- * The handler only accepts an order in a transaction where this happened, which is what makes every
- * guard hold on every order. A hook that reverts is ignored by CoW's trampoline, and the registration
- * from an earlier activation would otherwise still stand.
+ * A strict handler only accepts an order in a transaction where this happened, which is what makes
+ * every guard hold on every order. A hook that reverts is ignored by CoW's trampoline, and the
+ * registration from an earlier activation would otherwise still stand.
  */
-function markRan(handler: Address): DropCall {
+function markRan(handler: Address, sellToken: Address): DropCall {
   return {
     target: handler,
     value: 0n,
-    callData: encodeFunctionData({ abi: MARK_RAN_ABI, functionName: 'markRan' }),
+    callData: encodeFunctionData({ abi: MARK_RAN_ABI, functionName: 'markRan', args: [sellToken] }),
     allowFailure: false,
     isDelegateCall: false,
   }
@@ -86,6 +88,14 @@ export interface SellBalanceViaHookParams {
   hookGasLimit?: bigint
   /** The JSON around the hook's calldata. Defaults to a document holding only the hook. */
   appDataTemplate?: AppDataTemplate
+  /**
+   * Hold every order to its own hook having run the whole recipe. **Set it whenever the recipe has a
+   * guard, `once` or a cooldown**, or those only gate the first activation. Left off, the hook is
+   * needed once, to deploy the drop, and later orders may be posted with no hook at all.
+   */
+  strict?: boolean
+  /** The appData of an order posted with no hook. Defaults to cow-drop's own. Unused when strict. */
+  appData?: Hex
   orderSalt?: Hex
 }
 
@@ -100,6 +110,10 @@ export interface PaymentViaHookParams {
   /** Gas forwarded to the activation hook. Ignored when `appDataTemplate` is given. */
   hookGasLimit?: bigint
   appDataTemplate?: AppDataTemplate
+  /** As for `sellBalanceViaHook`: set it whenever the recipe has a guard, `once` or a cooldown. */
+  strict?: boolean
+  /** The appData of an order posted with no hook. Defaults to cow-drop's own. Unused when strict. */
+  appData?: Hex
   orderSalt?: Hex
 }
 
@@ -268,9 +282,9 @@ export const steps = {
    * Sell the drop's whole balance through an order that is posted *before* activation and activates
    * the drop from its own pre-hook, so nobody sends an activation transaction.
    *
-   * Three calls, and no step contract of its own: approve the relayer, register `SellBalanceHandler`
-   * with ComposableCoW, and tell the handler the recipe ran. Build the order to post with
-   * `buildHookOrder`.
+   * No step contract of its own: approve the relayer and register `SellBalanceHandler` with
+   * ComposableCoW, plus, when `strict`, a last call telling the handler the recipe ran. Build the
+   * order to post with `buildHookOrder`.
    */
   sellBalanceViaHook(
     deployment: Pick<DropDeployment, 'tokenSteps' | 'composableCow' | 'sellBalanceHandler' | 'executor'>,
@@ -288,14 +302,15 @@ export const steps = {
       throw new Error('the appData template prefix must end in "0x", where the hook calldata begins')
     }
 
+    const strict = params.strict ?? false
     const staticInput = encodeSellBalanceData({
       sellToken: params.sellToken,
       buyToken: params.buyToken,
       receiver: params.receiver ?? ZERO_ADDRESS,
       limitPrice: params.limitPrice,
       validitySeconds: params.validitySeconds,
-      strict: false,
-      appData: ZERO_BYTES32,
+      strict,
+      appData: params.appData ?? COW_DROP_APP_DATA,
       appDataTemplate,
     })
 
@@ -316,7 +331,8 @@ export const steps = {
           ],
         }),
       }),
-      markRan(deployment.sellBalanceHandler),
+      // Last, so it is only reached when everything before it held.
+      ...(strict ? [markRan(deployment.sellBalanceHandler, params.sellToken)] : []),
     ]
   },
 
@@ -324,9 +340,8 @@ export const steps = {
    * `payment`, with the order posted before activation: "pay me `buyAmount` of `buyToken`, in any
    * token", and nobody sends an activation transaction.
    *
-   * Three calls: approve the relayer for whichever token the order's hook names, register
-   * `PaymentHandler`, and tell the handler the recipe ran. Build the order to post with
-   * `buildHookPaymentOrder`.
+   * Two calls: approve the relayer for whichever token the order's hook names, and register
+   * `PaymentHandler`. Build the order to post with `buildHookPaymentOrder`.
    */
   paymentViaHook(
     deployment: Pick<DropDeployment, 'hookPaymentSteps' | 'paymentHandler' | 'paymentSteps' | 'composableCow' | 'executor'>,
@@ -350,12 +365,14 @@ export const steps = {
       throw new Error('the appData template prefix must end in "0x", where the hook calldata begins')
     }
 
+    const strict = params.strict ?? false
     const staticInput = encodeHookPaymentData({
       buyToken: params.buyToken,
       buyAmount: params.buyAmount,
       receiver: params.receiver,
       validitySeconds: params.validitySeconds,
-      appData: ZERO_BYTES32,
+      strict,
+      appData: params.appData ?? COW_DROP_APP_DATA,
       appDataTemplate,
     })
 
@@ -365,7 +382,8 @@ export const steps = {
         encodeFunctionData({
           abi: HOOK_PAYMENT_STEPS_ABI,
           functionName: 'approvePayment',
-          args: [params.buyToken, params.receiver],
+          // A strict recipe has the step record the run: only it knows which token was named.
+          args: [params.buyToken, params.receiver, strict ? paymentHandler : ZERO_ADDRESS],
         }),
       ),
       steps.raw({
@@ -376,7 +394,6 @@ export const steps = {
           args: [{ handler: paymentHandler, salt: params.orderSalt ?? ZERO_BYTES32, staticInput }, true],
         }),
       }),
-      markRan(paymentHandler),
     ]
   },
 

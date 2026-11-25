@@ -6,7 +6,7 @@ import { decodeFunctionData, encodeAbiParameters, getAddress, keccak256, toBytes
 import { describe, expect, it } from 'vitest'
 
 import { describeRecipe, hasWarnings } from './describe.js'
-import { TOKEN_STEPS_ABI } from './generated/artifacts.js'
+import { HOOK_PAYMENT_STEPS_ABI, TOKEN_STEPS_ABI } from './generated/artifacts.js'
 import { getDeployment } from './generated/deployments.js'
 import {
   COW_VAULT_RELAYER,
@@ -15,13 +15,16 @@ import {
   encodeHookPaymentData,
   findHookPayment,
   decodeSellBalanceData,
+  hookNeeded,
   encodeHookSignature,
   encodeSellBalanceData,
   findSellBalanceOrders,
+  MARK_RAN_ABI,
   hookAppDataDocument,
   type SellBalanceData,
 } from './hookOrder.js'
 import { cowDomainSeparator, orderUidFor } from './orderUid.js'
+import { COW_DROP_APP_DATA, COW_DROP_APP_DATA_DOCUMENT } from './appData.js'
 import { compileRecipe } from './recipe.js'
 import { paymentRequest, swapOnArrival } from './templates.js'
 import { buildActivatePaymentTx, buildActivateTx } from './tx.js'
@@ -124,20 +127,22 @@ describe('hook orders match the contract', () => {
   }
 })
 
+const swapParams = {
+  chainId: 100,
+  owner: OWNER,
+  sellToken: WXDAI,
+  buyToken: COW,
+  limitPrice: { numerator: '95', denominator: '100' },
+  activation: 'hook',
+} as const
+
 describe('sellBalanceViaHook', () => {
-  const json = swapOnArrival({
-    chainId: 100,
-    owner: OWNER,
-    sellToken: WXDAI,
-    buyToken: COW,
-    limitPrice: { numerator: '95', denominator: '100' },
-    activation: 'hook',
-  })
+  const json = swapOnArrival(swapParams)
   const compiled = compileRecipe(json)
   const { deployment } = compiled
 
   it('compiles to an approval as the drop and a plain registration', () => {
-    const [approve, register, mark] = compiled.recipe.calls
+    const [approve, register] = compiled.recipe.calls
 
     expect(approve!.target).toBe(deployment.tokenSteps)
     expect(approve!.isDelegateCall).toBe(true)
@@ -149,19 +154,37 @@ describe('sellBalanceViaHook', () => {
     expect(register!.target).toBe(deployment.composableCow)
     expect(register!.isDelegateCall).toBe(false)
 
-    // Last, and a plain call: the handler keys the mark by who called it.
-    expect(mark).toMatchObject({ target: deployment.sellBalanceHandler, isDelegateCall: false, allowFailure: false })
-    expect(compiled.recipe.calls).toHaveLength(3)
+    // No guard, so not strict: nothing to mark, and a later order may go out with no hook.
+    expect(compiled.recipe.calls).toHaveLength(2)
 
     const [found] = findSellBalanceOrders(deployment, compiled.setupData)
     expect(found!.params.handler).toBe(deployment.sellBalanceHandler)
     expect(found!.data.receiver).toBe(OWNER)
     expect(found!.data.validitySeconds).toBe(1800n)
+    expect(found!.data.strict).toBe(false)
+    expect(found!.data.appData).toBe(COW_DROP_APP_DATA)
+  })
+
+  it('is strict when the recipe has a guard, and then ends by marking the run for its token', () => {
+    const guarded = compileRecipe({ ...json, steps: [...swapOnArrival({ ...swapParams, minAmount: 1n }).steps] })
+    const mark = guarded.recipe.calls.at(-1)!
+
+    expect(findSellBalanceOrders(guarded.deployment, guarded.setupData)[0]!.data.strict).toBe(true)
+    // A plain call, and last: the handler keys the mark by who called it.
+    expect(mark).toMatchObject({ target: deployment.sellBalanceHandler, isDelegateCall: false, allowFailure: false })
+    expect(decodeFunctionData({ abi: MARK_RAN_ABI, data: mark.callData }).args).toEqual([WXDAI])
+    expect(hasWarnings(describeRecipe(guarded.setupData, guarded.deployment))).toBe(false)
+  })
+
+  it('refuses a guard next to a step that is not strict, since it would only gate the first activation', () => {
+    const [guard] = swapOnArrival({ ...swapParams, minAmount: 1n }).steps
+    expect(() => compileRecipe({ ...json, steps: [guard!, ...json.steps] })).toThrow(/not strict/)
+    expect(() => compileRecipe({ ...json, once: true })).toThrow(/not strict/)
   })
 
   it('reads as a recipe with nothing to warn about', () => {
     const described = describeRecipe(compiled.setupData, deployment)
-    expect(described.steps.map((step) => step.known?.contract)).toEqual(['TokenSteps', 'ComposableCoW', 'SellBalanceHandler'])
+    expect(described.steps.map((step) => step.known?.contract)).toEqual(['TokenSteps', 'ComposableCoW'])
     expect(hasWarnings(described)).toBe(false)
   })
 
@@ -241,6 +264,38 @@ describe('buildHookOrder', () => {
     expect(built.signature).toContain(offchainInput.slice(2))
   })
 
+  it('builds the follow-up order with no hook and no recipe in its signature', () => {
+    const followUp = buildHookOrder({ deployment, owner: OWNER, setupData, balance: 10n ** 19n, now: NOW, hook: false })
+
+    expect(followUp.order.appData).toBe(COW_DROP_APP_DATA)
+    expect(followUp.appDataDocument).toBe(COW_DROP_APP_DATA_DOCUMENT)
+    expect(followUp.signature.length).toBeLessThan(built.signature.length)
+    expect(followUp.signature).not.toContain(setupData.slice(2))
+    // Same order otherwise, so a different uid only because of the appData.
+    expect({ ...followUp.order, appData: built.order.appData }).toEqual(built.order)
+  })
+
+  it('refuses a hook-free order for a strict recipe', () => {
+    const guarded = compileRecipe(swapOnArrival({ ...swapParams, minAmount: 1n }))
+    expect(() =>
+      buildHookOrder({
+        deployment,
+        owner: OWNER,
+        setupData: guarded.setupData,
+        balance: 10n ** 19n,
+        now: NOW,
+        hook: false,
+      }),
+    ).toThrow(/strict/)
+  })
+
+  it('needs the hook until the relayer can pull the balance, and always when strict', () => {
+    expect(hookNeeded({ strict: false, allowance: 0n, balance: 5n })).toBe(true)
+    expect(hookNeeded({ strict: false, allowance: 4n, balance: 5n })).toBe(true)
+    expect(hookNeeded({ strict: false, allowance: 5n, balance: 5n })).toBe(false)
+    expect(hookNeeded({ strict: true, allowance: 2n ** 256n - 1n, balance: 5n })).toBe(true)
+  })
+
   it('refuses an empty drop and a recipe with nothing to post', () => {
     expect(() => buildHookOrder({ deployment, owner: OWNER, setupData, balance: 0n, now: NOW })).toThrow(
       /nothing to sell/,
@@ -277,7 +332,8 @@ describe('hook payments match the contract', () => {
           buyAmount: 100n * 10n ** 18n,
           receiver: getAddress('0x000000000000000000000000000000000000beef'),
           validitySeconds: 1800n,
-          appData: `0x${'00'.repeat(32)}`,
+          strict: false,
+          appData: keccak256(toBytes('appData')),
           appDataTemplate: template,
         }),
       ).toBe(fixture.staticInput)
@@ -302,8 +358,8 @@ describe('paymentViaHook', () => {
   const { deployment, setupData } = compiled
 
   it('compiles to an approval step and a plain registration, naming no sell token', () => {
-    const [approve, register, mark] = compiled.recipe.calls
-    expect(mark).toMatchObject({ target: deployment.paymentHandler, isDelegateCall: false })
+    const [approve, register] = compiled.recipe.calls
+    expect(compiled.recipe.calls).toHaveLength(2)
     expect(approve!.target).toBe(deployment.hookPaymentSteps)
     expect(approve!.isDelegateCall).toBe(true)
     expect(register!.target).toBe(deployment.composableCow)
@@ -316,7 +372,7 @@ describe('paymentViaHook', () => {
 
   it('reads as a recipe with nothing to warn about', () => {
     const described = describeRecipe(setupData, deployment)
-    expect(described.steps.map((step) => step.known?.contract)).toEqual(['HookPaymentSteps', 'ComposableCoW', 'PaymentHandler'])
+    expect(described.steps.map((step) => step.known?.contract)).toEqual(['HookPaymentSteps', 'ComposableCoW'])
     expect(hasWarnings(described)).toBe(false)
   })
 
@@ -346,6 +402,39 @@ describe('paymentViaHook', () => {
         target: deployment.paymentSteps,
       },
     ])
+  })
+
+  it('hands the handler to the approval step when strict, so the step marks the token it approved', () => {
+    const windowed = compileRecipe(
+      paymentRequest({
+        chainId: 100,
+        owner: OWNER,
+        buyToken: COW,
+        buyAmount: 100n * 10n ** 18n,
+        activation: 'hook',
+        notAfter: 2_000_000_000n,
+      }),
+    )
+    const approve = windowed.recipe.calls.find((call) => call.target === deployment.hookPaymentSteps)!
+
+    expect(findHookPayment(deployment, windowed.setupData)!.data.strict).toBe(true)
+    expect(decodeFunctionData({ abi: HOOK_PAYMENT_STEPS_ABI, data: approve.callData }).args![2]).toBe(
+      deployment.paymentHandler,
+    )
+  })
+
+  it('builds the follow-up order in a token with no hook', () => {
+    const followUp = buildHookPaymentOrder({
+      deployment,
+      owner: OWNER,
+      setupData,
+      sellToken: WXDAI,
+      balance: 10n ** 21n,
+      now: NOW,
+      hook: false,
+    })
+    expect(followUp.order.appData).toBe(COW_DROP_APP_DATA)
+    expect(followUp.payload.sellToken).toBe(WXDAI)
   })
 
   it('refuses an order for a payment already in the buy token', () => {

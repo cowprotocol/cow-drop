@@ -54,9 +54,15 @@ export interface SellBalanceData {
   appDataTemplate: AppDataTemplate
 }
 
-/** `HookOrderBase.markRan`: the last call of a hook-activated recipe, the same on every handler. */
+/** `HookOrderBase.markRan`: how a strict recipe tells its handler it ran, for one sell token. */
 export const MARK_RAN_ABI = [
-  { type: 'function', name: 'markRan', stateMutability: 'nonpayable', inputs: [], outputs: [] },
+  {
+    type: 'function',
+    name: 'markRan',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'sellToken', type: 'address' }],
+    outputs: [],
+  },
 ] as const
 
 /** Hand-written like the other ComposableCoW ABIs here: composable-cow is not a submodule. */
@@ -282,6 +288,8 @@ export function buildHookOrder(params: {
   /** Which registration to use when a recipe has several. Defaults to the first. */
   sellToken?: Address
   clockSkewSeconds?: number
+  /** `false` for a follow-up order with no hook. See `hookNeeded`. */
+  hook?: boolean
 }): HookOrder {
   const { deployment, owner, setupData, balance } = params
 
@@ -308,6 +316,9 @@ export interface HookPaymentData {
   buyAmount: bigint
   receiver: Address
   validitySeconds: bigint
+  /** Whether every order needs its own hook to have run the recipe. */
+  strict: boolean
+  /** The appData of an order posted with no hook. */
   appData: Hex
   appDataTemplate: AppDataTemplate
 }
@@ -320,6 +331,7 @@ const HOOK_PAYMENT_DATA_PARAMS = [
       { name: 'buyAmount', type: 'uint256' },
       { name: 'receiver', type: 'address' },
       { name: 'validitySeconds', type: 'uint256' },
+      { name: 'strict', type: 'bool' },
       { name: 'appData', type: 'bytes32' },
       { name: 'appDataPrefix', type: 'bytes' },
       { name: 'appDataSuffix', type: 'bytes' },
@@ -335,6 +347,7 @@ export function encodeHookPaymentData(data: HookPaymentData): Hex {
       buyAmount: data.buyAmount,
       receiver: data.receiver,
       validitySeconds: data.validitySeconds,
+      strict: data.strict,
       appData: data.appData,
       appDataPrefix: stringToHex(data.appDataTemplate.prefix),
       appDataSuffix: stringToHex(data.appDataTemplate.suffix),
@@ -349,6 +362,7 @@ export function decodeHookPaymentData(staticInput: Hex): HookPaymentData {
     buyAmount: raw.buyAmount,
     receiver: raw.receiver,
     validitySeconds: raw.validitySeconds,
+    strict: raw.strict,
     appData: raw.appData,
     appDataTemplate: { prefix: hexToString(raw.appDataPrefix), suffix: hexToString(raw.appDataSuffix) },
   }
@@ -384,6 +398,8 @@ export function buildHookPaymentOrder(params: {
   balance: bigint
   now: number
   clockSkewSeconds?: number
+  /** `false` for a follow-up order with no hook. See `hookNeeded`. */
+  hook?: boolean
 }): HookOrder {
   const registration = findHookPayment(params.deployment, params.setupData)
   if (!registration) throw new Error('this recipe registers no PaymentHandler order to post')
@@ -410,6 +426,7 @@ function assembleHookOrder(params: {
   balance: bigint
   now: number
   clockSkewSeconds?: number
+  hook?: boolean
   registration: SellBalanceRegistration['params']
   terms: {
     sellToken: Address
@@ -417,6 +434,7 @@ function assembleHookOrder(params: {
     receiver: Address
     buyAmount: bigint
     validitySeconds: bigint
+    strict: boolean
     appData: Hex
     appDataTemplate: AppDataTemplate
   }
@@ -430,7 +448,13 @@ function assembleHookOrder(params: {
   const validTo = params.now + validity - skew
   if (!Number.isInteger(validTo) || validTo > 0xffffffff) throw new Error(`validTo out of range: ${validTo}`)
 
-  const templated = terms.appDataTemplate.prefix.length > 0
+  // A recipe with no template has only the hook-free form. One with a template takes either, unless
+  // it is strict, which is the handler's rule restated here so the refusal is ours and immediate.
+  const wantsHook = params.hook ?? true
+  if (!wantsHook && terms.strict && terms.appDataTemplate.prefix.length > 0) {
+    throw new Error('this recipe is strict: every order needs its hook, so it has no hook-free form')
+  }
+  const templated = wantsHook && terms.appDataTemplate.prefix.length > 0
   const appDataDocument = templated
     ? hookAppDataDocument(terms.appDataTemplate, { deployment, owner, setupData, sellToken: params.hookSellToken })
     : knownAppDataDocument(terms.appData)
@@ -463,6 +487,21 @@ function assembleHookOrder(params: {
     appDataDocument,
     payload: toHookOrderPayload(order, drop, signature),
   }
+}
+
+/**
+ * Whether the next order for a drop has to carry the activation hook.
+ *
+ * It does when the recipe is strict, and otherwise when the relayer cannot yet pull the balance:
+ * either the drop is not deployed, or it has never been activated for this token. An allowance can
+ * only have come from the drop itself, so a sufficient one answers both. Posting the hook when it was
+ * not needed costs the solver a little gas; leaving it off when it was needed gives an order that
+ * cannot settle.
+ *
+ * @param params.allowance The drop's allowance to `COW_VAULT_RELAYER` for the sell token.
+ */
+export function hookNeeded(params: { strict: boolean; allowance: bigint; balance: bigint }): boolean {
+  return params.strict || params.allowance < params.balance
 }
 
 /**

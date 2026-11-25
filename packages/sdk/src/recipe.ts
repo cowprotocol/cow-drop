@@ -23,7 +23,7 @@ export type DropStepJson =
       allowFailure?: boolean
     }
   | {
-      /** Posted before activation; the order's own pre-hook activates the drop. Three calls. */
+      /** Posted before activation; the order's own pre-hook activates the drop. */
       type: 'sellBalanceViaHook'
       sellToken: Address
       buyToken: Address
@@ -32,6 +32,10 @@ export type DropStepJson =
       validitySeconds: number | string
       hookGasLimit?: number | string
       appDataTemplate?: { prefix: string; suffix: string }
+      /** Required when the recipe has a guard, `once` or a cooldown. See `steps.sellBalanceViaHook`. */
+      strict?: boolean
+      /** The appData of an order posted with no hook. Unused when strict. */
+      appData?: Hex
       orderSalt?: Hex
     }
   | {
@@ -113,7 +117,7 @@ export type DropStepJson =
       appData?: Hex
     }
   | {
-      /** `payment`, posted before activation; the order's own pre-hook activates the drop. Three calls. */
+      /** `payment`, posted before activation; the order's own pre-hook activates the drop. */
       type: 'paymentViaHook'
       buyToken: Address
       /** In `buyToken` atoms. */
@@ -122,6 +126,10 @@ export type DropStepJson =
       validitySeconds: number | string
       hookGasLimit?: number | string
       appDataTemplate?: { prefix: string; suffix: string }
+      /** Required when the recipe has a guard, `once` or a cooldown. */
+      strict?: boolean
+      /** The appData of an order posted with no hook. Unused when strict. */
+      appData?: Hex
       orderSalt?: Hex
     }
   | {
@@ -264,6 +272,27 @@ export function compileRecipe(json: DropRecipeJson, deploymentOverride?: DropDep
 
   const cooldown = json.steps.some((step) => step.type === 'claimCooldown')
 
+  // A hook-activated step registers a rule that outlives the activation, and a hook that reverts is
+  // ignored. So anything this recipe wants re-checked per order only binds if the step is strict;
+  // otherwise it would gate the first activation and then quietly stop. Refused rather than warned
+  // about: the difference is invisible until money is sold that the guard was there to hold back.
+  const rechecked =
+    recipe.once ||
+    cooldown ||
+    json.steps.some(
+      (step) =>
+        step.type === 'requireMinBalance' || step.type === 'requireTimeWindow' || step.type === 'requireCallResult',
+    )
+  const lax = json.steps.findIndex(
+    (step) => (step.type === 'sellBalanceViaHook' || step.type === 'paymentViaHook') && !step.strict,
+  )
+  if (rechecked && lax !== -1) {
+    throw new Error(
+      `step ${lax + 1} is activated by its order's hook but is not strict, in a recipe with a guard, ` +
+        '"once" or a cooldown: those would only gate the first activation. Set strict on the step.',
+    )
+  }
+
   // Alternatives, not layers. `once` is checked first and wins outright, so the cooldown would be
   // claimed on the single run and then never consulted — a recipe that looks paced and is not.
   if (recipe.once && cooldown) {
@@ -342,6 +371,8 @@ function compileStep(step: DropStepJson, deployment: DropDeployment, owner: Addr
         validitySeconds: BigInt(step.validitySeconds),
         hookGasLimit: step.hookGasLimit === undefined ? undefined : BigInt(step.hookGasLimit),
         appDataTemplate: step.appDataTemplate,
+        strict: step.strict,
+        appData: step.appData,
         orderSalt: step.orderSalt,
       })
     case 'presignSellAll':
@@ -427,6 +458,8 @@ function compileStep(step: DropStepJson, deployment: DropDeployment, owner: Addr
         validitySeconds: BigInt(step.validitySeconds),
         hookGasLimit: step.hookGasLimit === undefined ? undefined : BigInt(step.hookGasLimit),
         appDataTemplate: step.appDataTemplate,
+        strict: step.strict,
+        appData: step.appData,
         orderSalt: step.orderSalt,
       })
     case 'requireCallResult':

@@ -34,9 +34,8 @@ export type StepContractName =
   | 'HookPaymentSteps'
   /** Not a step contract: named only for a plain `create` registering this generation's handler. */
   | 'ComposableCoW'
-  /** Not step contracts either: named for the plain `markRan` call that ends a hook-activated recipe. */
+  /** Not a step contract either: named for the plain `markRan` call that ends a strict recipe. */
   | 'SellBalanceHandler'
-  | 'PaymentHandler'
 
 /** One decoded argument, with the name the contract gives it. */
 export interface DescribedArg {
@@ -72,7 +71,7 @@ export interface DescribedRecipe {
 }
 
 /** Contracts a recipe reaches by a plain call on purpose, so that is not something to warn about. */
-const PLAIN_CALLED: ReadonlySet<StepContractName> = new Set(['ComposableCoW', 'SellBalanceHandler', 'PaymentHandler'])
+const PLAIN_CALLED: ReadonlySet<StepContractName> = new Set(['ComposableCoW', 'SellBalanceHandler'])
 
 const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   GuardSteps: GUARD_STEPS_ABI as unknown as Abi,
@@ -86,7 +85,6 @@ const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   HookPaymentSteps: HOOK_PAYMENT_STEPS_ABI as unknown as Abi,
   ComposableCoW: COMPOSABLE_COW_CREATE_ABI as unknown as Abi,
   SellBalanceHandler: MARK_RAN_ABI as unknown as Abi,
-  PaymentHandler: MARK_RAN_ABI as unknown as Abi,
 }
 
 /**
@@ -141,7 +139,6 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
     ...(deployment.sellBalanceHandler
       ? [[deployment.sellBalanceHandler.toLowerCase(), 'SellBalanceHandler'] as const]
       : []),
-    ...(deployment.paymentHandler ? [[deployment.paymentHandler.toLowerCase(), 'PaymentHandler'] as const] : []),
   ])
 
   /** Each call named where the SDK recognises it, and flagged where it does not. */

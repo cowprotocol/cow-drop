@@ -85,8 +85,8 @@ export interface SwapOnArrivalParams extends RecipeGuards {
    * activates the drop from its own pre-hook: build it with `buildHookOrder`.
    *
    * With `'hook'`, `appData` is ignored (the document is built around the hook) and `oracle` is
-   * refused. The guards still gate every order: the handler only accepts one in a transaction
-   * where the whole recipe ran.
+   * refused. Given any guard the step is made strict, so the guard holds on every order; with none,
+   * the hook is needed once and later orders can be posted without it.
    */
   activation?: 'transaction' | 'hook'
   /**
@@ -139,6 +139,9 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
       receiver: params.receiver ?? params.owner,
       limitPrice: params.limitPrice,
       validitySeconds: params.validitySeconds ?? 30 * 60,
+      // A guard only holds on every order if the step is strict. With none, the hook is needed
+      // once and later orders can go out without it.
+      ...(timeGuards(params).length + balanceGuard(params, params.sellToken).length > 0 ? { strict: true } : {}),
     })
     return {
       version: 1,
@@ -502,6 +505,8 @@ export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
             buyAmount: params.buyAmount.toString(),
             receiver: params.receiver ?? params.owner,
             validitySeconds: params.validitySeconds ?? 30 * 60,
+            // A time window is a guard, and a guard only holds on every order if the step is strict.
+            ...(timeGuards(params).length > 0 ? { strict: true } : {}),
           }
         : {
             type: 'payment',
