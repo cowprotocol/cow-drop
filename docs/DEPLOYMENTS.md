@@ -32,20 +32,20 @@ generate` pick the new directory up — it reads every `gen*/` and emits them al
 
 | Contract | Address | Status | vs. gen 1 |
 |---|---|---|---|
-| `COWShedWithExecutorSigner` | `0x1c4b988481d945c98a21446AB2960000d290aB22` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) | same |
-| `COWShedExecutorFactory` | `0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99` | live on Gnosis ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) | same |
-| `GuardSteps` | `0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7` | live on Gnosis | same |
-| `TokenSteps` | `0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c` | live on Gnosis | same |
-| `PresignSteps` | `0xd00cae373DE3a738D13ab7E1203a8d4662D4f1e0` | live on Gnosis | **moved** |
-| `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | live on Gnosis | same |
-| `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | live on Gnosis | same |
-| `PaymentSteps` | `0x8BA52FAcbeFCC97CB93ccfCB53e3f2204543EEe8` | live on Gnosis | new |
-| `SellBalanceHandler` | `0x61CBDa9a385a57fb684C5789A9276Eefc2CFcC3D` | **not yet broadcast** | new |
-| `PaymentHandler` | `0x7f14b1C0473771c234Ba07dC68b8c6C74912540E` | **not yet broadcast** | new |
-| `HookPaymentSteps` | `0x640F2f235610FfE0832eD65524AbA1768496f457` | **not yet broadcast** | new |
-| `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | live on Gnosis | **moved** |
-| `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | live on Gnosis | new |
-| `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis | same |
+| `COWShedWithExecutorSigner` | `0x1c4b988481d945c98a21446AB2960000d290aB22` | live on Gnosis and Ethereum ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) | same |
+| `COWShedExecutorFactory` | `0xD4B9497f258bf63A7f21d1DEAF26dA2F23e4DC99` | live on Gnosis and Ethereum ([cow-shed#79](https://github.com/cowdao-grants/cow-shed/pull/79)) | same |
+| `GuardSteps` | `0x29a56c6C6019ab6a1A19B8a09Cce33CfC2900ed7` | live on Gnosis and Ethereum | same |
+| `TokenSteps` | `0xEc4DC95baFceE0703f5aFFb4BdFc2cFF35b2781c` | live on Gnosis and Ethereum | same |
+| `PresignSteps` | `0xd00cae373DE3a738D13ab7E1203a8d4662D4f1e0` | live on Gnosis and Ethereum | **moved** |
+| `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | live on Gnosis and Ethereum | same |
+| `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | live on Gnosis and Ethereum | same |
+| `PaymentSteps` | `0x8BA52FAcbeFCC97CB93ccfCB53e3f2204543EEe8` | live on Gnosis and Ethereum | new |
+| `SellBalanceHandler` | `0x61CBDa9a385a57fb684C5789A9276Eefc2CFcC3D` | live on Gnosis and Ethereum | new |
+| `PaymentHandler` | `0x7f14b1C0473771c234Ba07dC68b8c6C74912540E` | live on Gnosis and Ethereum | new |
+| `HookPaymentSteps` | `0x640F2f235610FfE0832eD65524AbA1768496f457` | live on Gnosis and Ethereum | new |
+| `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | live on Gnosis and Ethereum | **moved** |
+| `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | live on Gnosis and Ethereum | new |
+| `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis and Ethereum | same |
 
 Generation 2 exists because `PresignSteps` and `CowOrderPoster` changed bytecode, and therefore addresses.
 Nothing else moved: `SALT` does not depend on the generation and no other contract's code changed, so
@@ -63,7 +63,7 @@ but only to recipes that name a payment step, and none existed before it. Adding
 and generation 2 had not been broadcast. `DropAddresses.paymentSteps` is optional because generation 1
 has none.
 
-**Generation 2 is live on Gnosis**, except the rows marked not yet broadcast. On a chain where the
+**Generation 2 is live on Gnosis and Ethereum**, every contract in the table. On a chain where the
 deploy has not run, activating a drop reverts with `NoCodeAtDelegateTarget`, which the UI's `getCode`
 check surfaces before anyone funds anything.
 
