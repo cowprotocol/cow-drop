@@ -1591,8 +1591,8 @@ export function RecipesTab({
                   so the solver that fills it deploys the drop and takes the gas from the surplus.
                 </span>
                 <span>
-                  It changes the address. Any guard below still gates every order: the drop only
-                  accepts one whose hook ran the whole recipe.
+                  It changes the address. With no guard below, the hook is only needed for the first
+                  order; with one, every order carries it, so the guard holds each time.
                 </span>
               </Tooltip>
             </label>
@@ -2035,7 +2035,7 @@ export function RecipesTab({
                     >
                       <span>
                         Posts an order for the balance the drop holds now. No wallet and no
-                        transaction: the solver that fills it activates the drop.
+                        transaction: the solver that fills it activates the drop, if it still needs to.
                       </span>
                       {keeperUrl() !== null && (
                         <span>Or hand it to the keeper, and it posts the order once the money arrives.</span>

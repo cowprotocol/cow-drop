@@ -5,8 +5,10 @@ import {
   buildHookOrder,
   buildHookPaymentOrder,
   compileRecipe,
+  COW_VAULT_RELAYER,
   findHookPayment,
   findSellBalanceOrders,
+  hookNeeded,
   getDeployment,
   parseOrderPlacement,
   toOrderBookPayload,
@@ -58,6 +60,16 @@ const ERC20_ABI = [
  *
  * The step contracts are deliberately *not* here — see `STEP_CONTRACTS`.
  */
+const ERC20_ALLOWANCE_ABI = [
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [{ type: 'address' }, { type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+] as const
+
 const CORE_CONTRACTS: readonly { name: string; at: (deployment: DropDeployment) => Address }[] = [
   { name: 'COWShedWithExecutorSigner', at: (d) => d.shedImplementation },
   { name: 'COWShedExecutorFactory', at: (d) => d.factory },
@@ -356,6 +368,20 @@ export async function readDropOwner(chainId: number, drop: Address): Promise<Add
   }
 }
 
+/** What `drop` lets CoW's relayer pull of `token`, or zero if it cannot be read: the hook is then kept. */
+async function readRelayerAllowance(chainId: number, token: Address, drop: Address): Promise<bigint> {
+  try {
+    return await getPublicClient(chainId).readContract({
+      address: token,
+      abi: ERC20_ALLOWANCE_ABI,
+      functionName: 'allowance',
+      args: [drop, COW_VAULT_RELAYER],
+    })
+  } catch {
+    return 0n
+  }
+}
+
 /** Whether the recipe's order is posted before activation and activates the drop from its pre-hook. */
 export function isHookActivated(recipe: DropRecipeJson): boolean {
   return recipe.steps.some((step) => step.type === 'sellBalanceViaHook' || step.type === 'paymentViaHook')
@@ -383,16 +409,31 @@ export async function postHookOrder(params: {
     now: Math.floor(Date.now() / 1000),
   }
 
-  const payment = findHookPayment(compiled.deployment, compiled.setupData) !== undefined
-  if (payment && !params.sellToken) throw new Error('a payment order needs the token it is paid in')
+  const payment = findHookPayment(compiled.deployment, compiled.setupData)
+  const swap = findSellBalanceOrders(compiled.deployment, compiled.setupData).find(
+    (found) => !params.sellToken || found.data.sellToken.toLowerCase() === params.sellToken.toLowerCase(),
+  )
+  const registration = payment ?? swap
+  if (!registration) throw new Error('this recipe has no order that activates its own drop')
+  const sellToken = params.sellToken ?? swap?.data.sellToken
+  if (!sellToken) throw new Error('a payment order needs the token it is paid in')
+
+  // The hook deploys the drop and approves the relayer, so it is only needed until the relayer can
+  // already pull this balance. A strict recipe keeps it on every order.
+  const hook = hookNeeded({
+    strict: registration.data.strict,
+    balance: params.balance,
+    allowance: registration.data.strict ? 0n : await readRelayerAllowance(compiled.deployment.chainId, sellToken, compiled.address),
+  })
+
   const built: HookOrder = payment
-    ? buildHookPaymentOrder({ ...base, sellToken: params.sellToken! })
-    : buildHookOrder({ ...base, sellToken: params.sellToken })
+    ? buildHookPaymentOrder({ ...base, sellToken, hook })
+    : buildHookOrder({ ...base, sellToken, hook })
 
   const orderBook = getOrderBookApi(compiled.deployment.chainId)
   try {
-    // The order book refuses an appData hash it has never seen, and this document exists nowhere
-    // else: it is built around this drop's own activation call.
+    // The order book refuses an appData hash it has never seen, and with a hook this document
+    // exists nowhere else: it is built around this drop's own activation call.
     if (built.appDataDocument !== undefined) {
       await orderBook.uploadAppData(built.order.appData, built.appDataDocument)
     }
