@@ -47,8 +47,8 @@ function fakeOrderBook() {
   }
 }
 
-function harness() {
-  const drop = registered({ recipe, generation: 2 })
+function harness(dropRecipe = recipe) {
+  const drop = registered({ recipe: dropRecipe, generation: 2 })
   const store = memoryStore([drop])
   const chain = fakeChain({ balances: [BALANCE] })
   const submitter = fakeSubmitter(chain.calls)
@@ -120,6 +120,37 @@ describe('a drop activated by its own order', () => {
     expect(stored!.activations[0]).toMatchObject({ status: 'posted' })
     expect(stored!.activations[0]!.orderUids).toEqual([stored!.activations[0]!.ref])
     expect(h.events.filter((e) => e.type === 'order-posted')).toHaveLength(1)
+  })
+
+  it('posts a follow-up order with no hook once the relayer can already pull the balance', async () => {
+    const h = harness()
+    // The drop has been activated before: deployed, and approved for its sell token.
+    h.chain.state.allowance = 2n ** 256n - 1n
+
+    await h.keeper.tick()
+
+    const [upload] = h.book.uploads
+    expect(JSON.parse(upload!.document).metadata.hooks).toBeUndefined()
+    expect(h.book.orders[0]!.appData).toBe(upload!.hash)
+    expect(h.book.orders[0]).toMatchObject({ sellAmount: BALANCE.toString(), signingScheme: 'eip1271' })
+  })
+
+  it('keeps the hook on every order of a strict recipe, approved or not', async () => {
+    const guarded = swapOnArrival({
+      chainId: CHAIN_ID,
+      owner: OWNER,
+      sellToken: WXDAI,
+      buyToken: COW,
+      limitPrice: { numerator: '45', denominator: '1' },
+      activation: 'hook',
+      minAmount: 1n,
+    })
+    const h = harness(guarded)
+    h.chain.state.allowance = 2n ** 256n - 1n
+
+    await h.keeper.tick()
+
+    expect(JSON.parse(h.book.uploads[0]!.document).metadata.hooks.pre).toHaveLength(1)
   })
 
   it('does not post a second order for the same money while the first can still fill', async () => {

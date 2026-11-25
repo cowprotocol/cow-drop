@@ -93,6 +93,16 @@ describe('a payment drop activated by its own order', () => {
     expect((args![2] as Address).toLowerCase()).toBe(wxdai)
   })
 
+  it('drops the hook for a token the drop has already been paid in', async () => {
+    const h = harness({ balances: [PAID], token: wxdai })
+    h.chain.state.allowance = 2n ** 256n - 1n
+
+    await h.keeper.tick()
+
+    expect(JSON.parse(h.documents[0]!).metadata.hooks).toBeUndefined()
+    expect(h.orders[0]).toMatchObject({ sellToken: wxdai, sellAmount: PAID.toString() })
+  })
+
   it('latches that token until its order expires, and no longer', async () => {
     const h = harness({ balances: [PAID], token: wxdai })
 

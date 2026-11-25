@@ -6,7 +6,10 @@ import {
   buildActivateTx,
   buildHookOrder,
   buildHookPaymentOrder,
+  COW_VAULT_RELAYER,
+  findHookPayment,
   findSellBalanceOrders,
+  hookNeeded,
   type HookOrder,
   requiredPayment,
   type DropDeployment,
@@ -735,14 +738,34 @@ export function createKeeper(options: KeeperOptions): Keeper {
     const orderUids: Hex[] = []
     const base = { deployment, owner: drop.recipe.owner, setupData: drop.setupData, now: Math.floor(now() / 1000) }
 
+    /*
+     * The hook is what deploys the drop and approves the relayer, so an order only needs it until
+     * the relayer can already pull the balance. A drop that has been through one fill in this token
+     * gets its later orders posted without it, and the solver pays for no activation. A strict
+     * recipe always carries it.
+     */
+    const withHook = async (selling: { sellToken: Address; balance: bigint }, strict: boolean) =>
+      hookNeeded({
+        strict,
+        balance: selling.balance,
+        allowance: strict
+          ? 0n
+          : await chain.getAllowance({ token: selling.sellToken, owner: drop.address, spender: COW_VAULT_RELAYER }),
+      })
+
     // A payment recipe names no token, so the one this tick priced is the order. A swap recipe names
     // its own, one per registration.
-    const orders: HookOrder[] = paying
-      ? [buildHookPaymentOrder({ ...base, ...paying })]
-      : findSellBalanceOrders(deployment, drop.setupData)
-          .map(({ data }) => ({ sellToken: data.sellToken, balance: balances[data.sellToken.toLowerCase()] ?? 0n }))
-          .filter(({ balance }) => balance > 0n)
-          .map((selling) => buildHookOrder({ ...base, ...selling }))
+    const orders: HookOrder[] = []
+    if (paying) {
+      const strict = findHookPayment(deployment, drop.setupData)?.data.strict ?? true
+      orders.push(buildHookPaymentOrder({ ...base, ...paying, hook: await withHook(paying, strict) }))
+    } else {
+      for (const { data } of findSellBalanceOrders(deployment, drop.setupData)) {
+        const selling = { sellToken: data.sellToken, balance: balances[data.sellToken.toLowerCase()] ?? 0n }
+        if (selling.balance === 0n) continue
+        orders.push(buildHookOrder({ ...base, ...selling, hook: await withHook(selling, data.strict) }))
+      }
+    }
 
     for (const built of orders) {
 
@@ -794,7 +817,7 @@ export function createKeeper(options: KeeperOptions): Keeper {
         orderUid: built.orderUid,
         status,
       })
-      logger.info(`posted order ${built.orderUid} for drop ${drop.address}; its pre-hook activates the drop`)
+      logger.info(`posted order ${built.orderUid} for drop ${drop.address}`)
     }
 
     const first = orderUids[0]

@@ -134,6 +134,8 @@ export function fakeChain(setup: {
     head: setup.head ?? 1000n,
     maxFeePerGas: setup.maxFeePerGas ?? 10n ** 9n,
     transfers: setup.transfers ?? [],
+    /** What every drop lets the relayer pull. Zero is a drop nobody has activated. */
+    allowance: 0n,
     /** Every `getIncomingTransfers` range asked for, so a test can check the cursor. */
     transferScans: [] as { fromBlock: bigint; toBlock: bigint }[],
   }
@@ -150,6 +152,7 @@ export function fakeChain(setup: {
     },
     getFees: async () => ({ maxFeePerGas: state.maxFeePerGas, maxPriorityFeePerGas: 10n ** 8n }),
     getTransactionCount: async () => state.nonce,
+    getAllowance: async () => state.allowance,
     getReceipt: async () => state.receipt,
     getIncomingTransfers: async ({ to, fromBlock, toBlock }) => {
       calls.push('getIncomingTransfers')

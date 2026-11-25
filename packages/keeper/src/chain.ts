@@ -40,6 +40,11 @@ export interface KeeperChain {
   getBlockNumber(): Promise<bigint>
   /** One round trip for every balance in a tick. `token: null` is the native balance. */
   getBalances(requests: readonly { token: Address | null; holder: Address }[]): Promise<bigint[]>
+  /**
+   * What `owner` lets `spender` pull of `token`. Zero when it cannot be read, which is the answer
+   * that errs towards posting an order with its activation hook.
+   */
+  getAllowance(params: { token: Address; owner: Address; spender: Address }): Promise<bigint>
   /** The authoritative readiness gate. Returns the gas as well, so one call does both jobs. */
   simulateActivation(params: { call: EvmCall; from: Address }): Promise<SimulationResult>
   getFees(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>
@@ -102,6 +107,16 @@ const ERC20_BALANCE_OF = [
   },
 ] as const
 
+const ERC20_ALLOWANCE = [
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [{ type: 'address' }, { type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+] as const
+
 /**
  * A viem client as the interface above.
  *
@@ -130,6 +145,11 @@ export function viemKeeperChain(client: PublicClient): KeeperChain {
                 .catch(() => 0n),
         ),
       ),
+
+    getAllowance: ({ token, owner, spender }) =>
+      client
+        .readContract({ address: token, abi: ERC20_ALLOWANCE, functionName: 'allowance', args: [owner, spender] })
+        .catch(() => 0n),
 
     async simulateActivation({ call, from }) {
       try {
