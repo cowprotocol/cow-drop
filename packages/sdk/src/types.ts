@@ -106,6 +106,12 @@ export interface DropAddresses {
    */
   sellBalanceHandler?: Address
   /**
+   * `PaymentHandler` and `HookPaymentSteps`: the any-token counterpart. The handler leaves the sell
+   * token to the order, and the step approves whichever token that is at activation.
+   */
+  paymentHandler?: Address
+  hookPaymentSteps?: Address
+  /**
    * `GPv2Settlement` and `ComposableCoW`. Not cow-drop's own contracts and not inputs to a drop
    * address — but they *are* constructor inputs to the step contracts, so they belong to the
    * generation. Carried so a rescue can retire live orders without an RPC round-trip.

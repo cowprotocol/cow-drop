@@ -45,6 +45,8 @@ export const GENERATIONS: Record<number, DropAddresses> = {
     convertSteps: '0x6448aDEd8b22FD216ef3df6DbD4Eb64e523419a2',
     cooldownSteps: '0xa92B50b160e20554F9845BAaF52D42b70034657b',
     sellBalanceHandler: '0x61CBDa9a385a57fb684C5789A9276Eefc2CFcC3D',
+    paymentHandler: '0x7f14b1C0473771c234Ba07dC68b8c6C74912540E',
+    hookPaymentSteps: '0x640F2f235610FfE0832eD65524AbA1768496f457',
   },
 }
 

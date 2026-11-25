@@ -1,13 +1,14 @@
 import { decodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 
 import { decodeRecipe } from './encoding.js'
-import { COMPOSABLE_COW_CREATE_ABI } from './hookOrder.js'
+import { COMPOSABLE_COW_CREATE_ABI, MARK_RAN_ABI } from './hookOrder.js'
 import {
   STOP_LOSS_STEPS_ABI,
   TWAP_STEPS_ABI,
   GUARD_STEPS_ABI,
   CONVERT_STEPS_ABI,
   COOLDOWN_STEPS_ABI,
+  HOOK_PAYMENT_STEPS_ABI,
   PAYMENT_STEPS_ABI,
   PRESIGN_STEPS_ABI,
   TOKEN_STEPS_ABI,
@@ -30,8 +31,11 @@ export type StepContractName =
   | 'PaymentSteps'
   | 'ConvertSteps'
   | 'CooldownSteps'
+  | 'HookPaymentSteps'
   /** Not a step contract: named only for a plain `create` registering this generation's handler. */
   | 'ComposableCoW'
+  /** Not a step contract either: named for the plain `markRan` call that ends a strict recipe. */
+  | 'SellBalanceHandler'
 
 /** One decoded argument, with the name the contract gives it. */
 export interface DescribedArg {
@@ -66,6 +70,9 @@ export interface DescribedRecipe {
   steps: DescribedStep[]
 }
 
+/** Contracts a recipe reaches by a plain call on purpose, so that is not something to warn about. */
+const PLAIN_CALLED: ReadonlySet<StepContractName> = new Set(['ComposableCoW', 'SellBalanceHandler'])
+
 const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   GuardSteps: GUARD_STEPS_ABI as unknown as Abi,
   TokenSteps: TOKEN_STEPS_ABI as unknown as Abi,
@@ -75,7 +82,9 @@ const STEP_ABIS: Readonly<Record<StepContractName, Abi>> = {
   PaymentSteps: PAYMENT_STEPS_ABI as unknown as Abi,
   ConvertSteps: CONVERT_STEPS_ABI as unknown as Abi,
   CooldownSteps: COOLDOWN_STEPS_ABI as unknown as Abi,
+  HookPaymentSteps: HOOK_PAYMENT_STEPS_ABI as unknown as Abi,
   ComposableCoW: COMPOSABLE_COW_CREATE_ABI as unknown as Abi,
+  SellBalanceHandler: MARK_RAN_ABI as unknown as Abi,
 }
 
 /**
@@ -124,6 +133,12 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
     ...(deployment.paymentSteps ? [[deployment.paymentSteps.toLowerCase(), 'PaymentSteps'] as const] : []),
     ...(deployment.convertSteps ? [[deployment.convertSteps.toLowerCase(), 'ConvertSteps'] as const] : []),
     ...(deployment.cooldownSteps ? [[deployment.cooldownSteps.toLowerCase(), 'CooldownSteps'] as const] : []),
+    ...(deployment.hookPaymentSteps
+      ? [[deployment.hookPaymentSteps.toLowerCase(), 'HookPaymentSteps'] as const]
+      : []),
+    ...(deployment.sellBalanceHandler
+      ? [[deployment.sellBalanceHandler.toLowerCase(), 'SellBalanceHandler'] as const]
+      : []),
   ])
 
   /** Each call named where the SDK recognises it, and flagged where it does not. */
@@ -161,7 +176,7 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
       )
     }
 
-    if (!call.isDelegateCall && contract && contract !== 'ComposableCoW') {
+    if (!call.isDelegateCall && contract && !PLAIN_CALLED.has(contract)) {
       // Easy to get wrong by hand, and it fails quietly: the step reads the step contract's own
       // balance, which is always zero, so an amount-dependent step either reverts or does nothing.
       warnings.push(
@@ -190,18 +205,21 @@ export function describeRecipe(setupData: Hex, deployment: DropDeployment): Desc
 }
 
 /**
- * A plain call registering this generation's `SellBalanceHandler` with ComposableCoW. Any other call
- * to ComposableCoW stays unnamed: what a foreign handler does cannot be shown here.
+ * A plain call registering one of this generation's handlers with ComposableCoW. Any other call to
+ * ComposableCoW stays unnamed: what a foreign handler does cannot be shown here.
  */
 function registersSellBalance(
   call: { target: Address; callData: Hex; isDelegateCall: boolean },
   deployment: DropDeployment,
 ): StepContractName | undefined {
-  if (call.isDelegateCall || !deployment.sellBalanceHandler) return undefined
+  const handlers = [deployment.sellBalanceHandler, deployment.paymentHandler]
+    .filter((handler) => handler !== undefined)
+    .map((handler) => handler.toLowerCase())
+  if (call.isDelegateCall || handlers.length === 0) return undefined
   if (call.target.toLowerCase() !== deployment.composableCow.toLowerCase()) return undefined
   try {
     const { args } = decodeFunctionData({ abi: COMPOSABLE_COW_CREATE_ABI, data: call.callData })
-    return args[0].handler.toLowerCase() === deployment.sellBalanceHandler.toLowerCase() ? 'ComposableCoW' : undefined
+    return handlers.includes(args[0].handler.toLowerCase()) ? 'ComposableCoW' : undefined
   } catch {
     return undefined
   }

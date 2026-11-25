@@ -84,8 +84,9 @@ export interface SwapOnArrivalParams extends RecipeGuards {
    * someone has to send. `'hook'` registers a rule instead, so the order can be posted first and
    * activates the drop from its own pre-hook: build it with `buildHookOrder`.
    *
-   * With `'hook'` the guards gate the first activation only, `appData` is ignored (the document is
-   * built around the hook), and `oracle` is refused.
+   * With `'hook'`, `appData` is ignored (the document is built around the hook) and `oracle` is
+   * refused. Given any guard the step is made strict, so the guard holds on every order; with none,
+   * the hook is needed once and later orders can be posted without it.
    */
   activation?: 'transaction' | 'hook'
   /**
@@ -138,6 +139,9 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
       receiver: params.receiver ?? params.owner,
       limitPrice: params.limitPrice,
       validitySeconds: params.validitySeconds ?? 30 * 60,
+      // A guard only holds on every order if the step is strict. With none, the hook is needed
+      // once and later orders can go out without it.
+      ...(timeGuards(params).length + balanceGuard(params, params.sellToken).length > 0 ? { strict: true } : {}),
     })
     return {
       version: 1,
@@ -406,6 +410,12 @@ export interface PaymentRequestParams extends Omit<RecipeGuards, 'minAmount'> {
   appData?: Hex
   label?: string
   salt?: Hex
+  /**
+   * `'hook'` posts each payment's order before the drop is activated, so nobody sends an activation
+   * transaction: build it with `buildHookPaymentOrder`. `appData` is then ignored, since the
+   * document is built around the hook.
+   */
+  activation?: 'transaction' | 'hook'
 }
 
 export interface ConvertOnArrivalParams extends Omit<RecipeGuards, 'minAmount'> {
@@ -488,14 +498,24 @@ export function paymentRequest(params: PaymentRequestParams): DropRecipeJson {
     once: false,
     steps: [
       ...timeGuards(params),
-      {
-        type: 'payment',
-        buyToken: params.buyToken,
-        buyAmount: params.buyAmount.toString(),
-        receiver: params.receiver ?? params.owner,
-        validitySeconds: params.validitySeconds ?? 30 * 60,
-        appData: params.appData ?? COW_DROP_APP_DATA,
-      },
+      params.activation === 'hook'
+        ? {
+            type: 'paymentViaHook',
+            buyToken: params.buyToken,
+            buyAmount: params.buyAmount.toString(),
+            receiver: params.receiver ?? params.owner,
+            validitySeconds: params.validitySeconds ?? 30 * 60,
+            // A time window is a guard, and a guard only holds on every order if the step is strict.
+            ...(timeGuards(params).length > 0 ? { strict: true } : {}),
+          }
+        : {
+            type: 'payment',
+            buyToken: params.buyToken,
+            buyAmount: params.buyAmount.toString(),
+            receiver: params.receiver ?? params.owner,
+            validitySeconds: params.validitySeconds ?? 30 * 60,
+            appData: params.appData ?? COW_DROP_APP_DATA,
+          },
     ],
   }
 }

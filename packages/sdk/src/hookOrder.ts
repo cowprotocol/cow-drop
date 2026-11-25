@@ -15,7 +15,7 @@ import {
 import { knownAppDataDocument } from './appData.js'
 import { decodeRecipe, deriveDropAddress } from './encoding.js'
 import { cowDomainSeparator, orderUidFor, type CowOrderData } from './orderUid.js'
-import { buildActivateTx } from './tx.js'
+import { buildActivatePaymentTx, buildActivateTx } from './tx.js'
 import type { DropDeployment, LimitPriceFraction } from './types.js'
 
 /** `GPv2VaultRelayer`: what a drop approves so the settlement contract can pull the sell token. */
@@ -53,6 +53,17 @@ export interface SellBalanceData {
   /** Empty prefix and suffix mean a fixed `appData`. */
   appDataTemplate: AppDataTemplate
 }
+
+/** `HookOrderBase.markRan`: how a strict recipe tells its handler it ran, for one sell token. */
+export const MARK_RAN_ABI = [
+  {
+    type: 'function',
+    name: 'markRan',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'sellToken', type: 'address' }],
+    outputs: [],
+  },
+] as const
 
 /** Hand-written like the other ComposableCoW ABIs here: composable-cow is not a submodule. */
 export const COMPOSABLE_COW_CREATE_ABI = [
@@ -139,20 +150,35 @@ const SIGNATURE_PARAMS = [
 export function hookAppDataTemplate(params: {
   deployment: Pick<DropDeployment, 'executor'>
   gasLimit?: bigint
+  /** The contract the hook calls. Defaults to the executor; a payment's hook calls `PaymentSteps`. */
+  target?: Address
 }): AppDataTemplate {
   const gasLimit = params.gasLimit ?? DEFAULT_HOOK_GAS_LIMIT
+  const target = getAddress(params.target ?? params.deployment.executor)
   return {
     prefix: '{"appCode":"cow-drop","metadata":{"hooks":{"pre":[{"callData":"0x',
-    suffix: `","gasLimit":"${gasLimit}","target":"${getAddress(params.deployment.executor)}"}]}},"version":"1.1.0"}`,
+    suffix: `","gasLimit":"${gasLimit}","target":"${target}"}]}},"version":"1.1.0"}`,
   }
 }
 
-/** The appData document for one drop: the template around its own activation call. */
+/**
+ * The appData document for one drop: the template around its own activation call.
+ *
+ * With `sellToken` the call is `PaymentSteps.activatePayment`, which is how a payment's hook tells
+ * the drop which token to approve.
+ */
 export function hookAppDataDocument(
   template: AppDataTemplate,
-  params: { deployment: Pick<DropDeployment, 'executor'>; owner: Address; setupData: Hex },
+  params: {
+    deployment: Pick<DropDeployment, 'executor' | 'paymentSteps'>
+    owner: Address
+    setupData: Hex
+    sellToken?: Address
+  },
 ): string {
-  return template.prefix + buildActivateTx(params).data.slice(2) + template.suffix
+  const { sellToken } = params
+  const call = sellToken ? buildActivatePaymentTx({ ...params, sellToken }) : buildActivateTx(params)
+  return template.prefix + call.data.slice(2) + template.suffix
 }
 
 /** `abi.encode(SellBalanceHandler.Data)`, the handler's `staticInput`. */
@@ -203,17 +229,26 @@ export function findSellBalanceOrders(
   deployment: Pick<DropDeployment, 'composableCow' | 'sellBalanceHandler'>,
   setupData: Hex,
 ): SellBalanceRegistration[] {
-  const handler = deployment.sellBalanceHandler
+  return registrationsOf(deployment.composableCow, deployment.sellBalanceHandler, setupData).map((params) => ({
+    params,
+    data: decodeSellBalanceData(params.staticInput),
+  }))
+}
+
+/** Every plain `ComposableCoW.create` in a recipe that registers `handler`. */
+function registrationsOf(
+  composableCow: Address,
+  handler: Address | undefined,
+  setupData: Hex,
+): SellBalanceRegistration['params'][] {
   if (!handler) return []
 
-  const found: SellBalanceRegistration[] = []
+  const found: SellBalanceRegistration['params'][] = []
   for (const call of decodeRecipe(setupData).calls) {
-    if (call.isDelegateCall || call.target.toLowerCase() !== deployment.composableCow.toLowerCase()) continue
+    if (call.isDelegateCall || call.target.toLowerCase() !== composableCow.toLowerCase()) continue
     try {
       const { args } = decodeFunctionData({ abi: COMPOSABLE_COW_CREATE_ABI, data: call.callData })
-      const [params] = args
-      if (params.handler.toLowerCase() !== handler.toLowerCase()) continue
-      found.push({ params, data: decodeSellBalanceData(params.staticInput) })
+      if (args[0].handler.toLowerCase() === handler.toLowerCase()) found.push(args[0])
     } catch {
       // Some other call to ComposableCoW.
     }
@@ -253,6 +288,8 @@ export function buildHookOrder(params: {
   /** Which registration to use when a recipe has several. Defaults to the first. */
   sellToken?: Address
   clockSkewSeconds?: number
+  /** `false` for a follow-up order with no hook. See `hookNeeded`. */
+  hook?: boolean
 }): HookOrder {
   const { deployment, owner, setupData, balance } = params
 
@@ -269,34 +306,177 @@ export function buildHookOrder(params: {
   const buyAmount = (balance * data.limitPrice.numerator) / data.limitPrice.denominator
   if (buyAmount === 0n) throw new Error('the limit price rounds this balance down to a zero minimum')
 
-  const validity = Number(data.validitySeconds)
+  return assembleHookOrder({ ...params, registration: registration.params, terms: { ...data, buyAmount } })
+}
+
+/** `PaymentHandler.Data`: what a recipe commits an any-token payment to. */
+export interface HookPaymentData {
+  buyToken: Address
+  /** The price: the least the receiver gets, whatever is sold. */
+  buyAmount: bigint
+  receiver: Address
+  validitySeconds: bigint
+  /** Whether every order needs its own hook to have run the recipe. */
+  strict: boolean
+  /** The appData of an order posted with no hook. */
+  appData: Hex
+  appDataTemplate: AppDataTemplate
+}
+
+const HOOK_PAYMENT_DATA_PARAMS = [
+  {
+    type: 'tuple',
+    components: [
+      { name: 'buyToken', type: 'address' },
+      { name: 'buyAmount', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'validitySeconds', type: 'uint256' },
+      { name: 'strict', type: 'bool' },
+      { name: 'appData', type: 'bytes32' },
+      { name: 'appDataPrefix', type: 'bytes' },
+      { name: 'appDataSuffix', type: 'bytes' },
+    ],
+  },
+] as const
+
+/** `abi.encode(PaymentHandler.Data)`, the handler's `staticInput`. */
+export function encodeHookPaymentData(data: HookPaymentData): Hex {
+  return encodeAbiParameters(HOOK_PAYMENT_DATA_PARAMS, [
+    {
+      buyToken: data.buyToken,
+      buyAmount: data.buyAmount,
+      receiver: data.receiver,
+      validitySeconds: data.validitySeconds,
+      strict: data.strict,
+      appData: data.appData,
+      appDataPrefix: stringToHex(data.appDataTemplate.prefix),
+      appDataSuffix: stringToHex(data.appDataTemplate.suffix),
+    },
+  ])
+}
+
+export function decodeHookPaymentData(staticInput: Hex): HookPaymentData {
+  const [raw] = decodeAbiParameters(HOOK_PAYMENT_DATA_PARAMS, staticInput)
+  return {
+    buyToken: raw.buyToken,
+    buyAmount: raw.buyAmount,
+    receiver: raw.receiver,
+    validitySeconds: raw.validitySeconds,
+    strict: raw.strict,
+    appData: raw.appData,
+    appDataTemplate: { prefix: hexToString(raw.appDataPrefix), suffix: hexToString(raw.appDataSuffix) },
+  }
+}
+
+/** A `PaymentHandler` registration found in a recipe. */
+export interface HookPaymentRegistration {
+  params: SellBalanceRegistration['params']
+  data: HookPaymentData
+}
+
+/** The any-token payment a recipe registers, read back out of its committed bytes. */
+export function findHookPayment(
+  deployment: Pick<DropDeployment, 'composableCow' | 'paymentHandler'>,
+  setupData: Hex,
+): HookPaymentRegistration | undefined {
+  const params = registrationsOf(deployment.composableCow, deployment.paymentHandler, setupData)[0]
+  return params && { params, data: decodeHookPaymentData(params.staticInput) }
+}
+
+/**
+ * The order to post for a payment drop that was paid in `sellToken`.
+ *
+ * The recipe names no sell token, so the caller does: the drop's whole balance of it, for at least
+ * the committed `buyAmount`. Its pre-hook names the same token, which is what makes the drop approve
+ * it. A payment made in `buyToken` itself has no order: activate with that token instead.
+ */
+export function buildHookPaymentOrder(params: {
+  deployment: DropDeployment
+  owner: Address
+  setupData: Hex
+  sellToken: Address
+  balance: bigint
+  now: number
+  clockSkewSeconds?: number
+  /** `false` for a follow-up order with no hook. See `hookNeeded`. */
+  hook?: boolean
+}): HookOrder {
+  const registration = findHookPayment(params.deployment, params.setupData)
+  if (!registration) throw new Error('this recipe registers no PaymentHandler order to post')
+  const { data } = registration
+
+  if (params.balance <= 0n) throw new Error('nothing to sell: the drop holds none of the sell token')
+  if (params.sellToken.toLowerCase() === data.buyToken.toLowerCase()) {
+    throw new Error('a payment already in the buy token needs no order; activate with that token to forward it')
+  }
+
+  return assembleHookOrder({
+    ...params,
+    registration: registration.params,
+    terms: { ...data, sellToken: params.sellToken },
+    hookSellToken: params.sellToken,
+  })
+}
+
+/** Everything after the terms are settled: deadline, appData, signature, uid, payload. */
+function assembleHookOrder(params: {
+  deployment: DropDeployment
+  owner: Address
+  setupData: Hex
+  balance: bigint
+  now: number
+  clockSkewSeconds?: number
+  hook?: boolean
+  registration: SellBalanceRegistration['params']
+  terms: {
+    sellToken: Address
+    buyToken: Address
+    receiver: Address
+    buyAmount: bigint
+    validitySeconds: bigint
+    strict: boolean
+    appData: Hex
+    appDataTemplate: AppDataTemplate
+  }
+  /** Set when the hook must name the token being sold. */
+  hookSellToken?: Address
+}): HookOrder {
+  const { deployment, owner, setupData, balance, terms } = params
+
+  const validity = Number(terms.validitySeconds)
   const skew = Math.min(params.clockSkewSeconds ?? 60, Math.floor(validity / 2))
   const validTo = params.now + validity - skew
   if (!Number.isInteger(validTo) || validTo > 0xffffffff) throw new Error(`validTo out of range: ${validTo}`)
 
-  const templated = data.appDataTemplate.prefix.length > 0
+  // A recipe with no template has only the hook-free form. One with a template takes either, unless
+  // it is strict, which is the handler's rule restated here so the refusal is ours and immediate.
+  const wantsHook = params.hook ?? true
+  if (!wantsHook && terms.strict && terms.appDataTemplate.prefix.length > 0) {
+    throw new Error('this recipe is strict: every order needs its hook, so it has no hook-free form')
+  }
+  const templated = wantsHook && terms.appDataTemplate.prefix.length > 0
   const appDataDocument = templated
-    ? hookAppDataDocument(data.appDataTemplate, { deployment, owner, setupData })
-    : knownAppDataDocument(data.appData)
-  const appData = templated ? keccak256(toBytes(appDataDocument!)) : data.appData
+    ? hookAppDataDocument(terms.appDataTemplate, { deployment, owner, setupData, sellToken: params.hookSellToken })
+    : knownAppDataDocument(terms.appData)
+  const appData = templated ? keccak256(toBytes(appDataDocument!)) : terms.appData
 
   const order: CowOrderData = {
-    sellToken: data.sellToken,
-    buyToken: data.buyToken,
-    receiver: data.receiver,
+    sellToken: terms.sellToken,
+    buyToken: terms.buyToken,
+    receiver: terms.receiver,
     sellAmount: balance,
-    buyAmount,
+    buyAmount: terms.buyAmount,
     validTo,
     appData,
     feeAmount: 0n,
     kind: KIND_SELL,
     partiallyFillable: false,
     sellTokenBalance: BALANCE_ERC20,
-    buyTokenBalance: BALANCE_ERC20,
+    buyTokenBalance: BALANCE_ERC20, // gitleaks:allow (balance-kind constant, not a secret)
   }
 
   const drop = deriveDropAddress({ deployment, owner, setupData })
-  const signature = encodeHookSignature(order, registration.params, templated ? { owner, setupData } : undefined)
+  const signature = encodeHookSignature(order, params.registration, templated ? { owner, setupData } : undefined)
   const orderUid = orderUidFor(order, drop, cowDomainSeparator(deployment.chainId, deployment.settlement))
 
   return {
@@ -307,6 +487,21 @@ export function buildHookOrder(params: {
     appDataDocument,
     payload: toHookOrderPayload(order, drop, signature),
   }
+}
+
+/**
+ * Whether the next order for a drop has to carry the activation hook.
+ *
+ * It does when the recipe is strict, and otherwise when the relayer cannot yet pull the balance:
+ * either the drop is not deployed, or it has never been activated for this token. An allowance can
+ * only have come from the drop itself, so a sufficient one answers both. Posting the hook when it was
+ * not needed costs the solver a little gas; leaving it off when it was needed gives an order that
+ * cannot settle.
+ *
+ * @param params.allowance The drop's allowance to `COW_VAULT_RELAYER` for the sell token.
+ */
+export function hookNeeded(params: { strict: boolean; allowance: bigint; balance: bigint }): boolean {
+  return params.strict || params.allowance < params.balance
 }
 
 /**
