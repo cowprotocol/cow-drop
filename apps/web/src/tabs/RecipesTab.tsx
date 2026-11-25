@@ -195,8 +195,9 @@ interface FormState {
   /**
    * Post the order before the drop exists, and let the order's own pre-hook activate it.
    *
-   * Off by default, and the default is load-bearing like `reusableTwap`'s: it swaps the trade step
-   * for a different one, so it is part of the address.
+   * On by default: nobody has to send, or pay for, an activation. It swaps the trade step for a
+   * different one, so it is part of the address, which is why `toForm` sets it from the recipe it
+   * reads rather than leaving this default standing.
    */
   hookActivated: boolean
   /** The payment recipe's price, in whole `buyToken` units as typed. */
@@ -234,7 +235,7 @@ const INITIAL: FormState = {
   oracleHaircutBps: '50',
   strike: '',
   stopLossDays: '7',
-  hookActivated: false,
+  hookActivated: true,
   payAmount: '100',
   pricer: '',
 }
@@ -544,6 +545,7 @@ function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
       const price = humanPrice(trade.limitPrice)
       if (price === null) return null
       base.recipeKind = 'swap'
+      base.hookActivated = false
       base.useOracle = false
       base.limitPrice = price
       base.validityMinutes = String(Number(trade.validitySeconds) / 60)
@@ -564,6 +566,7 @@ function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
       const price = humanPrice(trade.floorPrice)
       if (price === null) return null
       base.recipeKind = 'swap'
+      base.hookActivated = false
       base.useOracle = true
       base.limitPrice = price
       base.validityMinutes = String(Number(trade.validitySeconds) / 60)
@@ -1584,11 +1587,11 @@ export function RecipesTab({
                 checked={form.hookActivated}
                 onChange={(event) => set('hookActivated', event.target.checked)}
               />
-              No activation transaction: the order activates the drop
-              <Tooltip title="Activated by its own order">
+              Gasless activation
+              <Tooltip title="Gasless activation">
                 <span>
-                  The order is posted before the drop exists and carries the activation as a pre-hook,
-                  so the solver that fills it deploys the drop and takes the gas from the surplus.
+                  Nobody sends an activation transaction. The order is posted first and activates the
+                  drop when it fills; the solver takes that gas out of the trade.
                 </span>
                 <span>
                   It changes the address. With no guard below, the hook is only needed for the first
