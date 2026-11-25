@@ -40,7 +40,9 @@ generate` pick the new directory up — it reads every `gen*/` and emits them al
 | `StopLossSteps` | `0xAD50014B6aE6050D8D640bF4EccbBb54dc2Df61C` | live on Gnosis | same |
 | `TwapSteps` | `0xA03808Aa21Ea0874BeBC57Eb08806b7EAa4BbdC5` | live on Gnosis | same |
 | `PaymentSteps` | `0x8BA52FAcbeFCC97CB93ccfCB53e3f2204543EEe8` | live on Gnosis | new |
-| `SellBalanceHandler` | `0x33da3b784F6d4D9065377b6aDC4690Ba50f2C185` | live on Gnosis | new |
+| `SellBalanceHandler` | `0x61CBDa9a385a57fb684C5789A9276Eefc2CFcC3D` | **not yet broadcast** | new |
+| `PaymentHandler` | `0x7f14b1C0473771c234Ba07dC68b8c6C74912540E` | **not yet broadcast** | new |
+| `HookPaymentSteps` | `0x640F2f235610FfE0832eD65524AbA1768496f457` | **not yet broadcast** | new |
 | `CowOrderPoster` | `0xeaCcAf23D2446208633c122dcC6a6Ab9fD62BA38` | live on Gnosis | **moved** |
 | `DropBungeeReceiver` | `0xbF4B4b7Ab60A2435177753ae32E2619627DC7e3C` | live on Gnosis | new |
 | `DropExecutor` | `0xB61071638BE341F8959492838899907FDA1dA817` | live on Gnosis | same |
@@ -61,9 +63,9 @@ but only to recipes that name a payment step, and none existed before it. Adding
 and generation 2 had not been broadcast. `DropAddresses.paymentSteps` is optional because generation 1
 has none.
 
-**Generation 2 is live on Gnosis**, every contract in the table. On a chain where the deploy has not
-run, activating a drop reverts with `NoCodeAtDelegateTarget`, which the UI's `getCode` check surfaces
-before anyone funds anything.
+**Generation 2 is live on Gnosis**, except the rows marked not yet broadcast. On a chain where the
+deploy has not run, activating a drop reverts with `NoCodeAtDelegateTarget`, which the UI's `getCode`
+check surfaces before anyone funds anything.
 
 Both cow-shed contracts are the canonical ones already live on Gnosis, so **the only things this project
 deploys are its own nine contracts** and a drop address derives entirely from official cow-shed code.

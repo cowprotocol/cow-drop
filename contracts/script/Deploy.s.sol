@@ -7,11 +7,13 @@ import {console} from "forge-std/console.sol";
 import {CowOrderPoster} from "src/CowOrderPoster.sol";
 import {DropExecutor} from "src/DropExecutor.sol";
 import {DropBungeeReceiver} from "src/bridge/DropBungeeReceiver.sol";
+import {PaymentHandler} from "src/handlers/PaymentHandler.sol";
 import {SellBalanceHandler} from "src/handlers/SellBalanceHandler.sol";
 import {IComposableCowLike, ISettlementLike} from "src/interfaces/IDropExternal.sol";
 import {ConvertSteps} from "src/steps/ConvertSteps.sol";
 import {CooldownSteps} from "src/steps/CooldownSteps.sol";
 import {GuardSteps} from "src/steps/GuardSteps.sol";
+import {HookPaymentSteps} from "src/steps/HookPaymentSteps.sol";
 import {PaymentSteps} from "src/steps/PaymentSteps.sol";
 import {PresignSteps} from "src/steps/PresignSteps.sol";
 import {StopLossSteps} from "src/steps/StopLossSteps.sol";
@@ -75,6 +77,8 @@ contract DeployScript is Script {
         address convertSteps;
         address cooldownSteps;
         address sellBalanceHandler;
+        address paymentHandler;
+        address hookPaymentSteps;
         address cowOrderPoster;
         address bungeeReceiver;
         address composableCow;
@@ -226,6 +230,23 @@ contract DeployScript is Script {
             new SellBalanceHandler{salt: SALT}(DropExecutor(executor));
         }
 
+        // `SellBalanceHandler` with the sell token left open, and the step that approves whichever
+        // token an order names. The step reads that token from `PaymentSteps`, so it takes its address.
+        bytes memory paymentHandlerInit = abi.encodePacked(type(PaymentHandler).creationCode, abi.encode(executor));
+        address paymentHandler = _create2(paymentHandlerInit);
+        if (paymentHandler.code.length == 0) {
+            vm.broadcast();
+            new PaymentHandler{salt: SALT}(DropExecutor(executor));
+        }
+
+        bytes memory hookPaymentInit =
+            abi.encodePacked(type(HookPaymentSteps).creationCode, abi.encode(DropConfig.VAULT_RELAYER, paymentSteps));
+        address hookPaymentSteps = _create2(hookPaymentInit);
+        if (hookPaymentSteps.code.length == 0) {
+            vm.broadcast();
+            new HookPaymentSteps{salt: SALT}(DropConfig.VAULT_RELAYER, PaymentSteps(paymentSteps));
+        }
+
         // Not part of any drop address: nothing in a recipe reaches it, because the steps inline the
         // `CowOrder` library instead. It ships with the generation because it is the address a
         // third-party contract integrates against, and that address has to be stable and recorded.
@@ -260,6 +281,8 @@ contract DeployScript is Script {
             convertSteps: convertSteps,
             cooldownSteps: cooldownSteps,
             sellBalanceHandler: sellBalanceHandler,
+            paymentHandler: paymentHandler,
+            hookPaymentSteps: hookPaymentSteps,
             cowOrderPoster: cowOrderPoster,
             bungeeReceiver: bungeeReceiver,
             composableCow: composableCow,
@@ -290,6 +313,8 @@ contract DeployScript is Script {
         console.log("convertSteps       ", d.convertSteps);
         console.log("cooldownSteps      ", d.cooldownSteps);
         console.log("sellBalanceHandler ", d.sellBalanceHandler);
+        console.log("paymentHandler     ", d.paymentHandler);
+        console.log("hookPaymentSteps   ", d.hookPaymentSteps);
         console.log("cowOrderPoster     ", d.cowOrderPoster);
         console.log("bungeeReceiver     ", d.bungeeReceiver);
         console.log("executor           ", d.executor);
@@ -323,6 +348,8 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "convertSteps", d.convertSteps);
         vm.serializeAddress(obj, "cooldownSteps", d.cooldownSteps);
         vm.serializeAddress(obj, "sellBalanceHandler", d.sellBalanceHandler);
+        vm.serializeAddress(obj, "paymentHandler", d.paymentHandler);
+        vm.serializeAddress(obj, "hookPaymentSteps", d.hookPaymentSteps);
         vm.serializeAddress(obj, "cowOrderPoster", d.cowOrderPoster);
         vm.serializeAddress(obj, "bungeeReceiver", d.bungeeReceiver);
         string memory json = vm.serializeAddress(obj, "executor", d.executor);

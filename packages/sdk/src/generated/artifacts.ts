@@ -2394,6 +2394,43 @@ export const SELL_BALANCE_HANDLER_ABI = [
   },
   {
     "type": "function",
+    "name": "markRan",
+    "inputs": [
+      {
+        "name": "sellToken",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "ranThisTransaction",
+    "inputs": [
+      {
+        "name": "drop",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "sellToken",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ran",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "supportsInterface",
     "inputs": [
       {

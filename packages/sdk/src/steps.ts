@@ -259,6 +259,7 @@ export const steps = {
       receiver: params.receiver ?? ZERO_ADDRESS,
       limitPrice: params.limitPrice,
       validitySeconds: params.validitySeconds,
+      strict: false,
       appData: ZERO_BYTES32,
       appDataTemplate,
     })

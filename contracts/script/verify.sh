@@ -125,6 +125,9 @@ for CHAIN in $CHAINS; do
   verify convertSteps       src/steps/ConvertSteps.sol:ConvertSteps     "address,address,address"    "$SETTLEMENT" "$VAULT_RELAYER" "$EXECUTOR"
   verify cooldownSteps      src/steps/CooldownSteps.sol:CooldownSteps                              ""
   verify sellBalanceHandler src/handlers/SellBalanceHandler.sol:SellBalanceHandler "address"         "$EXECUTOR"
+  PAYMENT_STEPS=$(jq -r '.paymentSteps' "$FILE")
+  verify paymentHandler     src/handlers/PaymentHandler.sol:PaymentHandler "address"                 "$EXECUTOR"
+  verify hookPaymentSteps   src/steps/HookPaymentSteps.sol:HookPaymentSteps "address,address"        "$VAULT_RELAYER" "$PAYMENT_STEPS"
   verify cowOrderPoster     src/CowOrderPoster.sol:CowOrderPoster       "address"                    "$SETTLEMENT"
   verify bungeeReceiver     src/bridge/DropBungeeReceiver.sol:DropBungeeReceiver "address"           "$EXECUTOR"
 

@@ -246,7 +246,8 @@ recipe and the balance, posted for a drop with no code, and carry the activation
 its appData. The order book and the solver both run pre-hooks before asking the owner whether it signed.
 
 The recipe needs no step contract of its own, since the handler's `staticInput` carries no amount:
-`TokenSteps.approveMax(sellToken, vaultRelayer)`, then a plain call to `ComposableCoW.create`.
+`TokenSteps.approveMax(sellToken, vaultRelayer)` and a plain call to `ComposableCoW.create`. A strict
+recipe, below, ends with a third: a plain call to the handler's `markRan`.
 
 `verify` accepts a fill-or-kill, fee-less sell of exactly `balanceOf(drop)`, at or above the committed
 limit, with `validTo` no further than `validitySeconds` from the block it settles in.
@@ -261,12 +262,45 @@ another appData, say one naming a different fee recipient, fails. An empty prefi
 
 Three things to know:
 
-- **Guards gate the first activation only.** The registration outlives it, and a later arrival is sold
-  under the same rule without the recipe running again.
+- **A recipe is strict or it is not, and commits to which.** The registration and the approval
+  outlive an activation, and the trampoline swallows a hook that reverts.
+  - *Not strict*, for a recipe that only approves and registers. The hook matters once, to deploy the
+    drop. After that an order may also come with **no hook at all**, under a fixed `appData` the recipe
+    commits to, so follow-up fills pay for no activation. Whoever posts picks: the hook when the drop
+    is not deployed or the relayer is not yet approved for the token, the hook-free form otherwise.
+  - *Strict*, for a recipe with a guard, `once` or a cooldown, which has to be re-checked per order.
+    `markRan` records in transient storage, keyed by the calling drop and the sell token, that the
+    recipe completed; `verify` requires it. A guard that reverts takes the mark with it, and one
+    order's hook cannot vouch for another's. There is no hook-free form.
 - **The solver pays for the activation and takes it from the surplus**, so the limit needs that much
   room below the market.
 - **A watch tower cannot drive it.** `getTradeableOrder` answers `PollNever` when the appData needs a
   recipe it was not given.
+
+### `PaymentHandler` — the same, in any token
+
+Both handlers are `lib/HookOrderBase.sol` plus the three things that differ: which token is sold, the
+least it may fetch, and the hook. The fixed fields, the whole-balance rule, the deadline and the appData
+rebuild live in the base, once. It is abstract, so it has no address.
+
+`SellBalanceHandler` is the swap: a fixed pair and a price ratio. `PaymentHandler` is the payment
+request: the recipe commits to `buyToken`, `buyAmount` and `receiver` and leaves the sell token open, so
+the order names it. `verify` accepts the drop's whole balance of whichever token that is, for at least
+`buyAmount`.
+
+The drop still has to approve that token, and the recipe cannot name it. So the hook is
+`PaymentSteps.activatePayment(owner, setupData, sellToken)`, the entry point payment drops already use,
+and the recipe's step is `HookPaymentSteps.approvePayment`, which reads the token back and approves the
+relayer for it. The handler rebuilds the appData around that calldata with the order's own sell token,
+so an order cannot carry a hook that approves a different one.
+
+An approval belongs to one token, so a payment drop is approved only for tokens that have been
+through a hook: the first order in a new token needs one even if the drop exists, and later orders in
+that token do not. When the recipe is strict the step makes the mark itself, since only it knows the
+token.
+
+A payment made in `buyToken` itself has no order to place: activating with that token forwards the
+balance to the receiver, which takes a transaction.
 
 ## Build settings are load-bearing
 
@@ -294,7 +328,8 @@ addresses cow-shed#79 records as live on Gnosis is proof it reproduces the canon
 | `steps/PaymentSteps.t.sol` | Activating with a token the recipe never named, the committed price and receiver holding whatever token is chosen, payment in the buy token forwarded without an order, plain `activate` refused, and the transient input scoped to one drop and cleared after the call. |
 | `steps/StopLossSteps.t.sol` | The stop-loss step, the deadline running from activation, and the thirteen-word `StopLossData` layout. |
 | `steps/ComposableBase.t.sol` | The half `TwapSteps` does not reach: `divisor == 1`, and a zero value factory routing to plain `create`. Uses a throwaway handler so the branch a future step will take does not ship unexercised. |
-| `handlers/SellBalanceHandler.t.sol` | Every refusal, both appData modes, a recipe that is not the drop's, and the recipe surviving a second run. |
+| `handlers/SellBalanceHandler.t.sol` | Every refusal, both appData modes, a recipe that is not the drop's, and the recipe surviving a second run. A second suite starts from a drop activated in an earlier transaction: its order is refused without the hook, and when a guard makes the hook revert. Each runs the activation and the check in one transaction, since that is what the mark is about. |
+| `handlers/PaymentHandler.t.sol` | The same for the any-token handler, plus a hook naming the wrong token, a second token arriving later, and a payment in the buy token being forwarded. |
 | `DropGnosisFork.t.sol` | Against the real Gnosis deployments. Skipped unless `GNOSIS_RPC_URL` is set. |
 
 The load-bearing fork test is `test_fork_twapIsTradeableAndTheDropValidatesTheSignature`: it does exactly
