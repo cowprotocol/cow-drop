@@ -778,8 +778,11 @@ export function createKeeper(options: KeeperOptions): Keeper {
 
       let status: 'posted' | 'duplicate' = 'posted'
       try {
-        if (built.appDataDocument !== undefined) {
-          await orderBook.uploadAppData(built.order.appData, built.appDataDocument)
+        // With a hook the SDK builds the document. Without one it only knows cow-drop's own, so a
+        // recipe committing a different hook-free appData relies on the one sent at registration.
+        const document = built.appDataDocument ?? drop.appDataDocuments?.[built.order.appData]
+        if (document !== undefined) {
+          await orderBook.uploadAppData(built.order.appData, document)
         }
         await orderBook.sendOrder(built.payload as unknown as OrderCreation)
       } catch (cause) {

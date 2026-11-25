@@ -1,4 +1,9 @@
-import { getDeployment, paymentRequest, PAYMENT_STEPS_ABI } from '@cowprotocol/cow-drop-sdk'
+import {
+  COW_DROP_APP_DATA_DOCUMENT,
+  getDeployment,
+  paymentRequest,
+  PAYMENT_STEPS_ABI,
+} from '@cowprotocol/cow-drop-sdk'
 import { decodeFunctionData, type Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 
@@ -7,6 +12,7 @@ import { COW, fakeChain, fakeSubmitter, manualClock, OWNER, registered, WXDAI } 
 import { deriveHints, hookPosted } from './hints.js'
 import { createKeeper } from './keeper.js'
 import { DEFAULT_POLICY } from './policy.js'
+import { registerDrop } from './registry.js'
 import type { PaymentQuoter } from './revenue.js'
 import { memoryStore } from './store.js'
 
@@ -70,6 +76,33 @@ describe('a payment drop activated by its own order', () => {
     expect(hookPosted(recipe)).toBe(true)
     expect(deriveHints(recipe).payment).toEqual({ buyToken: cow, buyAmount: String(PRICE) })
     expect(deriveHints(recipe).tokens).toEqual([])
+  })
+
+  it('is registered with the standard appData document the web app sends', async () => {
+    // What a follow-up order with no hook carries, so it is a committed hash and not a stray.
+    const result = await registerDrop({
+      recipe,
+      appDataDocuments: [COW_DROP_APP_DATA_DOCUMENT],
+      store: memoryStore([]),
+      deployment,
+      maxDrops: 10,
+      now: 0,
+    })
+
+    expect(result).toMatchObject({ ok: true })
+  })
+
+  it('still refuses a document the recipe does not commit to', async () => {
+    const result = await registerDrop({
+      recipe,
+      appDataDocuments: ['{"appCode":"someone-else","metadata":{},"version":"1.1.0"}'],
+      store: memoryStore([]),
+      deployment,
+      maxDrops: 10,
+      now: 0,
+    })
+
+    expect(result).toMatchObject({ ok: false, error: 'app-data-mismatch' })
   })
 
   it('gets an order in the token that arrived, with a hook naming that token', async () => {

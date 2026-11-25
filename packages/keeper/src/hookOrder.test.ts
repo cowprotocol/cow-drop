@@ -1,4 +1,4 @@
-import { getDeployment, swapOnArrival } from '@cowprotocol/cow-drop-sdk'
+import { COW_DROP_APP_DATA_DOCUMENT, getDeployment, swapOnArrival } from '@cowprotocol/cow-drop-sdk'
 import { describe, expect, it } from 'vitest'
 
 import { createEventBus, type KeeperEvent } from './events.js'
@@ -217,6 +217,19 @@ describe('a drop activated by its own order', () => {
 
     expect((await h.store.get(CHAIN_ID, h.drop.address))!.backoff.failures).toBe(1)
     expect(h.events.filter((e) => e.type === 'order-rejected')).toHaveLength(0)
+  })
+
+  it('is registered with the standard appData document the web app sends', async () => {
+    const result = await registerDrop({
+      recipe,
+      appDataDocuments: [COW_DROP_APP_DATA_DOCUMENT],
+      store: memoryStore([]),
+      deployment,
+      maxDrops: 10,
+      now: 0,
+    })
+
+    expect(result).toMatchObject({ ok: true })
   })
 
   it('is registered in paying mode without a fee, since it costs the keeper no gas', async () => {
