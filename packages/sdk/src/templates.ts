@@ -84,9 +84,9 @@ export interface SwapOnArrivalParams extends RecipeGuards {
    * someone has to send. `'hook'` registers a rule instead, so the order can be posted first and
    * activates the drop from its own pre-hook: build it with `buildHookOrder`.
    *
-   * With `'hook'`, `appData` is ignored (the document is built around the hook) and `oracle` is
-   * refused. Given any guard the step is made strict, so the guard holds on every order; with none,
-   * the hook is needed once and later orders can be posted without it.
+   * With `'hook'`, `appData` is ignored (the document is built around the hook), and `oracle` and
+   * `wrapNative` are refused. Given any guard the step is made strict, so the guard holds on every
+   * order; with none, the hook is needed once and later orders can be posted without it.
    */
   activation?: 'transaction' | 'hook'
   /**
@@ -132,6 +132,8 @@ export function swapOnArrival(params: SwapOnArrivalParams): DropRecipeJson {
 
   if (params.activation === 'hook') {
     if (params.oracle) throw new Error("activation: 'hook' does not support an oracle limit")
+    // The order is sized from the token balance before the hook runs, so there is nothing to wrap into it.
+    if (params.wrapNative) throw new Error("activation: 'hook' cannot wrap a native balance first")
     steps.push({
       type: 'sellBalanceViaHook',
       sellToken: params.sellToken,

@@ -26,6 +26,8 @@ import {
 import { applySlippage, quoteMarketPrice, type MarketQuote } from '../lib/quote.js'
 import {
   activateDrop,
+  isHookActivated,
+  postHookOrder,
   postPlacedOrders,
   forgetChainReadiness,
   probeChainReadiness,
@@ -190,6 +192,14 @@ interface FormState {
   oracleHaircutBps: string
   strike: string
   stopLossDays: string
+  /**
+   * Post the order before the drop exists, and let the order's own pre-hook activate it.
+   *
+   * On by default: nobody has to send, or pay for, an activation. It swaps the trade step for a
+   * different one, so it is part of the address, which is why `toForm` sets it from the recipe it
+   * reads rather than leaving this default standing.
+   */
+  hookActivated: boolean
   /** The payment recipe's price, in whole `buyToken` units as typed. */
   payAmount: string
   /**
@@ -225,6 +235,7 @@ const INITIAL: FormState = {
   oracleHaircutBps: '50',
   strike: '',
   stopLossDays: '7',
+  hookActivated: true,
   payAmount: '100',
   pricer: '',
 }
@@ -356,6 +367,7 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
       validitySeconds: Number(form.validityMinutes) * 60,
       notBefore: guards.notBefore,
       notAfter: guards.notAfter,
+      ...(form.hookActivated ? { activation: 'hook' as const } : {}),
     })
   }
 
@@ -427,8 +439,9 @@ function toRecipe(form: FormState, tokens: TokenInfo[]): DropRecipeJson {
     receiver,
     validitySeconds: Number(form.validityMinutes) * 60,
     limitPrice,
-    wrapNative,
-    oracle,
+    // The hook path checks the order when it settles: there is no activation to read a feed at, and
+    // the order is sized before anything could be wrapped.
+    ...(form.hookActivated ? { activation: 'hook' as const } : { wrapNative, oracle }),
     ...guards,
   })
 }
@@ -506,9 +519,10 @@ function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
     return base
   }
 
-  if (trade.type === 'payment') {
+  if (trade.type === 'payment' || trade.type === 'paymentViaHook') {
     if (base.wrapNative || balanceGuard) return null
     base.recipeKind = 'payment'
+    base.hookActivated = trade.type === 'paymentViaHook'
     base.buyToken = trade.buyToken
     base.payAmount = formatUnits(BigInt(trade.buyAmount), findToken(tokens, trade.buyToken)?.decimals ?? 18)
     base.validityMinutes = String(Number(trade.validitySeconds) / 60)
@@ -531,7 +545,18 @@ function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
       const price = humanPrice(trade.limitPrice)
       if (price === null) return null
       base.recipeKind = 'swap'
+      base.hookActivated = false
       base.useOracle = false
+      base.limitPrice = price
+      base.validityMinutes = String(Number(trade.validitySeconds) / 60)
+      break
+    }
+
+    case 'sellBalanceViaHook': {
+      const price = humanPrice(trade.limitPrice)
+      if (price === null) return null
+      base.recipeKind = 'swap'
+      base.hookActivated = true
       base.limitPrice = price
       base.validityMinutes = String(Number(trade.validitySeconds) / 60)
       break
@@ -541,6 +566,7 @@ function toForm(recipe: DropRecipeJson, tokens: TokenInfo[]): FormState | null {
       const price = humanPrice(trade.floorPrice)
       if (price === null) return null
       base.recipeKind = 'swap'
+      base.hookActivated = false
       base.useOracle = true
       base.limitPrice = price
       base.validityMinutes = String(Number(trade.validitySeconds) / 60)
@@ -1257,8 +1283,28 @@ export function RecipesTab({
     }
   }
 
+  /** The hook-activated counterpart of `onActivate`: no wallet, no transaction, just the order. */
+  const onPostOrder = async () => {
+    if (!compiled.ok || !status) return
+    remember()
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const uid = await postHookOrder({ recipe, balance: status.balance })
+      setMessage(`Posted order ${uid}. The drop is activated when it fills.`)
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const sellToken = findToken(tokens, form.sellToken)
   const buyToken = findToken(tokens, form.buyToken)
+  /** Read off the recipe, so an imported one gets it too. */
+  const hookActivated = isHookActivated(recipe)
   /** Read off the recipe, so an imported one gets its panel too. */
   const isPayment = paymentStepOf(recipe) !== undefined
   const isConvert = convertStepOf(recipe) !== undefined
@@ -1524,7 +1570,7 @@ export function RecipesTab({
               </label>
             </>
           )}
-          {namesSellToken(form.recipeKind) && (
+          {namesSellToken(form.recipeKind) && !(form.recipeKind === 'swap' && form.hookActivated) && (
             <label className="checkbox">
               <input
                 type="checkbox"
@@ -1534,7 +1580,27 @@ export function RecipesTab({
               Wrap the native token first
             </label>
           )}
-          {form.recipeKind === 'swap' && (
+          {(form.recipeKind === 'swap' || form.recipeKind === 'payment') && (
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={form.hookActivated}
+                onChange={(event) => set('hookActivated', event.target.checked)}
+              />
+              Gasless activation
+              <Tooltip title="Gasless activation">
+                <span>
+                  Nobody sends an activation transaction. The order is posted first and activates the
+                  drop when it fills; the solver takes that gas out of the trade.
+                </span>
+                <span>
+                  It changes the address. With no guard below, the hook is only needed for the first
+                  order; with one, every order carries it, so the guard holds each time.
+                </span>
+              </Tooltip>
+            </label>
+          )}
+          {form.recipeKind === 'swap' && !form.hookActivated && (
             <label className="checkbox">
               <input
                 type="checkbox"
@@ -1546,7 +1612,7 @@ export function RecipesTab({
           )}
         </div>
 
-        {(form.recipeKind === 'stoploss' || (form.recipeKind === 'swap' && form.useOracle)) && (
+        {(form.recipeKind === 'stoploss' || (form.recipeKind === 'swap' && form.useOracle && !form.hookActivated)) && (
           <fieldset className="subsection">
             <legend>Price feeds</legend>
             <div className="grid">
@@ -1921,8 +1987,8 @@ export function RecipesTab({
                     {status.missing.length > 0 && (
                       <p className="hint warn-box">
                         {status.missing.join(' and ')} {status.missing.length > 1 ? 'are' : 'is'} not
-                        deployed on {getDropChain(form.chainId)?.name ?? form.chainId} yet, so activation
-                        will revert.
+                        deployed on {getDropChain(form.chainId)?.name ?? form.chainId} yet, so this recipe
+                        cannot run there.
                         <Tooltip title="The address is still correct">
                           The cow-shed contracts a drop is derived from are already live and the
                           addresses are deterministic, so this drop address will not change once the
@@ -1958,7 +2024,29 @@ export function RecipesTab({
                     * A payment drop activates *with a token* and a convert drop *with a price*, both
                     * from the panel above. Plain activate reverts for either.
                     */}
-                  {reusable === null && (
+                  {reusable === null && hookActivated && (
+                    <Tooltip
+                      title="Post order"
+                      trigger={
+                        <button
+                          onClick={() => void onPostOrder()}
+                          disabled={busy || !status || status.balance === 0n || status.missing.length > 0}
+                        >
+                          {busy ? 'Posting…' : 'Post order'}
+                        </button>
+                      }
+                    >
+                      <span>
+                        Posts an order for the balance the drop holds now. No wallet and no
+                        transaction: the solver that fills it activates the drop, if it still needs to.
+                      </span>
+                      {keeperUrl() !== null && (
+                        <span>Or hand it to the keeper, and it posts the order once the money arrives.</span>
+                      )}
+                    </Tooltip>
+                  )}
+
+                  {reusable === null && !hookActivated && (
                     <Tooltip
                       title="Activate drop"
                       trigger={
@@ -2019,15 +2107,21 @@ export function RecipesTab({
                         }
                       >
                         <span>
-                          The keeper waits until the drop has a balance, then activates it unattended.
+                          {hookActivated
+                            ? 'The keeper waits until the drop has a balance, then posts its order unattended.'
+                            : 'The keeper waits until the drop has a balance, then activates it unattended.'}
                         </span>
                         <span>
                           Or do it yourself, when you choose:{' '}
                           {isPayment
-                            ? 'activate with a token, in the panel above.'
+                            ? hookActivated
+                              ? 'post the order for a token, in the panel above.'
+                              : 'activate with a token, in the panel above.'
                             : isConvert
                               ? 'name a price and activate, in the panel above.'
-                              : 'press Activate drop.'}
+                              : hookActivated
+                                ? 'press Post order.'
+                                : 'press Activate drop.'}
                         </span>
                       </Tooltip>
                     ))}

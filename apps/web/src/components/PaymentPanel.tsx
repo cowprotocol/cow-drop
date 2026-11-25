@@ -2,7 +2,13 @@ import type { DropDeployment, DropRecipeJson, DropStepJson } from '@cowprotocol/
 import { formatUnits, type Address } from 'viem'
 import { useCallback, useEffect, useState } from 'react'
 
-import { activatePaymentDrop, postPlacedOrders, readTokenBalance, sendPayment } from '../lib/drop.js'
+import {
+  activatePaymentDrop,
+  postHookOrder,
+  postPlacedOrders,
+  readTokenBalance,
+  sendPayment,
+} from '../lib/drop.js'
 import { quotePayment, type PaymentQuote } from '../lib/quote.js'
 import {
   connect,
@@ -16,7 +22,8 @@ import {
 import { findToken, type TokenInfo } from '../lib/tokenList.js'
 import { TokenPicker } from './TokenPicker.js'
 
-type PaymentStep = Extract<DropStepJson, { type: 'payment' }>
+/** Both payment steps: the one a transaction activates and the one its own order does. */
+type PaymentStep = Extract<DropStepJson, { type: 'payment' | 'paymentViaHook' }>
 
 /** Re-quote this long before the order book's expiry, so the amount on screen is never a lapsed one. */
 const REFRESH_LEAD_MS = 3_000
@@ -27,7 +34,9 @@ const FIXED_REFRESH_MS = 30_000
 
 /** The payment step of a recipe, if it has one. */
 export function paymentStepOf(recipe: DropRecipeJson): PaymentStep | undefined {
-  return recipe.steps.find((step): step is PaymentStep => step.type === 'payment')
+  return recipe.steps.find(
+    (step): step is PaymentStep => step.type === 'payment' || step.type === 'paymentViaHook',
+  )
 }
 
 /**
@@ -225,6 +234,27 @@ export function PaymentPanel({
     }
   }
 
+  /**
+   * A hook-activated payment in any other token needs no transaction: its order is posted, and the
+   * order activates the drop. Paid in the price token there is no order to post, so that one is
+   * still forwarded by activating.
+   */
+  const postsOrder = step.type === 'paymentViaHook' && payWith.toLowerCase() !== step.buyToken.toLowerCase()
+
+  const onPostOrder = async () => {
+    if (balance === null || balance === 0n) return
+    setBusy(true)
+    try {
+      const uid = await postHookOrder({ recipe, balance, sellToken: payWith })
+      onMessage?.(`Posted the order in ${paySymbol}: ${uid}. The drop is activated when it fills.`)
+      await load()
+    } catch (cause) {
+      onError?.(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const onActivate = async () => {
     if (!account) return
     setBusy(true)
@@ -291,10 +321,16 @@ export function PaymentPanel({
             Connect wallet to pay
           </button>
         )}
-        {account && (
-          <button onClick={() => void onActivate()} disabled={busy || balance === null || balance === 0n}>
-            {busy ? 'Activating…' : `Activate with ${paySymbol}`}
+        {postsOrder ? (
+          <button onClick={() => void onPostOrder()} disabled={busy || balance === null || balance === 0n}>
+            {busy ? 'Posting…' : `Post order in ${paySymbol}`}
           </button>
+        ) : (
+          account && (
+            <button onClick={() => void onActivate()} disabled={busy || balance === null || balance === 0n}>
+              {busy ? 'Activating…' : `Activate with ${paySymbol}`}
+            </button>
+          )
         )}
       </div>
       {wallet && walletBalance !== null && (
